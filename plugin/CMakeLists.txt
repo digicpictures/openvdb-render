@@ -1,36 +1,84 @@
 set(PLUGIN_NAME openvdb_render)
 
-add_definitions(-DLINUX -D_BOOL -DREQUIRE_IOSTREAM -pthread)
+add_definitions(-D_BOOL -DREQUIRE_IOSTREAM)
 
-find_package(Maya)
-find_package(Boost COMPONENTS regex)
-
-if (NOT ILMBASE_ROOT)
-    set(ILMBASE_ROOT $ENV{ILMBASE_ROOT})
-endif ()
-
-find_path(LUMA_NODE_ID_INCLUDE NAMES lumaNodeId.h)
-find_path(GLEW_INCLUDE NAMES GL/glew.h)
-find_path(OPENVDB_INCLUDE NAMES openvdb/openvdb.h)
-include_directories(${LUMA_NODE_ID_INCLUDE})
-include_directories(${GLEW_INCLUDE})
-include_directories(${OPENVDB_INCLUDE})
-include_directories(${Boost_INCLUDE_DIRS})
-include_directories(SYSTEM ${ILMBASE_ROOT}/include) #register is deprecated with c++11
-
+# Maya
+find_package(Maya 2015)
 include_directories(${MAYA_INCLUDE_DIRS})
 link_directories(${MAYA_LIBRARY_DIR})
-
 set(MAYA_LIBS OpenMaya Foundation OpenMayaAnim OpenMayaFX OpenMayaUI OpenMayaRender)
 
-find_library(GLEW_STATIC_LIBRARY NAMES libGLEW.a)
-find_library(OPENVDB_STATIC_LIBRARY NAMES libopenvdb.a)
+# OpenGL
+find_package(OpenGL REQUIRED)
+add_library(GL INTERFACE)
+set_target_properties(GL   PROPERTIES INTERFACE_LINK_LIBRARIES      ${OPENGL_gl_LIBRARY})
+add_library(GLU INTERFACE)
+set_target_properties(GLU  PROPERTIES INTERFACE_LINK_LIBRARIES      ${OPENGL_glu_LIBRARY})
 
+if(WIN32)
+    set(DIGIC_DEV_LIB_DIR U:/development/_shared/libs)
+else(WIN32)
+    message(FATAL_ERROR "TODO: set DIGIC_DEV_LIB_DIR for linux.")
+endif(WIN32)
+
+# GLEW
+add_library(GLEW SHARED IMPORTED)
+set(GLEW_ROOT ${DIGIC_DEV_LIB_DIR}/glew/2.0.0)
+set_target_properties(GLEW PROPERTIES IMPORTED_LOCATION_RELEASE     ${GLEW_ROOT}/lib_win64/glew32.dll)
+set_target_properties(GLEW PROPERTIES IMPORTED_IMPLIB_RELEASE       ${GLEW_ROOT}/lib_win64/glew32.lib)
+set_target_properties(GLEW PROPERTIES IMPORTED_LOCATION_DEBUG       ${GLEW_ROOT}/lib_win64/glew32d.dll)
+set_target_properties(GLEW PROPERTIES IMPORTED_IMPLIB_DEBUG         ${GLEW_ROOT}/lib_win64/glew32d.lib)
+set_target_properties(GLEW PROPERTIES INTERFACE_INCLUDE_DIRECTORIES ${GLEW_ROOT}/include)
+
+# Boost
+set(Boost_USE_STATIC_LIBS OFF)
+set(Boost_USE_MULTITHREADED ON)
+set(Boost_USE_STATIC_RUNTIME OFF)
+find_package(Boost 1.59 REQUIRED COMPONENTS thread system regex)
+get_filename_component(BOOST_ROOT ${Boost_INCLUDE_DIRS} DIRECTORY)
+link_directories(${BOOST_ROOT}/lib_win64)
+
+# TBB
+add_library(TBB SHARED IMPORTED)
+set(TBB_ROOT ${DIGIC_DEV_LIB_DIR}/TBB/4.0)
+set_target_properties(TBB PROPERTIES IMPORTED_LOCATION_RELEASE     ${TBB_ROOT}/bin_win64/tbb.dll)
+set_target_properties(TBB PROPERTIES IMPORTED_IMPLIB_RELEASE       ${TBB_ROOT}/lib_win64/tbb.lib)
+set_target_properties(TBB PROPERTIES IMPORTED_LOCATION_DEBUG       ${TBB_ROOT}/bin_win64/tbb_debug.dll)
+set_target_properties(TBB PROPERTIES IMPORTED_IMPLIB_DEBUG         ${TBB_ROOT}/lib_win64/tbb_debug.lib)
+set_target_properties(TBB PROPERTIES INTERFACE_INCLUDE_DIRECTORIES ${TBB_ROOT}/include)
+set_target_properties(TBB PROPERTIES INTERFACE_LINK_LIBRARIES Boost::thread)
+
+# OpenEXR::Half
+add_library(OpenEXR_Half STATIC IMPORTED)
+set(OpenEXR_ROOT ${DIGIC_DEV_LIB_DIR}/OpenEXR/2.2.0_static)
+set_target_properties(OpenEXR_Half PROPERTIES IMPORTED_LOCATION_RELEASE     ${OpenEXR_ROOT}/lib_win64/half_static_vc140_md.lib)
+set_target_properties(OpenEXR_Half PROPERTIES IMPORTED_LOCATION_DEBUG       ${OpenEXR_ROOT}/lib_win64/half_static_vc140_md_gd.lib)
+set_target_properties(OpenEXR_Half PROPERTIES INTERFACE_INCLUDE_DIRECTORIES ${OpenEXR_ROOT}/include)
+
+# ZLIB
+add_library(ZLIB STATIC IMPORTED)
+set(ZLIB_ROOT ${DIGIC_DEV_LIB_DIR}/zlib/1.2.8)
+set_target_properties(ZLIB PROPERTIES IMPORTED_LOCATION_RELEASE     ${ZLIB_ROOT}/lib_win64/zlibstatic.lib)
+set_target_properties(ZLIB PROPERTIES IMPORTED_LOCATION_DEBUG       ${ZLIB_ROOT}/lib_win64/zlibstatic.lib)
+set_target_properties(ZLIB PROPERTIES INTERFACE_INCLUDE_DIRECTORIES ${ZLIB_ROOT}/include)
+
+# OpenVDB
+add_library(OpenVDB STATIC IMPORTED)
+set(OPENVDB_ROOT ${DIGIC_DEV_LIB_DIR}/OpenVDB/3.1.0)
+set_target_properties(OpenVDB PROPERTIES IMPORTED_LOCATION_RELEASE      ${OPENVDB_ROOT}/lib_win64/OpenVDB_static_vc140_md.lib)
+set_target_properties(OpenVDB PROPERTIES IMPORTED_LOCATION_DEBUG        ${OPENVDB_ROOT}/lib_win64/OpenVDB_static_vc140_md_gd.lib)
+set_target_properties(OpenVDB PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${OPENVDB_ROOT}/include;${OPENVDB_ROOT}/include/openvdb")
+set_target_properties(OpenVDB PROPERTIES INTERFACE_COMPILE_DEFINITIONS "OPENVDB_STATICLIB;OPENVDB_OPENEXR_STATICLIB")
+set_target_properties(OpenVDB PROPERTIES INTERFACE_LINK_LIBRARIES      "OpenEXR_Half;TBB;ZLIB")
+
+# lib
 file(GLOB SRC *.cpp)
+file(GLOB HDR *.h)
 
-add_library(${PLUGIN_NAME} SHARED ${SRC})
+add_library(${PLUGIN_NAME} SHARED ${SRC} ${HDR})
 set_target_properties(${PLUGIN_NAME} PROPERTIES PREFIX "")
-target_link_libraries(${PLUGIN_NAME} ${MAYA_LIBS} ${GLEW_STATIC_LIBRARY} GL ${OPENVDB_STATIC_LIBRARY} ${Boost_LIBRARIES})
+set_target_properties(${PLUGIN_NAME} PROPERTIES SUFFIX ".mll")
+target_link_libraries(${PLUGIN_NAME} ${MAYA_LIBS} GLEW GL OpenVDB Boost::regex)
 
 install(TARGETS ${PLUGIN_NAME}
         DESTINATION plug-ins)

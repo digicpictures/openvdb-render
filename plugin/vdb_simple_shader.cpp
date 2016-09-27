@@ -1,6 +1,6 @@
 #include "vdb_simple_shader.h"
 
-#include <lumaNodeId.h>
+#include "lumaNodeId.h"
 
 #include <maya/MFnNumericAttribute.h>
 #include <maya/MFnTypedAttribute.h>

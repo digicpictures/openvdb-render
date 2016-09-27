@@ -4,7 +4,7 @@
 #include <maya/MFnNumericAttribute.h>
 #include <maya/MRampAttribute.h>
 
-#include <lumaNodeId.h>
+#include "lumaNodeId.h"
 #include <maya/MFnTypedAttribute.h>
 #include <maya/MFnDependencyNode.h>
 

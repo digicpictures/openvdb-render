@@ -11,7 +11,7 @@
 #include "vdb_shader.h"
 #include "vdb_simple_shader.h"
 
-MStatus initializePlugin(MObject obj)
+__declspec(dllexport) MStatus initializePlugin(MObject obj)
 {
     const bool is_interactive = MGlobal::mayaState() == MGlobal::kInteractive;
     MStatus status = MS::kFailure;
@@ -98,7 +98,7 @@ MStatus initializePlugin(MObject obj)
     return status;
 }
 
-MStatus uninitializePlugin(MObject obj)
+__declspec(dllexport) MStatus uninitializePlugin(MObject obj)
 {
     MStatus status = MS::kSuccess;
 

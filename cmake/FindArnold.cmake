@@ -14,7 +14,8 @@
 
 find_library(ARNOLD_LIBRARY
     NAMES ai
-    PATHS $ENV{ARNOLD_HOME}/bin
+    PATHS $ENV{ARNOLD_HOME}/lib
+          $ENV{ARNOLD_HOME}/bin
     DOC "Arnold library")
 
 find_path(ARNOLD_INCLUDE_DIR ai.h

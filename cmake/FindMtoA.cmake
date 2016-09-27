@@ -46,6 +46,9 @@ find_package_handle_standard_args(MtoA
 if(MTOA_FOUND)
     set(ORIGINAL_CMAKE_FIND_LIBRARY_SUFFIXES ${CMAKE_FIND_LIBRARY_SUFFIXES})
     if(WIN32)
+        set(MTOA_LIBRARY_DIR "${MTOA_LOCATION}/lib"
+            CACHE STRING "MtoA library path")
+        find_library(MTOA_mtoa_api_LIBRARY mtoa_api ${MTOA_LIBRARY_DIR})
     elseif(APPLE)
         set(MTOA_LIBRARY_DIR "${MTOA_LOCATION}/bin"
             CACHE STRING "MtoA library path")

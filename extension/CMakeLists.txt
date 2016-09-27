@@ -1,6 +1,6 @@
 set(PLUGIN_NAME openvdb_extension)
 
-add_definitions(-DLINUX -D_BOOL -DREQUIRE_IOSTREAM -pthread -D_LINUX)
+add_definitions(-D_BOOL -DREQUIRE_IOSTREAM)
 
 find_package(Arnold)
 find_package(MtoA)
