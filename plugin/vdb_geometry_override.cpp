@@ -394,6 +394,7 @@ namespace MHWRender{
                     volume_shader->setParameter("volume_origin", bbox_origin);
                 }
                 slices->setShader(volume_shader);
+                shader_manager->releaseShader(volume_shader);
             }
         }
     }
