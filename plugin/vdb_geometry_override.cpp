@@ -385,7 +385,16 @@ namespace MHWRender{
             path effect_file = path(__FILE__).parent_path() / "volume.cgfx";
             auto volume_shader = shader_manager->getEffectsFileShader(effect_file.c_str(), "Main", 0, 0, false);
             if (volume_shader)
+            {
+                if (data)
+                {
+                    MFloatVector bbox_size = data->bbox.max() - data->bbox.min();
+                    MFloatVector bbox_origin = data->bbox.min();
+                    volume_shader->setParameter("volume_size", bbox_size);
+                    volume_shader->setParameter("volume_origin", bbox_origin);
+                }
                 slices->setShader(volume_shader);
+            }
         }
     }
 

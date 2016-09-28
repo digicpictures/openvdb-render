@@ -1,5 +1,7 @@
 float3 view_dir_world : ViewDirection < string Space = "World"; >;
 float4x4 gWVPXf : WorldViewProjection < string UIWidget = "None"; >;
+float3 volume_size <string UIWidget = "None"; >;
+float3 volume_origin <string UIWidget = "None"; >;
 
 struct VERT_INPUT
 {
@@ -29,6 +31,7 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
 		pos = pos.xyz;
 		if (view_dir_world.z > 0) pos.z = 1 - pos.z;
 	}
+	pos = volume_size * pos + volume_origin;
 	res.pos_clip = mul(gWVPXf, float4(pos, 1.0f));
 	res.color = float4(1.0f, 0.0f, 0.0f, 0.1f);
 
