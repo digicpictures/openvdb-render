@@ -1,6 +1,8 @@
 #include "vdb_geometry_override.h"
 #include "../util/maya_utils.hpp"
 
+#include <boost/filesystem.hpp>
+
 #include <maya/MHWGeometry.h>
 #include <maya/MShaderManager.h>
 
@@ -378,7 +380,10 @@ namespace MHWRender{
                                                                             MHWRender::MGeometry::kAll,
                                                                             false);
             list.append(slices);
-            extern MHWRender::MShaderInstance *volume_shader;
+            // TODO: use correct effect file path
+            using boost::filesystem::path;
+            path effect_file = path(__FILE__).parent_path() / "volume.cgfx";
+            auto volume_shader = shader_manager->getEffectsFileShader(effect_file.c_str(), "Main", 0, 0, false);
             if (volume_shader)
                 slices->setShader(volume_shader);
         }
