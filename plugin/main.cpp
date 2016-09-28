@@ -1,8 +1,11 @@
 #include <GL/glew.h>
 
+#include <boost/filesystem.hpp>
+
 #include <maya/MFnPlugin.h>
 #include <maya/MGlobal.h>
 #include <maya/MDrawRegistry.h>
+#include <maya/MShaderManager.h>
 
 #include "vdb_geometry_override.h"
 #include "vdb_visualizer.h"
@@ -10,6 +13,29 @@
 #include "vdb_sampler.h"
 #include "vdb_shader.h"
 #include "vdb_simple_shader.h"
+
+
+MHWRender::MShaderInstance *volume_shader = nullptr;
+const MHWRender::MShaderManager* shader_manager = nullptr;
+void loadVolumeShader()
+{
+    MHWRender::MRenderer* renderer = MHWRender::MRenderer::theRenderer();
+    if (renderer == nullptr)
+        return;
+
+    shader_manager = renderer->getShaderManager();
+    if (shader_manager == nullptr)
+        return;
+
+    using boost::filesystem::path;
+    // TODO: use correct effect file path
+    path effect_file = path(__FILE__).parent_path() / "volume.cgfx";
+    volume_shader = shader_manager->getEffectsFileShader(effect_file.c_str(), "Main", 0, 0, false);
+}
+void unloadVolumeShader()
+{
+    shader_manager->releaseShader(volume_shader);
+}
 
 __declspec(dllexport) MStatus initializePlugin(MObject obj)
 {
@@ -95,6 +121,9 @@ __declspec(dllexport) MStatus initializePlugin(MObject obj)
     if (is_interactive)
         MGlobal::executePythonCommand("import AEvdb_visualizerTemplate; import AEvdb_samplerTemplate; import AEvdb_shaderTemplate");
 
+    // Load volume shader.
+    loadVolumeShader();
+
     return status;
 }
 
@@ -154,6 +183,9 @@ __declspec(dllexport) MStatus uninitializePlugin(MObject obj)
         status.perror("[openvdb] Error deregistering the VDBQuery Command.");
         return status;
     }
+
+    // Unload volume shader.
+    unloadVolumeShader();
 
     openvdb::uninitialize();
 

@@ -359,21 +359,28 @@ namespace MHWRender{
                 bounding_box->setShader(shader);
             }
         }
-        else
+        else if (display_mode == DISPLAY_POINT_CLOUD)
         {
-            if (display_mode == DISPLAY_POINT_CLOUD)
-            {
-                MHWRender::MRenderItem* point_cloud = MHWRender::MRenderItem::Create("point_cloud",
-                                                                                     MHWRender::MGeometry::kPoints,
-                                                                                     MHWRender::MGeometry::kAll,
-                                                                                     false);
-                list.append(point_cloud);
+            MHWRender::MRenderItem* point_cloud = MHWRender::MRenderItem::Create("point_cloud",
+                                                                                 MHWRender::MGeometry::kPoints,
+                                                                                 MHWRender::MGeometry::kAll,
+                                                                                 false);
+            list.append(point_cloud);
 
-                MHWRender::MShaderInstance* shader = shader_manager->getStockShader(
-                        MHWRender::MShaderManager::k3dCPVFatPointShader, nullptr, nullptr);
-                if (shader)
-                    point_cloud->setShader(shader);
-            }
+            MHWRender::MShaderInstance* shader = shader_manager->getStockShader(MHWRender::MShaderManager::k3dCPVFatPointShader, nullptr, nullptr);
+            if (shader)
+                point_cloud->setShader(shader);
+        }
+        else if (display_mode == DISPLAY_SLICES)
+        {
+            MHWRender::MRenderItem* slices = MHWRender::MRenderItem::Create("slices",
+                                                                            MHWRender::MGeometry::kTriangles,
+                                                                            MHWRender::MGeometry::kAll,
+                                                                            false);
+            list.append(slices);
+            extern MHWRender::MShaderInstance *volume_shader;
+            if (volume_shader)
+                slices->setShader(volume_shader);
         }
     }
 
@@ -450,6 +457,7 @@ namespace MHWRender{
         const VDBDisplayMode display_mode = data->display_mode;
 
         if (display_mode == DISPLAY_AXIS_ALIGNED_BBOX || data->vdb_file == nullptr)
+        {
             iterate_reqs(
                 [&](MVertexBufferDescriptor& desc) {
                     if (desc.semantic() != MGeometry::kPosition)
@@ -470,7 +478,9 @@ namespace MHWRender{
                     set_bbox_indices(1);
                 }
             );
+        }
         else if (display_mode == DISPLAY_GRID_BBOX)
+        {
             iterate_reqs(
                 [&](MVertexBufferDescriptor& desc) {
                     if (desc.semantic() != MGeometry::kPosition)
@@ -515,6 +525,7 @@ namespace MHWRender{
                     }
                 }
             );
+        }
         else if (display_mode == DISPLAY_POINT_CLOUD)
         {
             const int index = list.indexOf("point_cloud");
@@ -708,6 +719,97 @@ namespace MHWRender{
                         break;
                     default:
                         std::cerr << "[openvdb_render] Unknown semantic found" << std::endl;
+                    }
+                }
+            );
+        }
+        else if (display_mode == DISPLAY_SLICES)
+        {
+            const int index = list.indexOf("slices");
+            if (index < 0)
+                return;
+            try {
+                if (!data->vdb_file->isOpen())
+                    data->vdb_file->open(false);
+                //if (data->attenuation_grid == nullptr || data->attenuation_grid->getName() != data->attenuation_channel)
+                //    data->attenuation_grid = data->vdb_file->readGrid(data->attenuation_channel);
+                const auto TEST_CHANNEL = "ls_icosahedron";
+                if (data->attenuation_grid == nullptr || data->attenuation_grid->getName() != TEST_CHANNEL)
+                    data->attenuation_grid = data->vdb_file->readGrid(TEST_CHANNEL);
+            }
+            catch(...) {
+                data->attenuation_grid = nullptr;
+                data->scattering_grid = nullptr;
+                data->emission_grid = nullptr;
+                return;
+            }
+
+            const openvdb::Vec3d voxel_size = data->attenuation_grid->voxelSize();
+            const MRenderItem *item = list.itemAt(index);
+            const int slices = 64; // TODO
+
+            // Vertices
+            //std::vector<MFloatVector> vertices;
+            //vertices.reserve(4 * slices);
+            //for (int i = 0; i < slices; ++i)
+            //{
+            //    vertices.emplace_back(0.0, 0.0, 0.0);
+            //    vertices.emplace_back(1.0, 0.0, 0.0);
+            //    vertices.emplace_back(1.0, 1.0, 0.0);
+            //    vertices.emplace_back(0.0, 1.0, 0.0);
+            //}
+
+            // Indices
+            MIndexBuffer* index_buffer = geo.createIndexBuffer(MGeometry::kUnsignedInt32);
+            unsigned int* indices = reinterpret_cast<unsigned int*>(index_buffer->acquire(6 * slices, true));
+            for (unsigned int i = 0; i < slices; ++i) {
+                indices[6*i+0] = 6*i+0;
+                indices[6*i+1] = 6*i+1;
+                indices[6*i+2] = 6*i+2;
+                indices[6*i+3] = 6*i+0;
+                indices[6*i+4] = 6*i+2;
+                indices[6*i+5] = 6*i+3;
+            }
+            index_buffer->commit(indices);
+            item->associateWithIndexBuffer(index_buffer);
+
+            iterate_reqs(
+                [&](MVertexBufferDescriptor& desc) {
+                    switch (desc.semantic())
+                    {
+                    case MGeometry::kPosition:
+                    {
+                        MVertexBuffer* vertex_buffer = geo.createVertexBuffer(desc);
+                        MFloatVector* pc_vertices = reinterpret_cast<MFloatVector*>(vertex_buffer->acquire(static_cast<unsigned int>(4 * slices), true));
+                        for (int i = 0; i < slices; ++i)
+                        {
+                            const float z = i * 1.0 / (slices - 1.0);
+                            pc_vertices[4*i+0] = MFloatVector(0.0, 0.0, z);
+                            pc_vertices[4*i+1] = MFloatVector(1.0, 0.0, z);
+                            pc_vertices[4*i+2] = MFloatVector(1.0, 1.0, z);
+                            pc_vertices[4*i+3] = MFloatVector(0.0, 1.0, z);
+                        }
+                        vertex_buffer->commit(pc_vertices);
+                        break;
+                    }
+                    case MGeometry::kColor:
+                    {
+                        MVertexBuffer* vertex_buffer = geo.createVertexBuffer(desc);
+                        MColor* pc_vertices = reinterpret_cast<MColor*>(vertex_buffer->acquire(static_cast<unsigned int>(4 * slices), true));
+                        for (int i = 0; i < slices; ++i)
+                        {
+                            pc_vertices[4*i+0] = MColor(1.0, 1.0, 0.0);
+                            pc_vertices[4*i+1] = MColor(1.0, 1.0, 0.0);
+                            pc_vertices[4*i+2] = MColor(1.0, 1.0, 0.0);
+                            pc_vertices[4*i+3] = MColor(1.0, 1.0, 0.0);
+                        }
+                        vertex_buffer->commit(pc_vertices);
+                        break;
+                    }
+                    case MGeometry::kNormal:
+                    {
+                        break;
+                    }
                     }
                 }
             );

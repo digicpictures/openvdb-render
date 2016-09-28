@@ -75,7 +75,7 @@ set_target_properties(OpenVDB PROPERTIES INTERFACE_LINK_LIBRARIES      "OpenEXR_
 file(GLOB SRC *.cpp)
 file(GLOB HDR *.h)
 
-add_library(${PLUGIN_NAME} SHARED ${SRC} ${HDR})
+add_library(${PLUGIN_NAME} SHARED ${SRC} ${HDR} volume.cgfx)
 set_target_properties(${PLUGIN_NAME} PROPERTIES PREFIX "")
 set_target_properties(${PLUGIN_NAME} PROPERTIES SUFFIX ".mll")
 target_link_libraries(${PLUGIN_NAME} ${MAYA_LIBS} GLEW GL OpenVDB Boost::regex)

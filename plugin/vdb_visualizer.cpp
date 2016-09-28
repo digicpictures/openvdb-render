@@ -464,6 +464,7 @@ MStatus VDBVisualizerShape::initialize()
     eAttr.addField("Volumetric Non Shaded", DISPLAY_NON_SHADED);
     eAttr.addField("Volumetric Shaded", DISPLAY_SHADED);
     eAttr.addField("Mesh", DISPLAY_MESH);
+    eAttr.addField("Slices", DISPLAY_SLICES);
     eAttr.setDefault(DISPLAY_GRID_BBOX);
 
     addAttribute(s_display_mode);

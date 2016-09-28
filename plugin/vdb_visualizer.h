@@ -21,7 +21,8 @@ enum VDBDisplayMode{
     DISPLAY_POINT_CLOUD,
     DISPLAY_NON_SHADED,
     DISPLAY_SHADED,
-    DISPLAY_MESH
+    DISPLAY_MESH,
+    DISPLAY_SLICES
 };
 
 struct VDBVisualizerData{

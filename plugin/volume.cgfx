@@ -1,0 +1,61 @@
+float3 view_dir_world : ViewDirection < string Space = "World"; >;
+float4x4 gWVPXf : WorldViewProjection < string UIWidget = "None"; >;
+
+struct VERT_INPUT
+{
+	float3 pos_unit_cube : Position;
+};
+
+struct VERT_OUTPUT
+{
+	float4 pos_clip : Position;
+	float4 color : Color0;
+};
+
+VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
+{
+	VERT_OUTPUT res;
+
+	// Slice along axis of steepest angle w.r.t. camera.
+	float ax = abs(view_dir_world.x), ay = abs(view_dir_world.y), az = abs(view_dir_world.z);
+	float3 pos = input.pos_unit_cube;
+    if (ax > ay && ax > az) {
+        pos = pos.zxy;
+		if (view_dir_world.x > 0) pos.x = 1 - pos.x;
+    } else if (ay > ax && ay > az) {
+		pos = pos.yzx;
+		if (view_dir_world.y > 0) pos.y = 1 - pos.y;
+	} else {
+		pos = pos.xyz;
+		if (view_dir_world.z > 0) pos.z = 1 - pos.z;
+	}
+	res.pos_clip = mul(gWVPXf, float4(pos, 1.0f));
+	res.color = float4(1.0f, 0.0f, 0.0f, 0.1f);
+
+	return res;
+}
+
+typedef VERT_OUTPUT FRAG_INPUT;
+
+struct FRAG_OUTPUT
+{
+	float4 color : Color0;
+};
+
+FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
+{
+	FRAG_OUTPUT res;
+
+	res.color = input.color;
+
+	return res;
+}
+
+technique Main // TODO: annotations
+{
+	pass P0 // TODO: annotations
+	{
+		VertexProgram = compile vp40 VolumeVertexShader();
+		FragmentProgram = compile fp40 VolumeFragmentShader();
+	}
+}
