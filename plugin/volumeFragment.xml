@@ -1,0 +1,70 @@
+<fragment uiName="volumeFragment" name="volumeFragment" type="plumbing" class="ShadeFragment" version="1.0">
+    <description><![CDATA[OpenVDB volume shading fragment]]></description>
+    <properties>
+        <float3 name="tex_coords" semantic="mayaUvCoordSemantic" flags="varyingInputParam" />
+    </properties>
+    <values>
+    </values>
+    <outputs>
+        <struct name="output" struct_name="volumeFragmentOutput" />
+    </outputs>
+    <implementation>
+        <implementation render="OGSRenderer" language="Cg" lang_version="2.1">
+            <function_name val="checkerNodePluginFragment" />
+            <source>
+                <![CDATA[
+checkerNodePluginFragmentOutput checkerNodePluginFragment(float3 color1, float3 color2, float2 bias, float2 uv) 
+{ 
+	checkerNodePluginFragmentOutput result; 
+	result.outColor = color1; 
+	result.outAlpha = 0.0f; 
+	uv -= floor(uv); 
+	if ((uv.x < bias.x && uv.y >= bias.y) || (uv.x >= bias.x && uv.y < bias.y)) { 
+		result.outColor = color2; 
+		result.outAlpha = 1.0f; 
+	} 
+	return result; 
+}
+		]]>
+            </source>
+        </implementation>
+        <implementation render="OGSRenderer" language="HLSL" lang_version="11.0">
+            <function_name val="checkerNodePluginFragment" />
+            <source>
+                <![CDATA[
+checkerNodePluginFragmentOutput checkerNodePluginFragment(float3 color1, float3 color2, float2 bias, float2 uv) 
+{ 
+	checkerNodePluginFragmentOutput result; 
+	result.outColor = color1; 
+	result.outAlpha = 0.0f; 
+	uv -= floor(uv); 
+	if ((uv.x < bias.x && uv.y >= bias.y) || (uv.x >= bias.x && uv.y < bias.y)) { 
+		result.outColor = color2; 
+		result.outAlpha = 1.0f; 
+	} 
+	return result; 
+}
+		]]>
+            </source>
+        </implementation>
+        <implementation render="OGSRenderer" language="GLSL" lang_version="3.0">
+            <function_name val="checkerNodePluginFragment" />
+            <source>
+                <![CDATA[
+checkerNodePluginFragmentOutput checkerNodePluginFragment(vec3 color1, vec3 color2, vec2 bias, vec2 uv) 
+{ 
+	checkerNodePluginFragmentOutput result; 
+	result.outColor = color1; 
+	result.outAlpha = 0.0f; 
+	uv -= floor(uv); 
+	if ((uv.x < bias.x && uv.y >= bias.y) || (uv.x >= bias.x && uv.y < bias.y)) { 
+		result.outColor = color2; 
+		result.outAlpha = 1.0f; 
+	} 
+	return result; 
+}
+		]]>
+            </source>
+        </implementation>
+    </implementation>
+</fragment>

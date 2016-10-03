@@ -1,6 +1,10 @@
 set(PLUGIN_NAME openvdb_render)
 
+# Compile-time reduction
+include(U:/development/gilianz/common/cmake/cotire.cmake)
+
 add_definitions(-D_BOOL -DREQUIRE_IOSTREAM)
+add_definitions(-D_SCL_SECURE_NO_WARNINGS)
 
 # Maya
 find_package(Maya 2015)
@@ -73,17 +77,19 @@ set_target_properties(OpenVDB PROPERTIES INTERFACE_LINK_LIBRARIES      "OpenEXR_
 
 # lib
 file(GLOB SRC *.cpp)
-file(GLOB HDR *.h)
+file(GLOB HDR_h *.h)
+file(GLOB HDR_hpp *.hpp)
 
-add_library(${PLUGIN_NAME} SHARED ${SRC} ${HDR} volume.cgfx)
+add_library(${PLUGIN_NAME} SHARED ${SRC} ${HDR_h} ${HDR_hpp} volume.cgfx)
 set_target_properties(${PLUGIN_NAME} PROPERTIES PREFIX "")
 set_target_properties(${PLUGIN_NAME} PROPERTIES SUFFIX ".mll")
 target_link_libraries(${PLUGIN_NAME} ${MAYA_LIBS} GLEW GL OpenVDB Boost::regex)
+
+cotire(${PLUGIN_NAME})
 
 install(TARGETS ${PLUGIN_NAME}
         DESTINATION plug-ins)
 
 file(GLOB TEMPLATES template/*.py)
 
-install(FILES ${TEMPLATES}
-        DESTINATION scripts)
+install(FILES ${TEMPLATES} DESTINATION scripts)

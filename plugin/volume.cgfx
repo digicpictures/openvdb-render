@@ -1,64 +1,104 @@
 float3 view_dir_world : ViewDirection < string Space = "World"; >;
-float4x4 gWVPXf : WorldViewProjection < string UIWidget = "None"; >;
-float3 volume_size <string UIWidget = "None"; >;
-float3 volume_origin <string UIWidget = "None"; >;
+float4x4 world_mat : World < string UIWidget = "None"; >;
+float4x4 world_view_proj_mat : WorldViewProjection < string UIWidget = "None"; >;
+float3 volume_size < string UIWidget = "None"; >;
+float3 volume_origin < string UIWidget = "None"; >;
+texture volume_texture < string UIWidget = "None"; string TextureType = "3D"; >;
+sampler3D volume_sampler = sampler_state {
+    Texture = <volume_texture>;
+};
+
+// ======== VERTEX SHADER ========
 
 struct VERT_INPUT
 {
-	float3 pos_unit_cube : Position;
+    float3 pos_unit_cube : Position;
 };
 
 struct VERT_OUTPUT
 {
-	float4 pos_clip : Position;
-	float4 color : Color0;
+    float4 pos_clip : Position;
+    float3 tex_coord : Texcoord0;
 };
 
 VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
 {
-	VERT_OUTPUT res;
+    VERT_OUTPUT res;
 
-	// Slice along axis of steepest angle w.r.t. camera.
-	float ax = abs(view_dir_world.x), ay = abs(view_dir_world.y), az = abs(view_dir_world.z);
-	float3 pos = input.pos_unit_cube;
+    //int num_slices = tex3Dsize(volume_sampler, 0).z;
+    //int num_slices = 32; // for testing
+    //res.tex_coord = float3(input.vid & 1, (input.vid & 2) >> 1, float(input.vid >> 2) / float(num_slices - 1));
+    //res.tex_coord = input.pos_model;
+    //res.tex_coord = input.pos_model;
+    //res.pos_clip = mul(gWVPXf, float4(input.pos_model, 1.0f));
+
+    //return res;
+
+#if 1
+    // Transform back to unit cube for easier slice realignment.
+    //float3 pos = (input.pos_model - volume_origin) / volume_size;
+
+    float3 pos = input.pos_unit_cube;
+
+    // Slice along axis of steepest angle w.r.t. camera.
+    float3 local_x_world = normalize(world_mat._m00_m10_m20);
+    float3 local_y_world = normalize(world_mat._m01_m11_m21);
+    float3 local_z_world = normalize(world_mat._m02_m12_m22);
+    float x = dot(local_x_world, view_dir_world),
+          y = dot(local_y_world, view_dir_world),
+          z = dot(local_z_world, view_dir_world);
+    float ax = abs(x), ay = abs(y), az = abs(z);
     if (ax > ay && ax > az) {
         pos = pos.zxy;
-		if (view_dir_world.x > 0) pos.x = 1 - pos.x;
+        if (x > 0) pos.x = 1 - pos.x;
     } else if (ay > ax && ay > az) {
-		pos = pos.yzx;
-		if (view_dir_world.y > 0) pos.y = 1 - pos.y;
-	} else {
-		pos = pos.xyz;
-		if (view_dir_world.z > 0) pos.z = 1 - pos.z;
-	}
-	pos = volume_size * pos + volume_origin;
-	res.pos_clip = mul(gWVPXf, float4(pos, 1.0f));
-	res.color = float4(1.0f, 0.0f, 0.0f, 0.1f);
+        pos = pos.yzx;
+        if (y > 0) pos.y = 1 - pos.y;
+    } else {
+        pos = pos.xyz;
+        if (z > 0) pos.z = 1 - pos.z;
+    }
 
-	return res;
+    // Pass adjusted unit cube position to fragment shader.
+    res.tex_coord = pos;
+
+    // Transform to model space, and then clip space.
+    pos = volume_size * pos + volume_origin;
+    res.pos_clip = mul(world_view_proj_mat, float4(pos, 1.0f));
+
+    return res;
+#endif
 }
+
+// ======== FRAGMENT SHADER ========
 
 typedef VERT_OUTPUT FRAG_INPUT;
 
 struct FRAG_OUTPUT
 {
-	float4 color : Color0;
+    float4 color : Color0;
 };
 
 FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
 {
-	FRAG_OUTPUT res;
+    FRAG_OUTPUT res;
 
-	res.color = input.color;
+    float density = tex3D(volume_sampler, input.tex_coord).r;
+    res.color = float4(density, density, density, density);
+    //res.color = float4(0, 1, 0, 0.3f);
+    //res.color = float4(input.tex_coord, 1.0f);
 
-	return res;
+    return res;
 }
 
-technique Main // TODO: annotations
+technique Main < int isTransparent = 1; > // TODO: annotations
 {
-	pass P0 // TODO: annotations
-	{
-		VertexProgram = compile vp40 VolumeVertexShader();
-		FragmentProgram = compile fp40 VolumeFragmentShader();
-	}
+    pass P0 // TODO: annotations
+    {
+        BlendEnable = true;
+        BlendFunc = int2(SrcAlpha, OneMinusSrcAlpha);
+        CullFaceEnable = false;
+        VertexProgram = compile gp5vp VolumeVertexShader();
+        FragmentProgram = compile gp5fp VolumeFragmentShader();
+    }
 }

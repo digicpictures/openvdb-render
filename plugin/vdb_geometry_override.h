@@ -6,31 +6,30 @@
 
 #include "vdb_visualizer.h"
 
-namespace MHWRender{
-    struct VDBGeometryOverrideData;
-    class VDBGeometryOverride : public MPxGeometryOverride{
-    public:
-        VDBGeometryOverride(const MObject& obj);
-        ~VDBGeometryOverride();
+struct VDBGeometryOverrideData;
+class VDBGeometryOverride : public MHWRender::MPxGeometryOverride
+{
+public:
+    VDBGeometryOverride(const MObject& obj);
+    ~VDBGeometryOverride();
 
-        static MPxGeometryOverride* creator(const MObject& obj);
+    static MHWRender::MPxGeometryOverride* creator(const MObject& obj);
 
-        void updateDG();
+    void updateDG();
 
-        void updateRenderItems(
-            const MDagPath& path,
-            MRenderItemList& list);
+    void updateRenderItems(
+        const MDagPath& path,
+        MHWRender::MRenderItemList& list);
 
-        void populateGeometry(
-            const MGeometryRequirements& requirements,
-            const MHWRender::MRenderItemList& renderItems,
-            MGeometry& data);
-        void cleanUp();
+    void populateGeometry(
+        const MHWRender::MGeometryRequirements& requirements,
+        const MHWRender::MRenderItemList& renderItems,
+        MHWRender::MGeometry& data);
+    void cleanUp();
 
-        static MString registrantId;
-    private:
-        VDBVisualizerShape* p_vdb_visualizer;
+    static MString registrantId;
+private:
+    VDBVisualizerShape* p_vdb_visualizer;
 
-        std::unique_ptr<VDBGeometryOverrideData> p_data;
-    };
-}
+    std::unique_ptr<VDBGeometryOverrideData> p_data;
+};

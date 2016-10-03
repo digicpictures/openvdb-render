@@ -1,8 +1,9 @@
 #pragma once
 
+#define NOMINMAX
+
 #include <maya/MPxSurfaceShape.h>
 #include <maya/MPxSurfaceShapeUI.h>
-#include <maya/MBoundingBox.h>
 
 #include <openvdb/openvdb.h>
 // std regex in gcc 4.8.3 is broken
@@ -10,51 +11,10 @@
 #include <maya/MNodeMessage.h>
 #include <maya/MDGMessage.h>
 
+#include "vdb_visualizer_data.h"
 #include "vdb_sampler.h"
-#include "gradient.hpp"
 #include "vdb_shader.h"
 #include "vdb_simple_shader.h"
-
-enum VDBDisplayMode{
-    DISPLAY_AXIS_ALIGNED_BBOX = 0,
-    DISPLAY_GRID_BBOX,
-    DISPLAY_POINT_CLOUD,
-    DISPLAY_NON_SHADED,
-    DISPLAY_SHADED,
-    DISPLAY_MESH,
-    DISPLAY_SLICES
-};
-
-struct VDBVisualizerData{
-    MBoundingBox bbox;
-
-    MFloatVector scattering_color;
-    MFloatVector attenuation_color;
-    MFloatVector emission_color;
-
-    std::string vdb_path;
-    std::string attenuation_channel;
-    std::string scattering_channel;
-    std::string emission_channel;
-
-    Gradient scattering_gradient;
-    Gradient attenuation_gradient;
-    Gradient emission_gradient;
-
-    openvdb::io::File* vdb_file;
-
-    float point_size;
-    float point_jitter;
-
-    int point_skip;
-    int update_trigger;
-    VDBDisplayMode display_mode;
-
-    VDBVisualizerData();
-    ~VDBVisualizerData();
-
-    void clear(const MBoundingBox& bb = MBoundingBox());
-};
 
 class VDBVisualizerShapeUI : public MPxSurfaceShapeUI {
 public:

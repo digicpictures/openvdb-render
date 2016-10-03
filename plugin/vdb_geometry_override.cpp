@@ -5,8 +5,13 @@
 
 #include <maya/MHWGeometry.h>
 #include <maya/MShaderManager.h>
+#include <maya/MTextureManager.h>
 
+#include <openvdb/tools/Dense.h>
+#include <openvdb/tools/GridTransformer.h>
 #include <openvdb/tools/Interpolation.h>
+#include <openvdb/tools/ValueTransformer.h>
+#include <openvdb/tree/LeafManager.h>
 #include <openvdb/Exceptions.h>
 
 #include <tbb/task_scheduler_init.h>
@@ -15,6 +20,7 @@
 #include <iostream>
 #include <random>
 
+using namespace MHWRender;
 
 namespace{
     class RGBSampler {
@@ -201,639 +207,806 @@ namespace{
     }
 }
 
-namespace MHWRender{
-    //const int point_cloud_draw_mode = MHWRender::MGeometry::kShaded | MHWRender::MGeometry::kTextured | MHWRender::MGeometry::kWireframe;
+//const int point_cloud_draw_mode = MHWRender::MGeometry::kShaded | MHWRender::MGeometry::kTextured | MHWRender::MGeometry::kWireframe;
 
-    struct VDBGeometryOverrideData {
-        MBoundingBox bbox;
+struct VDBGeometryOverrideData {
+    MBoundingBox bbox;
 
-        MFloatVector scattering_color;
-        MFloatVector attenuation_color;
-        MFloatVector emission_color;
+    MFloatVector scattering_color;
+    MFloatVector attenuation_color;
+    MFloatVector emission_color;
 
-        std::string attenuation_channel;
-        std::string scattering_channel;
-        std::string emission_channel;
+    std::string attenuation_channel;
+    std::string scattering_channel;
+    std::string emission_channel;
 
-        Gradient scattering_gradient;
-        Gradient attenuation_gradient;
-        Gradient emission_gradient;
+    Gradient scattering_gradient;
+    Gradient attenuation_gradient;
+    Gradient emission_gradient;
 
-        std::unique_ptr<openvdb::io::File> vdb_file;
-        openvdb::GridBase::ConstPtr scattering_grid;
-        openvdb::GridBase::ConstPtr attenuation_grid;
-        openvdb::GridBase::ConstPtr emission_grid;
+    std::unique_ptr<openvdb::io::File> vdb_file;
+    openvdb::GridBase::ConstPtr scattering_grid;
+    openvdb::GridBase::ConstPtr attenuation_grid;
+    openvdb::GridBase::ConstPtr emission_grid;
+    MTexture *volume_texture;
 
-        float point_size;
-        float point_jitter;
+    float point_size;
+    float point_jitter;
 
-        int point_skip;
-        VDBDisplayMode display_mode;
+    int point_skip;
+    VDBDisplayMode display_mode;
 
-        bool has_changed;
+    bool has_changed;
 
-        VDBGeometryOverrideData();
-        void clear();
+    VDBGeometryOverrideData();
+    void clear();
+};
+
+VDBGeometryOverrideData::VDBGeometryOverrideData() : vdb_file(nullptr), volume_texture(nullptr), has_changed(false)
+{
+
+}
+
+void VDBGeometryOverrideData::clear()
+{
+    scattering_grid = 0;
+    attenuation_grid = 0;
+    emission_grid = 0;
+    vdb_file.reset();
+}
+
+VDBGeometryOverride::VDBGeometryOverride(const MObject& obj) : MPxGeometryOverride(obj), p_data(new VDBGeometryOverrideData)
+{
+    MFnDependencyNode dnode(obj);
+    p_vdb_visualizer = dynamic_cast<VDBVisualizerShape*>(dnode.userNode());
+}
+
+VDBGeometryOverride::~VDBGeometryOverride()
+{
+
+}
+
+MPxGeometryOverride* VDBGeometryOverride::creator(const MObject& obj)
+{
+    return new VDBGeometryOverride(obj);
+}
+
+namespace
+{
+    template<class TreeType>
+    class MinMaxVoxel
+    {
+    public:
+        typedef openvdb::tree::LeafManager<TreeType> LeafArray;
+        typedef typename TreeType::ValueType ValueType;
+
+        MinMaxVoxel(LeafArray& leafs)
+            : mLeafArray(leafs), mMin(std::numeric_limits<ValueType>::max()), mMax(-mMin) {}
+        MinMaxVoxel(const MinMaxVoxel<TreeType>& rhs, tbb::split)
+            : mLeafArray(rhs.mLeafArray), mMin(std::numeric_limits<ValueType>::max()), mMax(-mMin) {}
+
+        void runParallel() { tbb::parallel_reduce(mLeafArray.getRange(), *this); }
+        void runSerial() { (*this)(mLeafArray.getRange()); }
+
+        const ValueType& minVoxel() const { return mMin; }
+        const ValueType& maxVoxel() const { return mMax; }
+
+        inline void operator()(const tbb::blocked_range<size_t>& range)
+        {
+            typename TreeType::LeafNodeType::ValueOnCIter iter;
+
+            for (size_t n = range.begin(); n < range.end(); ++n) {
+                iter = mLeafArray.leaf(n).cbeginValueOn();
+                for (; iter; ++iter) {
+                    const ValueType value = iter.getValue();
+                    mMin = std::min(mMin, value);
+                    mMax = std::max(mMax, value);
+                }
+            }
+        }
+
+        inline void join(const MinMaxVoxel<TreeType>& rhs)
+        {
+            mMin = std::min(mMin, rhs.mMin);
+            mMax = std::max(mMax, rhs.mMax);
+        }
+
+    private:
+        LeafArray& mLeafArray;
+        ValueType mMin, mMax;
     };
 
-    VDBGeometryOverrideData::VDBGeometryOverrideData() : vdb_file(nullptr), has_changed(false)
+    openvdb::Vec3d operator/(const openvdb::Coord& lhs, const openvdb::Coord& rhs)
     {
-
+        return{ double(lhs.x()) / rhs.x(), double(lhs.y()) / rhs.y(), double(lhs.z()) / rhs.z() };
     }
 
-    void VDBGeometryOverrideData::clear()
+    MTexture* volumeTextureFromGrid(const openvdb::FloatGrid* grid, const openvdb::Coord& slice_counts, MTextureManager *texture_manager)
     {
-        scattering_grid = 0;
-        attenuation_grid = 0;
-        emission_grid = 0;
-        vdb_file.reset();
-    }
+#if 1
+        using namespace openvdb;
 
-    VDBGeometryOverride::VDBGeometryOverride(const MObject& obj) : MPxGeometryOverride(obj), p_data(new VDBGeometryOverrideData)
-    {
-        MFnDependencyNode dnode(obj);
-        p_vdb_visualizer = dynamic_cast<VDBVisualizerShape*>(dnode.userNode());
-    }
+        //Timer timer;
 
-    VDBGeometryOverride::~VDBGeometryOverride()
-    {
+        CoordBBox grid_bbox;
+        grid->tree().evalActiveVoxelBoundingBox(grid_bbox);
 
-    }
+        // Scale and filter grid to slice_counts size.
+        //timer.start("Scaling and filtering grid...");
+        FloatGrid::Ptr filtered_grid = FloatGrid::create(grid->background());
+        const auto scale_factor = slice_counts / grid_bbox.extents();
+        tools::GridTransformer(math::scale<Mat4R>(scale_factor)).transformGrid<tools::BoxSampler, FloatGrid>(*grid, *filtered_grid);
+        CoordBBox filtered_grid_bbox;
+        filtered_grid->tree().evalActiveVoxelBoundingBox(filtered_grid_bbox);
+        //timer.end();
 
-    MPxGeometryOverride* VDBGeometryOverride::creator(const MObject& obj)
-    {
-        return new VDBGeometryOverride(obj);
-    }
-
-    void VDBGeometryOverride::updateDG()
-    {
-        VDBVisualizerData* vis_data = p_vdb_visualizer->get_update();
-
-        if (vis_data == 0)
-            return;
-
-        VDBGeometryOverrideData* data = p_data.get();
-
-        const std::string& filename = vis_data->vdb_path;
-        auto open_file = [&] () {
-            data->has_changed = true;
-            data->clear();
-
-            try{
-                data->vdb_file.reset(new openvdb::io::File(filename));
-            }
-            catch(...){
-                data->vdb_file.reset();
-            }
-        };
-
-        if (filename.empty())
+        // Transform grid values to [0, 1].
+        //timer.start("Rescaling grid values to [0, 1]...");
+        float min_voxel_value, max_voxel_value;
+        tree::LeafManager<const FloatTree> leafs(filtered_grid->tree());
         {
-            data->has_changed = true;
-            data->clear();
+            MinMaxVoxel<const FloatTree> minmax(leafs);
+            minmax.runParallel();
+            min_voxel_value = minmax.minVoxel();
+            max_voxel_value = minmax.maxVoxel();
         }
-        else if (data->vdb_file == nullptr)
-            open_file();
-        else if (filename != data->vdb_file->filename())
-            open_file();
+        tools::foreach(filtered_grid->beginValueAll(), [min_voxel_value, max_voxel_value](const FloatGrid::ValueAllIter& iter) {
+            iter.setValue((*iter - min_voxel_value) / (max_voxel_value - min_voxel_value));
+        });
+        //timer.end();
 
-        data->has_changed |= setup_parameter(data->display_mode, vis_data->display_mode);
-        data->has_changed |= setup_parameter(data->bbox, vis_data->bbox);
+        // Create dense grid.
+        //timer.start("Creating dense grid...");
+        using FloatDenseGrid = tools::Dense<float, tools::LayoutXYZ>;
+        FloatDenseGrid dense_grid(filtered_grid_bbox);
+        tools::copyToDense(*filtered_grid, dense_grid);
+        //timer.end();
 
-        data->has_changed |= setup_parameter(data->scattering_color, vis_data->scattering_color);
-        data->has_changed |= setup_parameter(data->attenuation_color, vis_data->attenuation_color);
-        data->has_changed |= setup_parameter(data->emission_color, vis_data->emission_color);
+        // Create output texture.
+        //out_volume.genTexture(filtered_grid_bbox.extents(), dense_grid.data());
+        const auto extents = filtered_grid_bbox.extents();
+#else
+        const auto extents = slice_counts;
+#endif
 
-        data->has_changed |= setup_parameter(data->attenuation_channel, vis_data->attenuation_channel);
-        data->has_changed |= setup_parameter(data->scattering_channel, vis_data->scattering_channel);
-        data->has_changed |= setup_parameter(data->emission_channel, vis_data->emission_channel);
+        MHWRender::MTextureDescription texture_desc;
+        texture_desc.fWidth =  extents.x();
+        texture_desc.fHeight = extents.y();
+        texture_desc.fDepth =  extents.z();
+        texture_desc.fBytesPerRow = 4 * texture_desc.fWidth;
+        texture_desc.fBytesPerSlice = texture_desc.fBytesPerRow * texture_desc.fHeight;
+        //texture_desc.fBytesPerRow = 0;
+        //texture_desc.fBytesPerSlice = 0;
+        texture_desc.fMipmaps = 1;
+        texture_desc.fFormat = kR32_FLOAT;
+        texture_desc.fTextureType = kVolumeTexture;
+        texture_desc.fEnvMapType = kEnvNone;
 
-        data->has_changed |= setup_parameter(data->scattering_gradient, vis_data->scattering_gradient);
-        data->has_changed |= setup_parameter(data->attenuation_gradient, vis_data->attenuation_gradient);
-        data->has_changed |= setup_parameter(data->emission_gradient, vis_data->emission_gradient);
+        return texture_manager->acquireTexture("", texture_desc, dense_grid.data(), false);
 
-        data->has_changed |= setup_parameter(data->point_size, vis_data->point_size);
-        data->has_changed |= setup_parameter(data->point_jitter, vis_data->point_jitter);
-
-        data->has_changed |= setup_parameter(data->point_skip, vis_data->point_skip);
-    }
-
-    void VDBGeometryOverride::updateRenderItems(const MDagPath&, MRenderItemList& list)
-    {
-        VDBGeometryOverrideData* data = p_data.get();
-
-        if (!data->has_changed)
-            return;
-
-        for (int i = list.length() - 1; i >= 0; --i)
-            list.removeAt(i);
-        list.clear();
-
-        MHWRender::MRenderer* renderer = MHWRender::MRenderer::theRenderer();
-        if (renderer == nullptr)
-            return;
-
-        const MHWRender::MShaderManager* shader_manager = renderer->getShaderManager();
-        if (shader_manager == nullptr)
-            return;
-
-        const bool file_exists = data->vdb_file != nullptr;
-        const VDBDisplayMode display_mode = data->display_mode;
-
-        if (!file_exists || display_mode <= DISPLAY_GRID_BBOX)
-        {
-            MHWRender::MRenderItem* bounding_box = MHWRender::MRenderItem::Create("bounding_box",
-                                                                                  MHWRender::MGeometry::kLines,
-                                                                                  MHWRender::MGeometry::kAll,
-                                                                                  false);
-
-            list.append(bounding_box);
-
-            MHWRender::MShaderInstance* shader = shader_manager->getStockShader(
-                    MHWRender::MShaderManager::k3dSolidShader, nullptr, nullptr);
-            if (shader)
-            {
-                // Set the color on the shader instance using the parameter interface
-                static const float color[] = {0.0f, 1.0f, 0.0f, 1.0f};
-                shader->setParameter("solidColor", color);
-
-                // Assign the shader to the custom render item
-                bounding_box->setShader(shader);
-            }
-        }
-        else if (display_mode == DISPLAY_POINT_CLOUD)
-        {
-            MHWRender::MRenderItem* point_cloud = MHWRender::MRenderItem::Create("point_cloud",
-                                                                                 MHWRender::MGeometry::kPoints,
-                                                                                 MHWRender::MGeometry::kAll,
-                                                                                 false);
-            list.append(point_cloud);
-
-            MHWRender::MShaderInstance* shader = shader_manager->getStockShader(MHWRender::MShaderManager::k3dCPVFatPointShader, nullptr, nullptr);
-            if (shader)
-                point_cloud->setShader(shader);
-        }
-        else if (display_mode == DISPLAY_SLICES)
-        {
-            MHWRender::MRenderItem* slices = MHWRender::MRenderItem::Create("slices",
-                                                                            MHWRender::MGeometry::kTriangles,
-                                                                            MHWRender::MGeometry::kAll,
-                                                                            false);
-            list.append(slices);
-            // TODO: use correct effect file path
-            using boost::filesystem::path;
-            path effect_file = path(__FILE__).parent_path() / "volume.cgfx";
-            auto volume_shader = shader_manager->getEffectsFileShader(effect_file.c_str(), "Main", 0, 0, false);
-            if (volume_shader)
-            {
-                if (data)
-                {
-                    MFloatVector bbox_size = data->bbox.max() - data->bbox.min();
-                    MFloatVector bbox_origin = data->bbox.min();
-                    volume_shader->setParameter("volume_size", bbox_size);
-                    volume_shader->setParameter("volume_origin", bbox_origin);
-                }
-                slices->setShader(volume_shader);
-                shader_manager->releaseShader(volume_shader);
-            }
-        }
-    }
-
-    void VDBGeometryOverride::populateGeometry(const MGeometryRequirements& reqs,
-                                               const MHWRender::MRenderItemList& list, MGeometry& geo)
-    {
-        // if I want to profile, or debug, the unique_ptr does a lots of extra checks
-        // which skews my input data, so have to use a bare pointer here
-        VDBGeometryOverrideData* data = p_data.get();
-
-        if (!data->has_changed)
-            return;
-
-        data->has_changed = false;
-
-        auto set_bbox_indices = [&](const unsigned int num_bboxes){
-            const int index = list.indexOf("bounding_box");
-            if (index >= 0)
-            {
-                const MRenderItem* item = list.itemAt(index);
-                if (item != nullptr)
-                {
-                    MIndexBuffer* index_buffer = geo.createIndexBuffer(MGeometry::kUnsignedInt32);
-                    unsigned int* indices = reinterpret_cast<unsigned int*>(index_buffer->acquire(24 * num_bboxes, true));
-                    unsigned int id = 0;
-                    for (unsigned int bbox = 0; bbox < num_bboxes; ++bbox)
-                    {
-                        const unsigned int bbox_base = bbox * 8;
-                        indices[id++] = bbox_base;
-                        indices[id++] = bbox_base + 1;
-                        indices[id++] = bbox_base + 1;
-                        indices[id++] = bbox_base + 2;
-                        indices[id++] = bbox_base + 2;
-                        indices[id++] = bbox_base + 3;
-                        indices[id++] = bbox_base + 3;
-                        indices[id++] = bbox_base;
-
-                        indices[id++] = bbox_base + 4;
-                        indices[id++] = bbox_base + 5;
-                        indices[id++] = bbox_base + 5;
-                        indices[id++] = bbox_base + 6;
-                        indices[id++] = bbox_base + 6;
-                        indices[id++] = bbox_base + 7;
-                        indices[id++] = bbox_base + 7;
-                        indices[id++] = bbox_base + 4;
-
-                        indices[id++] = bbox_base;
-                        indices[id++] = bbox_base + 4;
-                        indices[id++] = bbox_base + 1;
-                        indices[id++] = bbox_base + 5;
-                        indices[id++] = bbox_base + 2;
-                        indices[id++] = bbox_base + 6;
-                        indices[id++] = bbox_base + 3;
-                        indices[id++] = bbox_base + 7;
-                    }
-                    index_buffer->commit(indices);
-                    item->associateWithIndexBuffer(index_buffer);
+#if 0
+        std::vector<float> v(extents.x() * extents.y() * extents.z());
+        for (int k = 0; k < extents.z(); ++k) {
+            for (int j = 0; j < extents.y(); ++j) {
+                for (int i = 0; i < extents.x(); ++i) {
+                    int idx = i + extents.x() * j + extents.x() * extents.y() * k;
+                    v[idx] = (float(i) / extents.x()) * (float(j) / extents.y()) * (float(k) / extents.z());
                 }
             }
-        };
-
-        auto iterate_reqs = [&] (std::function<void(MVertexBufferDescriptor&)> func) {
-            const MVertexBufferDescriptorList& desc_list = reqs.vertexRequirements();
-            const int num_desc = desc_list.length();
-            for (int i = 0; i < num_desc; ++i)
-            {
-                MVertexBufferDescriptor desc;
-                if (!desc_list.getDescriptor(i, desc))
-                    continue;
-                func(desc);
-            }
-        };
-
-        const VDBDisplayMode display_mode = data->display_mode;
-
-        if (display_mode == DISPLAY_AXIS_ALIGNED_BBOX || data->vdb_file == nullptr)
-        {
-            iterate_reqs(
-                [&](MVertexBufferDescriptor& desc) {
-                    if (desc.semantic() != MGeometry::kPosition)
-                        return;
-                    MVertexBuffer* vertex_buffer = geo.createVertexBuffer(desc);
-                    MFloatVector* bbox_vertices = reinterpret_cast<MFloatVector*>(vertex_buffer->acquire(8, true));
-                    MFloatVector min = data->bbox.min();
-                    MFloatVector max = data->bbox.max();
-                    bbox_vertices[0] = MFloatVector(min.x, min.y, min.z);
-                    bbox_vertices[1] = MFloatVector(min.x, max.y, min.z);
-                    bbox_vertices[2] = MFloatVector(min.x, max.y, max.z);
-                    bbox_vertices[3] = MFloatVector(min.x, min.y, max.z);
-                    bbox_vertices[4] = MFloatVector(max.x, min.y, min.z);
-                    bbox_vertices[5] = MFloatVector(max.x, max.y, min.z);
-                    bbox_vertices[6] = MFloatVector(max.x, max.y, max.z);
-                    bbox_vertices[7] = MFloatVector(max.x, min.y, max.z);
-                    vertex_buffer->commit(bbox_vertices);
-                    set_bbox_indices(1);
-                }
-            );
         }
-        else if (display_mode == DISPLAY_GRID_BBOX)
-        {
-            iterate_reqs(
-                [&](MVertexBufferDescriptor& desc) {
-                    if (desc.semantic() != MGeometry::kPosition)
-                        return;
-                    try{
-                        if (!data->vdb_file->isOpen())
-                            data->vdb_file->open(false);
-                        openvdb::GridPtrVecPtr grids = data->vdb_file->readAllGridMetadata();
-                        if (grids->size() == 0)
-                            return;
-                        std::vector<MFloatVector> vertices;
-                        vertices.reserve(grids->size() * 8);
-                        auto push_back_wireframe = [&] (openvdb::GridBase::ConstPtr grid) {
-                            std::array<MFloatVector, 8> _vertices;
-                            if (read_grid_transformed_bbox_wire(grid, _vertices))
-                            {
-                                for (int v = 0; v < 8; ++v)
-                                    vertices.push_back(_vertices[v]);
-                            }
-                        };
+        return texture_manager->acquireTexture("", texture_desc, v.data(), false);
+#endif
+    }
+} // unnamed namespace
 
-                        for (openvdb::GridPtrVec::const_iterator it = grids->begin(); it != grids->end(); ++it)
-                        {
-                            if (openvdb::GridBase::ConstPtr grid = *it)
-                                push_back_wireframe(grid);
-                        }
+void VDBGeometryOverride::updateDG()
+{
+    std::cout << "VDBGeometryOverride::updateDG" << std::endl;
+    VDBVisualizerData* vis_data = p_vdb_visualizer->get_update();
 
-                        const unsigned int vertex_count = static_cast<unsigned int>(vertices.size());
+    if (vis_data == 0)
+        return;
 
-                        if (vertex_count > 0)
-                        {
-                            MVertexBuffer* vertex_buffer = geo.createVertexBuffer(desc);
-                            MFloatVector* bbox_vertices = reinterpret_cast<MFloatVector*>(vertex_buffer->acquire(vertex_count, true));
-                            for (unsigned int i = 0; i < vertex_count; ++i)
-                                bbox_vertices[i] = vertices[i];
-                            vertex_buffer->commit(bbox_vertices);
-                            set_bbox_indices(vertex_count / 8);
-                        }
-                    }
-                    catch(...)
-                    {
-                    }
-                }
-            );
+    VDBGeometryOverrideData* data = p_data.get();
+
+    const std::string& filename = vis_data->vdb_path;
+    auto open_file = [&] () {
+        data->has_changed = true;
+        data->clear();
+
+        try{
+            data->vdb_file.reset(new openvdb::io::File(filename));
         }
-        else if (display_mode == DISPLAY_POINT_CLOUD)
+        catch(...){
+            data->vdb_file.reset();
+        }
+    };
+
+    if (filename.empty())
+    {
+        data->has_changed = true;
+        data->clear();
+    }
+    else if (data->vdb_file == nullptr)
+        open_file();
+    else if (filename != data->vdb_file->filename())
+        open_file();
+
+    data->has_changed |= setup_parameter(data->display_mode, vis_data->display_mode);
+    data->has_changed |= setup_parameter(data->bbox, vis_data->bbox);
+
+    data->has_changed |= setup_parameter(data->scattering_color, vis_data->scattering_color);
+    data->has_changed |= setup_parameter(data->attenuation_color, vis_data->attenuation_color);
+    data->has_changed |= setup_parameter(data->emission_color, vis_data->emission_color);
+
+    data->has_changed |= setup_parameter(data->attenuation_channel, vis_data->attenuation_channel);
+    data->has_changed |= setup_parameter(data->scattering_channel, vis_data->scattering_channel);
+    data->has_changed |= setup_parameter(data->emission_channel, vis_data->emission_channel);
+
+    data->has_changed |= setup_parameter(data->scattering_gradient, vis_data->scattering_gradient);
+    data->has_changed |= setup_parameter(data->attenuation_gradient, vis_data->attenuation_gradient);
+    data->has_changed |= setup_parameter(data->emission_gradient, vis_data->emission_gradient);
+
+    data->has_changed |= setup_parameter(data->point_size, vis_data->point_size);
+    data->has_changed |= setup_parameter(data->point_jitter, vis_data->point_jitter);
+
+    data->has_changed |= setup_parameter(data->point_skip, vis_data->point_skip);
+}
+
+void VDBGeometryOverride::updateRenderItems(const MDagPath&, MRenderItemList& list)
+{
+    VDBGeometryOverrideData* data = p_data.get();
+
+    if (!data->has_changed)
+        return;
+
+    for (int i = list.length() - 1; i >= 0; --i)
+        list.removeAt(i);
+    list.clear();
+
+    MHWRender::MRenderer* renderer = MHWRender::MRenderer::theRenderer();
+    if (renderer == nullptr)
+        return;
+
+    const MHWRender::MShaderManager* shader_manager = renderer->getShaderManager();
+    if (shader_manager == nullptr)
+        return;
+
+    const bool file_exists = data->vdb_file != nullptr;
+    const VDBDisplayMode display_mode = data->display_mode;
+
+    if (!file_exists || display_mode <= DISPLAY_GRID_BBOX)
+    {
+        MHWRender::MRenderItem* bounding_box = MHWRender::MRenderItem::Create("bounding_box",
+                                                                              MHWRender::MGeometry::kLines,
+                                                                              MHWRender::MGeometry::kAll,
+                                                                              false);
+
+        list.append(bounding_box);
+
+        MHWRender::MShaderInstance* shader = shader_manager->getStockShader(
+                MHWRender::MShaderManager::k3dSolidShader, nullptr, nullptr);
+        if (shader)
         {
-            const int index = list.indexOf("point_cloud");
-            if (index < 0)
-                return;
-            try{
-                if (!data->vdb_file->isOpen())
-                    data->vdb_file->open(false);
-                if (data->attenuation_grid == nullptr || data->attenuation_grid->getName() != data->attenuation_channel)
-                    data->attenuation_grid = data->vdb_file->readGrid(data->attenuation_channel);
-            }
-            catch(...) {
-                data->attenuation_grid = nullptr;
-                data->scattering_grid = nullptr;
-                data->emission_grid = nullptr;
-                return;
-            }
+            // Set the color on the shader instance using the parameter interface
+            static const float color[] = {0.0f, 1.0f, 0.0f, 1.0f};
+            shader->setParameter("solidColor", color);
 
-            const openvdb::Vec3d voxel_size = data->attenuation_grid->voxelSize();
+            // Assign the shader to the custom render item
+            bounding_box->setShader(shader);
+        }
+    }
+    else if (display_mode == DISPLAY_POINT_CLOUD)
+    {
+        MHWRender::MRenderItem* point_cloud = MHWRender::MRenderItem::Create("point_cloud",
+                                                                             MHWRender::MGeometry::kPoints,
+                                                                             MHWRender::MGeometry::kAll,
+                                                                             false);
+        list.append(point_cloud);
 
-            FloatVoxelIterator* iter = nullptr;
+        MHWRender::MShaderInstance* shader = shader_manager->getStockShader(MHWRender::MShaderManager::k3dCPVFatPointShader, nullptr, nullptr);
+        if (shader)
+            point_cloud->setShader(shader);
+    }
+    else if (display_mode == DISPLAY_SLICES)
+    {
+        std::cout << "VDBGeometryOverride::updateRenderItems" << std::endl;
+        auto texture_manager = renderer->getTextureManager();
 
-            if (data->attenuation_grid->valueType() == "float")
-                iter = new FloatToFloatVoxelIterator(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->attenuation_grid));
-            else if (data->attenuation_grid->valueType() == "vec3s")
-                iter = new Vec3SToFloatVoxelIterator(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->attenuation_grid));
-            else
-                iter = new FloatVoxelIterator();
+        // Sample grid
+        if (data->has_changed && data->vdb_file)
+        {
+            if (!data->vdb_file->isOpen())
+                data->vdb_file->open(false);
+            auto grid_ptr = data->vdb_file->readGrid("density"); // TODO: use cached attribute
+            auto grid = dynamic_cast<const openvdb::FloatGrid*>(grid_ptr.get());
+            //// TODO: get slice counts from attribute.
+            //if (data->volume_texture) {
+            //    texture_manager->releaseTexture(data->volume_texture);
+            //}
+            //data->volume_texture = volumeTextureFromGrid(grid, openvdb::Coord(32, 32, 32), texture_manager);
+        }
 
-            std::vector<MFloatVector> vertices;
-            vertices.reserve(iter->get_active_voxels());
-            const openvdb::math::Transform attenuation_transform = data->attenuation_grid->transform();
+        MHWRender::MRenderItem* slices = MHWRender::MRenderItem::Create("slices",
+                                                                        MHWRender::MGeometry::kTriangles,
+                                                                        MHWRender::MGeometry::kAll,
+                                                                        false);
+        slices->castsShadows(false);
 
-            const int point_skip = data->point_skip;
-
-            int point_id = 0;
-            for (; iter->is_valid(); iter->get_next())
+        list.append(slices);
+        // TODO: use correct effect file path
+        using boost::filesystem::path;
+        path effect_file = path(__FILE__).parent_path() / "volume.cgfx";
+        auto volume_shader = shader_manager->getEffectsFileShader(effect_file.c_str(), "Main", 0, 0, false);
+        if (volume_shader)
+        {
+            if (data)
             {
-                if ((point_id++ % point_skip) != 0)
-                    continue;
-                openvdb::Vec3d vdb_pos = attenuation_transform.indexToWorld(iter->get_coord());
-                vertices.push_back(MFloatVector(static_cast<float>(vdb_pos.x()), static_cast<float>(vdb_pos.y()),
-                                                static_cast<float>(vdb_pos.z())));
+                const MFloatVector bbox_size = data->bbox.max() - data->bbox.min();
+                const MFloatVector bbox_origin = data->bbox.min();
+                volume_shader->setParameter("volume_size", bbox_size);
+                volume_shader->setParameter("volume_origin", bbox_origin);
+
+                /*
+                MHWRender::MTextureAssignment volume_texture_resource;
+                volume_texture_resource.texture = data->volume_texture;
+                volume_shader->setParameter("volume_texture", volume_texture_resource);
+
+                MHWRender::MSamplerStateDesc volume_sampler_state_desc;
+                volume_sampler_state_desc.filter = MHWRender::MSamplerState::kMinMagMipLinear;
+                volume_sampler_state_desc.addressU = MHWRender::MSamplerState::kTexClamp;
+                volume_sampler_state_desc.addressV = MHWRender::MSamplerState::kTexClamp;
+                volume_sampler_state_desc.addressW = MHWRender::MSamplerState::kTexClamp;
+                const MHWRender::MSamplerState *volume_sampler_resource = MStateManager::acquireSamplerState(volume_sampler_state_desc);
+                volume_shader->setParameter("volume_sampler", *volume_sampler_resource);
+                */
             }
+            slices->setShader(volume_shader);
+            shader_manager->releaseShader(volume_shader);
+        }
+    }
+}
 
-            vertices.shrink_to_fit();
-            const unsigned int vertex_count = static_cast<unsigned int>(vertices.size());
+void VDBGeometryOverride::populateGeometry(const MGeometryRequirements& reqs,
+                                           const MHWRender::MRenderItemList& list, MGeometry& geo)
+{
+    // if I want to profile, or debug, the unique_ptr does a lots of extra checks
+    // which skews my input data, so have to use a bare pointer here
+    VDBGeometryOverrideData* data = p_data.get();
 
-            if (vertex_count == 0)
-                return;
+    if (!data->has_changed)
+        return;
 
-            delete iter;
+    data->has_changed = false;
 
-            tbb::task_scheduler_init task_init;
-
+    auto set_bbox_indices = [&](const unsigned int num_bboxes){
+        const int index = list.indexOf("bounding_box");
+        if (index >= 0)
+        {
             const MRenderItem* item = list.itemAt(index);
-            MIndexBuffer* index_buffer = geo.createIndexBuffer(MGeometry::kUnsignedInt32);
-            unsigned int* indices = reinterpret_cast<unsigned int*>(index_buffer->acquire(vertex_count, true));
-            for (unsigned int i = 0; i < vertex_count; ++i)
-                indices[i] = i;
-            index_buffer->commit(indices);
-            item->associateWithIndexBuffer(index_buffer);
+            if (item != nullptr)
+            {
+                MIndexBuffer* index_buffer = geo.createIndexBuffer(MGeometry::kUnsignedInt32);
+                unsigned int* indices = reinterpret_cast<unsigned int*>(index_buffer->acquire(24 * num_bboxes, true));
+                unsigned int id = 0;
+                for (unsigned int bbox = 0; bbox < num_bboxes; ++bbox)
+                {
+                    const unsigned int bbox_base = bbox * 8;
+                    indices[id++] = bbox_base;
+                    indices[id++] = bbox_base + 1;
+                    indices[id++] = bbox_base + 1;
+                    indices[id++] = bbox_base + 2;
+                    indices[id++] = bbox_base + 2;
+                    indices[id++] = bbox_base + 3;
+                    indices[id++] = bbox_base + 3;
+                    indices[id++] = bbox_base;
 
-            iterate_reqs(
-                [&](MVertexBufferDescriptor& desc) {
-                    switch (desc.semantic())
-                    {
-                    case MGeometry::kPosition:
-                    {
-                        MVertexBuffer* vertex_buffer = geo.createVertexBuffer(desc);
-                        MFloatVector* pc_vertices = reinterpret_cast<MFloatVector*>(vertex_buffer->acquire(static_cast<unsigned int>(vertices.size()), true));
-                        const float point_jitter = data->point_jitter;
-                        if (point_jitter > 0.001f)
-                        {
-                            std::uniform_real_distribution<float> distributionX(-point_jitter * static_cast<float>(voxel_size.x()), point_jitter * static_cast<float>(voxel_size.x()));
-                            std::uniform_real_distribution<float> distributionY(-point_jitter * static_cast<float>(voxel_size.y()), point_jitter * static_cast<float>(voxel_size.y()));
-                            std::uniform_real_distribution<float> distributionZ(-point_jitter * static_cast<float>(voxel_size.z()), point_jitter * static_cast<float>(voxel_size.z()));
+                    indices[id++] = bbox_base + 4;
+                    indices[id++] = bbox_base + 5;
+                    indices[id++] = bbox_base + 5;
+                    indices[id++] = bbox_base + 6;
+                    indices[id++] = bbox_base + 6;
+                    indices[id++] = bbox_base + 7;
+                    indices[id++] = bbox_base + 7;
+                    indices[id++] = bbox_base + 4;
 
-                            tbb::parallel_for(tbb::blocked_range<unsigned int>(0, vertex_count), [&](const tbb::blocked_range<unsigned int>& r) {
-                                std::minstd_rand generatorX(42); // LCG
-                                std::minstd_rand generatorY(137);
-                                std::minstd_rand generatorZ(1337);
-                                for (unsigned int i = r.begin(); i != r.end(); ++i)
-                                {
-                                    MFloatVector pos = vertices[i];
-                                    pos.x += distributionX(generatorX);
-                                    pos.y += distributionY(generatorY);
-                                    pos.z += distributionZ(generatorZ);
-                                    pc_vertices[i] = pos;
-                                }
-                            });
-                        }
-                        else
+                    indices[id++] = bbox_base;
+                    indices[id++] = bbox_base + 4;
+                    indices[id++] = bbox_base + 1;
+                    indices[id++] = bbox_base + 5;
+                    indices[id++] = bbox_base + 2;
+                    indices[id++] = bbox_base + 6;
+                    indices[id++] = bbox_base + 3;
+                    indices[id++] = bbox_base + 7;
+                }
+                index_buffer->commit(indices);
+                item->associateWithIndexBuffer(index_buffer);
+            }
+        }
+    };
+
+    auto iterate_reqs = [&] (std::function<void(MVertexBufferDescriptor&)> func) {
+        const MVertexBufferDescriptorList& desc_list = reqs.vertexRequirements();
+        const int num_desc = desc_list.length();
+        for (int i = 0; i < num_desc; ++i)
+        {
+            MVertexBufferDescriptor desc;
+            if (!desc_list.getDescriptor(i, desc))
+                continue;
+            func(desc);
+        }
+    };
+
+    const VDBDisplayMode display_mode = data->display_mode;
+
+    if (display_mode == DISPLAY_AXIS_ALIGNED_BBOX || data->vdb_file == nullptr)
+    {
+        iterate_reqs(
+            [&](MVertexBufferDescriptor& desc) {
+                if (desc.semantic() != MGeometry::kPosition)
+                    return;
+                MVertexBuffer* vertex_buffer = geo.createVertexBuffer(desc);
+                MFloatVector* bbox_vertices = reinterpret_cast<MFloatVector*>(vertex_buffer->acquire(8, true));
+                MFloatVector min = data->bbox.min();
+                MFloatVector max = data->bbox.max();
+                bbox_vertices[0] = MFloatVector(min.x, min.y, min.z);
+                bbox_vertices[1] = MFloatVector(min.x, max.y, min.z);
+                bbox_vertices[2] = MFloatVector(min.x, max.y, max.z);
+                bbox_vertices[3] = MFloatVector(min.x, min.y, max.z);
+                bbox_vertices[4] = MFloatVector(max.x, min.y, min.z);
+                bbox_vertices[5] = MFloatVector(max.x, max.y, min.z);
+                bbox_vertices[6] = MFloatVector(max.x, max.y, max.z);
+                bbox_vertices[7] = MFloatVector(max.x, min.y, max.z);
+                vertex_buffer->commit(bbox_vertices);
+                set_bbox_indices(1);
+            }
+        );
+    }
+    else if (display_mode == DISPLAY_GRID_BBOX)
+    {
+        iterate_reqs(
+            [&](MVertexBufferDescriptor& desc) {
+                if (desc.semantic() != MGeometry::kPosition)
+                    return;
+                try{
+                    if (!data->vdb_file->isOpen())
+                        data->vdb_file->open(false);
+                    openvdb::GridPtrVecPtr grids = data->vdb_file->readAllGridMetadata();
+                    if (grids->size() == 0)
+                        return;
+                    std::vector<MFloatVector> vertices;
+                    vertices.reserve(grids->size() * 8);
+                    auto push_back_wireframe = [&] (openvdb::GridBase::ConstPtr grid) {
+                        std::array<MFloatVector, 8> _vertices;
+                        if (read_grid_transformed_bbox_wire(grid, _vertices))
                         {
-                            tbb::parallel_for(tbb::blocked_range<unsigned int>(0, vertex_count), [&](const tbb::blocked_range<unsigned int>& r) {
-                                memcpy(&pc_vertices[r.begin()], &vertices[r.begin()], (r.end() - r.begin()) * sizeof(MFloatVector));
-                            });
+                            for (int v = 0; v < 8; ++v)
+                                vertices.push_back(_vertices[v]);
                         }
-                        vertex_buffer->commit(pc_vertices);
+                    };
+
+                    for (openvdb::GridPtrVec::const_iterator it = grids->begin(); it != grids->end(); ++it)
+                    {
+                        if (openvdb::GridBase::ConstPtr grid = *it)
+                            push_back_wireframe(grid);
                     }
-                        break;
-                    case MGeometry::kNormal:
-                        std::cerr << "[openvdb_render] Normal semantic found" << std::endl;
-                        break;
-                    case MGeometry::kTexture:
-                        std::cerr << "[openvdb_render] Texture semantic found" << std::endl;
-                        break;
-                    case MGeometry::kColor:
+
+                    const unsigned int vertex_count = static_cast<unsigned int>(vertices.size());
+
+                    if (vertex_count > 0)
                     {
-                        if (desc.dataType() != MGeometry::kFloat || desc.dimension() != 4)
-                            return;
-
-                        try{
-                            if (data->scattering_grid == nullptr || data->scattering_grid->getName() != data->scattering_channel)
-                                data->scattering_grid = data->vdb_file->readGrid(data->scattering_channel);
-                        }
-                        catch(...)  {
-                            data->scattering_grid = nullptr;
-                        }
-
-                        RGBSampler* scattering_sampler = nullptr;
-
-                        if (data->scattering_grid == nullptr)
-                            scattering_sampler = new RGBSampler();
-                        else
-                        {
-                            if (data->scattering_grid->valueType() == "float")
-                                scattering_sampler = new FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->scattering_grid));
-                            else if (data->scattering_grid->valueType() == "vec3s")
-                                scattering_sampler = new Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->scattering_grid));
-                            else
-                                scattering_sampler = new RGBSampler();
-                        }
-
-                        try{
-                            if (data->emission_grid == nullptr || data->emission_grid->getName() != data->emission_channel)
-                                data->emission_grid = data->vdb_file->readGrid(data->emission_channel);
-                        }
-                        catch(...)  {
-                            data->emission_grid = nullptr;
-                        }
-
-                        RGBSampler* emission_sampler = nullptr;
-
-                        if (data->emission_grid == nullptr)
-                            emission_sampler = new RGBSampler(MFloatVector(0.0f, 0.0f, 0.0f));
-                        else
-                        {
-                            if (data->emission_grid->valueType() == "float")
-                                emission_sampler = new FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->emission_grid));
-                            else if (data->emission_grid->valueType() == "vec3s")
-                                emission_sampler = new Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->emission_grid));
-                            else
-                                emission_sampler = new RGBSampler(MFloatVector(0.0f, 0.0f, 0.0f));
-                        }
-
-                        RGBSampler* attenuation_sampler = 0;
-
-                        if (data->attenuation_grid->valueType() == "float")
-                            attenuation_sampler = new FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->attenuation_grid));
-                        else if (data->attenuation_grid->valueType() == "vec3s")
-                            attenuation_sampler = new Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->attenuation_grid));
-                        else
-                            attenuation_sampler = new RGBSampler(MFloatVector(1.0f, 1.0f, 1.0f));
-
                         MVertexBuffer* vertex_buffer = geo.createVertexBuffer(desc);
-                        MColor* colors = reinterpret_cast<MColor*>(vertex_buffer->acquire(vertex_count, true));
+                        MFloatVector* bbox_vertices = reinterpret_cast<MFloatVector*>(vertex_buffer->acquire(vertex_count, true));
+                        for (unsigned int i = 0; i < vertex_count; ++i)
+                            bbox_vertices[i] = vertices[i];
+                        vertex_buffer->commit(bbox_vertices);
+                        set_bbox_indices(vertex_count / 8);
+                    }
+                }
+                catch(...)
+                {
+                }
+            }
+        );
+    }
+    else if (display_mode == DISPLAY_POINT_CLOUD)
+    {
+        const int index = list.indexOf("point_cloud");
+        if (index < 0)
+            return;
+        try{
+            if (!data->vdb_file->isOpen())
+                data->vdb_file->open(false);
+            if (data->attenuation_grid == nullptr || data->attenuation_grid->getName() != data->attenuation_channel)
+                data->attenuation_grid = data->vdb_file->readGrid(data->attenuation_channel);
+        }
+        catch(...) {
+            data->attenuation_grid = nullptr;
+            data->scattering_grid = nullptr;
+            data->emission_grid = nullptr;
+            return;
+        }
+
+        const openvdb::Vec3d voxel_size = data->attenuation_grid->voxelSize();
+
+        FloatVoxelIterator* iter = nullptr;
+
+        if (data->attenuation_grid->valueType() == "float")
+            iter = new FloatToFloatVoxelIterator(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->attenuation_grid));
+        else if (data->attenuation_grid->valueType() == "vec3s")
+            iter = new Vec3SToFloatVoxelIterator(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->attenuation_grid));
+        else
+            iter = new FloatVoxelIterator();
+
+        std::vector<MFloatVector> vertices;
+        vertices.reserve(iter->get_active_voxels());
+        const openvdb::math::Transform attenuation_transform = data->attenuation_grid->transform();
+
+        const int point_skip = data->point_skip;
+
+        int point_id = 0;
+        for (; iter->is_valid(); iter->get_next())
+        {
+            if ((point_id++ % point_skip) != 0)
+                continue;
+            openvdb::Vec3d vdb_pos = attenuation_transform.indexToWorld(iter->get_coord());
+            vertices.push_back(MFloatVector(static_cast<float>(vdb_pos.x()), static_cast<float>(vdb_pos.y()),
+                                            static_cast<float>(vdb_pos.z())));
+        }
+
+        vertices.shrink_to_fit();
+        const unsigned int vertex_count = static_cast<unsigned int>(vertices.size());
+
+        if (vertex_count == 0)
+            return;
+
+        delete iter;
+
+        tbb::task_scheduler_init task_init;
+
+        const MRenderItem* item = list.itemAt(index);
+        MIndexBuffer* index_buffer = geo.createIndexBuffer(MGeometry::kUnsignedInt32);
+        unsigned int* indices = reinterpret_cast<unsigned int*>(index_buffer->acquire(vertex_count, true));
+        for (unsigned int i = 0; i < vertex_count; ++i)
+            indices[i] = i;
+        index_buffer->commit(indices);
+        item->associateWithIndexBuffer(index_buffer);
+
+        iterate_reqs(
+            [&](MVertexBufferDescriptor& desc) {
+                switch (desc.semantic())
+                {
+                case MGeometry::kPosition:
+                {
+                    MVertexBuffer* vertex_buffer = geo.createVertexBuffer(desc);
+                    MFloatVector* pc_vertices = reinterpret_cast<MFloatVector*>(vertex_buffer->acquire(static_cast<unsigned int>(vertices.size()), true));
+                    const float point_jitter = data->point_jitter;
+                    if (point_jitter > 0.001f)
+                    {
+                        std::uniform_real_distribution<float> distributionX(-point_jitter * static_cast<float>(voxel_size.x()), point_jitter * static_cast<float>(voxel_size.x()));
+                        std::uniform_real_distribution<float> distributionY(-point_jitter * static_cast<float>(voxel_size.y()), point_jitter * static_cast<float>(voxel_size.y()));
+                        std::uniform_real_distribution<float> distributionZ(-point_jitter * static_cast<float>(voxel_size.z()), point_jitter * static_cast<float>(voxel_size.z()));
+
                         tbb::parallel_for(tbb::blocked_range<unsigned int>(0, vertex_count), [&](const tbb::blocked_range<unsigned int>& r) {
-                            for (unsigned int i = r.begin(); i < r.end(); ++i)
+                            std::minstd_rand generatorX(42); // LCG
+                            std::minstd_rand generatorY(137);
+                            std::minstd_rand generatorZ(1337);
+                            for (unsigned int i = r.begin(); i != r.end(); ++i)
                             {
-                                const MFloatVector& v = vertices[i];
-                                const openvdb::Vec3d pos(v.x, v.y, v.z);
-                                MColor& color = colors[i];
-                                const MFloatVector scattering_color = data->scattering_gradient.evaluate(scattering_sampler->get_rgb(pos));
-                                const MFloatVector emission_color = data->emission_gradient.evaluate(emission_sampler->get_rgb(pos));
-                                const MFloatVector attenuation_color = data->attenuation_gradient.evaluate(attenuation_sampler->get_rgb(pos));
-                                color.r = scattering_color.x * data->scattering_color.x + emission_color.x * data->emission_color.x;
-                                color.g = scattering_color.y * data->scattering_color.y + emission_color.y * data->emission_color.y;
-                                color.b = scattering_color.z * data->scattering_color.z + emission_color.z * data->emission_color.z;
-                                color.a = (attenuation_color.x * data->attenuation_color.x +
-                                           attenuation_color.y * data->attenuation_color.y +
-                                           attenuation_color.z * data->attenuation_color.z) / 3.0f;
+                                MFloatVector pos = vertices[i];
+                                pos.x += distributionX(generatorX);
+                                pos.y += distributionY(generatorY);
+                                pos.z += distributionZ(generatorZ);
+                                pc_vertices[i] = pos;
                             }
                         });
-                        vertex_buffer->commit(colors);
-
-                        delete scattering_sampler;
-                        delete emission_sampler;
-                        delete attenuation_sampler;
                     }
-                        break;
-                    default:
-                        std::cerr << "[openvdb_render] Unknown semantic found" << std::endl;
+                    else
+                    {
+                        tbb::parallel_for(tbb::blocked_range<unsigned int>(0, vertex_count), [&](const tbb::blocked_range<unsigned int>& r) {
+                            memcpy(&pc_vertices[r.begin()], &vertices[r.begin()], (r.end() - r.begin()) * sizeof(MFloatVector));
+                        });
                     }
+                    vertex_buffer->commit(pc_vertices);
                 }
-            );
-        }
-        else if (display_mode == DISPLAY_SLICES)
-        {
-            const int index = list.indexOf("slices");
-            if (index < 0)
-                return;
-            try {
-                if (!data->vdb_file->isOpen())
-                    data->vdb_file->open(false);
-                //if (data->attenuation_grid == nullptr || data->attenuation_grid->getName() != data->attenuation_channel)
-                //    data->attenuation_grid = data->vdb_file->readGrid(data->attenuation_channel);
-                const auto TEST_CHANNEL = "ls_icosahedron";
-                if (data->attenuation_grid == nullptr || data->attenuation_grid->getName() != TEST_CHANNEL)
-                    data->attenuation_grid = data->vdb_file->readGrid(TEST_CHANNEL);
-            }
-            catch(...) {
-                data->attenuation_grid = nullptr;
-                data->scattering_grid = nullptr;
-                data->emission_grid = nullptr;
-                return;
-            }
+                    break;
+                case MGeometry::kNormal:
+                    std::cerr << "[openvdb_render] Normal semantic found" << std::endl;
+                    break;
+                case MGeometry::kTexture:
+                    std::cerr << "[openvdb_render] Texture semantic found" << std::endl;
+                    break;
+                case MGeometry::kColor:
+                {
+                    if (desc.dataType() != MGeometry::kFloat || desc.dimension() != 4)
+                        return;
 
-            const openvdb::Vec3d voxel_size = data->attenuation_grid->voxelSize();
-            const MRenderItem *item = list.itemAt(index);
-            const int slices = 64; // TODO
+                    try{
+                        if (data->scattering_grid == nullptr || data->scattering_grid->getName() != data->scattering_channel)
+                            data->scattering_grid = data->vdb_file->readGrid(data->scattering_channel);
+                    }
+                    catch(...)  {
+                        data->scattering_grid = nullptr;
+                    }
 
-            // Vertices
-            //std::vector<MFloatVector> vertices;
-            //vertices.reserve(4 * slices);
-            //for (int i = 0; i < slices; ++i)
-            //{
-            //    vertices.emplace_back(0.0, 0.0, 0.0);
-            //    vertices.emplace_back(1.0, 0.0, 0.0);
-            //    vertices.emplace_back(1.0, 1.0, 0.0);
-            //    vertices.emplace_back(0.0, 1.0, 0.0);
-            //}
+                    RGBSampler* scattering_sampler = nullptr;
 
-            // Indices
-            MIndexBuffer* index_buffer = geo.createIndexBuffer(MGeometry::kUnsignedInt32);
-            unsigned int* indices = reinterpret_cast<unsigned int*>(index_buffer->acquire(6 * slices, true));
-            for (unsigned int i = 0; i < slices; ++i) {
-                indices[6*i+0] = 6*i+0;
-                indices[6*i+1] = 6*i+1;
-                indices[6*i+2] = 6*i+2;
-                indices[6*i+3] = 6*i+0;
-                indices[6*i+4] = 6*i+2;
-                indices[6*i+5] = 6*i+3;
-            }
-            index_buffer->commit(indices);
-            item->associateWithIndexBuffer(index_buffer);
-
-            iterate_reqs(
-                [&](MVertexBufferDescriptor& desc) {
-                    switch (desc.semantic())
+                    if (data->scattering_grid == nullptr)
+                        scattering_sampler = new RGBSampler();
+                    else
                     {
-                    case MGeometry::kPosition:
+                        if (data->scattering_grid->valueType() == "float")
+                            scattering_sampler = new FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->scattering_grid));
+                        else if (data->scattering_grid->valueType() == "vec3s")
+                            scattering_sampler = new Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->scattering_grid));
+                        else
+                            scattering_sampler = new RGBSampler();
+                    }
+
+                    try{
+                        if (data->emission_grid == nullptr || data->emission_grid->getName() != data->emission_channel)
+                            data->emission_grid = data->vdb_file->readGrid(data->emission_channel);
+                    }
+                    catch(...)  {
+                        data->emission_grid = nullptr;
+                    }
+
+                    RGBSampler* emission_sampler = nullptr;
+
+                    if (data->emission_grid == nullptr)
+                        emission_sampler = new RGBSampler(MFloatVector(0.0f, 0.0f, 0.0f));
+                    else
                     {
-                        MVertexBuffer* vertex_buffer = geo.createVertexBuffer(desc);
-                        MFloatVector* pc_vertices = reinterpret_cast<MFloatVector*>(vertex_buffer->acquire(static_cast<unsigned int>(4 * slices), true));
-                        for (int i = 0; i < slices; ++i)
+                        if (data->emission_grid->valueType() == "float")
+                            emission_sampler = new FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->emission_grid));
+                        else if (data->emission_grid->valueType() == "vec3s")
+                            emission_sampler = new Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->emission_grid));
+                        else
+                            emission_sampler = new RGBSampler(MFloatVector(0.0f, 0.0f, 0.0f));
+                    }
+
+                    RGBSampler* attenuation_sampler = 0;
+
+                    if (data->attenuation_grid->valueType() == "float")
+                        attenuation_sampler = new FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->attenuation_grid));
+                    else if (data->attenuation_grid->valueType() == "vec3s")
+                        attenuation_sampler = new Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->attenuation_grid));
+                    else
+                        attenuation_sampler = new RGBSampler(MFloatVector(1.0f, 1.0f, 1.0f));
+
+                    MVertexBuffer* vertex_buffer = geo.createVertexBuffer(desc);
+                    MColor* colors = reinterpret_cast<MColor*>(vertex_buffer->acquire(vertex_count, true));
+                    tbb::parallel_for(tbb::blocked_range<unsigned int>(0, vertex_count), [&](const tbb::blocked_range<unsigned int>& r) {
+                        for (unsigned int i = r.begin(); i < r.end(); ++i)
                         {
-                            const float z = i * 1.0 / (slices - 1.0);
-                            pc_vertices[4*i+0] = MFloatVector(0.0, 0.0, z);
-                            pc_vertices[4*i+1] = MFloatVector(1.0, 0.0, z);
-                            pc_vertices[4*i+2] = MFloatVector(1.0, 1.0, z);
-                            pc_vertices[4*i+3] = MFloatVector(0.0, 1.0, z);
+                            const MFloatVector& v = vertices[i];
+                            const openvdb::Vec3d pos(v.x, v.y, v.z);
+                            MColor& color = colors[i];
+                            const MFloatVector scattering_color = data->scattering_gradient.evaluate(scattering_sampler->get_rgb(pos));
+                            const MFloatVector emission_color = data->emission_gradient.evaluate(emission_sampler->get_rgb(pos));
+                            const MFloatVector attenuation_color = data->attenuation_gradient.evaluate(attenuation_sampler->get_rgb(pos));
+                            color.r = scattering_color.x * data->scattering_color.x + emission_color.x * data->emission_color.x;
+                            color.g = scattering_color.y * data->scattering_color.y + emission_color.y * data->emission_color.y;
+                            color.b = scattering_color.z * data->scattering_color.z + emission_color.z * data->emission_color.z;
+                            color.a = (attenuation_color.x * data->attenuation_color.x +
+                                       attenuation_color.y * data->attenuation_color.y +
+                                       attenuation_color.z * data->attenuation_color.z) / 3.0f;
                         }
-                        vertex_buffer->commit(pc_vertices);
-                        break;
-                    }
-                    case MGeometry::kColor:
-                    {
-                        MVertexBuffer* vertex_buffer = geo.createVertexBuffer(desc);
-                        MColor* pc_vertices = reinterpret_cast<MColor*>(vertex_buffer->acquire(static_cast<unsigned int>(4 * slices), true));
-                        for (int i = 0; i < slices; ++i)
-                        {
-                            pc_vertices[4*i+0] = MColor(1.0, 1.0, 0.0);
-                            pc_vertices[4*i+1] = MColor(1.0, 1.0, 0.0);
-                            pc_vertices[4*i+2] = MColor(1.0, 1.0, 0.0);
-                            pc_vertices[4*i+3] = MColor(1.0, 1.0, 0.0);
-                        }
-                        vertex_buffer->commit(pc_vertices);
-                        break;
-                    }
-                    case MGeometry::kNormal:
-                    {
-                        break;
-                    }
-                    }
+                    });
+                    vertex_buffer->commit(colors);
+
+                    delete scattering_sampler;
+                    delete emission_sampler;
+                    delete attenuation_sampler;
                 }
-            );
-        }
+                    break;
+                default:
+                    std::cerr << "[openvdb_render] Unknown semantic found" << std::endl;
+                }
+            }
+        );
     }
-
-    void VDBGeometryOverride::cleanUp()
+    else if (display_mode == DISPLAY_SLICES)
     {
-    }
+        std::cout << "VDBGeometryOverride::populateGeometry" << std::endl;
+        const int index = list.indexOf("slices");
+        if (index < 0)
+            return;
+        try {
+            if (!data->vdb_file->isOpen())
+                data->vdb_file->open(false);
+            //if (data->attenuation_grid == nullptr || data->attenuation_grid->getName() != data->attenuation_channel)
+            //    data->attenuation_grid = data->vdb_file->readGrid(data->attenuation_channel);
+            const auto TEST_CHANNEL = "density";
+            if (data->attenuation_grid == nullptr || data->attenuation_grid->getName() != TEST_CHANNEL)
+                data->attenuation_grid = data->vdb_file->readGrid(TEST_CHANNEL);
+        }
+        catch(...) {
+            data->attenuation_grid = nullptr;
+            data->scattering_grid = nullptr;
+            data->emission_grid = nullptr;
+            return;
+        }
 
-    MString VDBGeometryOverride::registrantId("VDBVisualizerDrawOverride");
+        const openvdb::Vec3d voxel_size = data->attenuation_grid->voxelSize();
+        const MRenderItem *item = list.itemAt(index);
+        const int slices = 32; // TODO
+
+        // Vertices
+        //std::vector<MFloatVector> vertices;
+        //vertices.reserve(4 * slices);
+        //for (int i = 0; i < slices; ++i)
+        //{
+        //    vertices.emplace_back(0.0, 0.0, 0.0);
+        //    vertices.emplace_back(1.0, 0.0, 0.0);
+        //    vertices.emplace_back(1.0, 1.0, 0.0);
+        //    vertices.emplace_back(0.0, 1.0, 0.0);
+        //}
+
+        // Indices
+        MIndexBuffer* index_buffer = geo.createIndexBuffer(MGeometry::kUnsignedInt32);
+        unsigned int* indices = reinterpret_cast<unsigned int*>(index_buffer->acquire(6 * slices, true));
+        for (unsigned int i = 0; i < slices; ++i) {
+            indices[6*i+0] = 4*i+0;
+            indices[6*i+1] = 4*i+1;
+            indices[6*i+2] = 4*i+3;
+            indices[6*i+3] = 4*i+0;
+            indices[6*i+4] = 4*i+3;
+            indices[6*i+5] = 4*i+2;
+        }
+        index_buffer->commit(indices);
+        item->associateWithIndexBuffer(index_buffer);
+
+        const MFloatVector bbox_size = data->bbox.max() - data->bbox.min();
+        const MFloatVector bbox_origin = data->bbox.min();
+
+        const int num_vertices = 4 * slices;
+        iterate_reqs(
+            [&](MVertexBufferDescriptor& desc) {
+                switch (desc.semantic())
+                {
+                case MGeometry::kPosition:
+                {
+                    MVertexBuffer* vertex_buffer = geo.createVertexBuffer(desc);
+                    MFloatVector* pc_vertices = reinterpret_cast<MFloatVector*>(vertex_buffer->acquire(static_cast<unsigned int>(num_vertices), true));
+                    for (int i = 0; i < slices; ++i)
+                    {
+                        const float z = i * bbox_size.z / (slices - 1.0f);
+                        pc_vertices[4*i+0] = MFloatVector(0.0, 0.0, z) + bbox_origin;
+                        pc_vertices[4*i+1] = MFloatVector(bbox_size.x, 0.0, z) + bbox_origin;
+                        pc_vertices[4*i+2] = MFloatVector(0.0, bbox_size.y, z) + bbox_origin;
+                        pc_vertices[4*i+3] = MFloatVector(bbox_size.x, bbox_size.y, z) + bbox_origin;
+                    }
+                    vertex_buffer->commit(pc_vertices);
+                    break;
+                }
+                case MGeometry::kTexture:
+                {
+                    MVertexBuffer* texcoord_buffer = geo.createVertexBuffer(desc);
+                    MFloatVector* pc_texcoords = reinterpret_cast<MFloatVector*>(texcoord_buffer->acquire(static_cast<unsigned int>(num_vertices), true));
+                    for (int i = 0; i < slices; ++i)
+                    {
+                        const float z = i / (slices - 1.0f);
+                        pc_texcoords[4*i+0] = MFloatVector(0.0, 0.0, z);
+                        pc_texcoords[4*i+1] = MFloatVector(1.0, 0.0, z);
+                        pc_texcoords[4*i+2] = MFloatVector(0.0, 1.0, z);
+                        pc_texcoords[4*i+3] = MFloatVector(1.0, 1.0, z);
+                    }
+                    texcoord_buffer->commit(pc_texcoords);
+                    break;
+                }
+                case MGeometry::kNormal:
+                {
+                    break;
+                }
+                }
+            }
+        );
+    }
 }
+
+void VDBGeometryOverride::cleanUp()
+{
+}
+
+MString VDBGeometryOverride::registrantId("VDBVisualizerDrawOverride");
