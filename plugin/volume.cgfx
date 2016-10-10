@@ -25,21 +25,6 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
 {
     VERT_OUTPUT res;
 
-    //int num_slices = tex3Dsize(volume_sampler, 0).z;
-    //int num_slices = 32; // for testing
-    //res.tex_coord = float3(input.vid & 1, (input.vid & 2) >> 1, float(input.vid >> 2) / float(num_slices - 1));
-    //res.tex_coord = input.pos_model;
-    //res.tex_coord = input.pos_model;
-    //res.pos_clip = mul(gWVPXf, float4(input.pos_model, 1.0f));
-
-    //return res;
-
-#if 1
-    // Transform back to unit cube for easier slice realignment.
-    //float3 pos = (input.pos_model - volume_origin) / volume_size;
-
-    float3 pos = input.pos_unit_cube;
-
     // Slice along axis of steepest angle w.r.t. camera.
     float3 local_x_world = normalize(world_mat._m00_m10_m20);
     float3 local_y_world = normalize(world_mat._m01_m11_m21);
@@ -48,26 +33,26 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
           y = dot(local_y_world, view_dir_world),
           z = dot(local_z_world, view_dir_world);
     float ax = abs(x), ay = abs(y), az = abs(z);
+    float3 pos_unit_cube = input.pos_unit_cube;
     if (ax > ay && ax > az) {
-        pos = pos.zxy;
-        if (x > 0) pos.x = 1 - pos.x;
+        pos_unit_cube = pos_unit_cube.zxy;
+        if (x > 0) pos_unit_cube.x = 1 - pos_unit_cube.x;
     } else if (ay > ax && ay > az) {
-        pos = pos.yzx;
-        if (y > 0) pos.y = 1 - pos.y;
+        pos_unit_cube = pos_unit_cube.yzx;
+        if (y > 0) pos_unit_cube.y = 1 - pos_unit_cube.y;
     } else {
-        pos = pos.xyz;
-        if (z > 0) pos.z = 1 - pos.z;
+        pos_unit_cube = pos_unit_cube.xyz;
+        if (z > 0) pos_unit_cube.z = 1 - pos_unit_cube.z;
     }
 
     // Pass adjusted unit cube position to fragment shader.
-    res.tex_coord = pos;
+    res.tex_coord = pos_unit_cube;
 
     // Transform to model space, and then clip space.
-    pos = volume_size * pos + volume_origin;
-    res.pos_clip = mul(world_view_proj_mat, float4(pos, 1.0f));
+    float3 pos_model = volume_size * pos_unit_cube + volume_origin;
+    res.pos_clip = mul(world_view_proj_mat, float4(pos_model, 1.0f));
 
     return res;
-#endif
 }
 
 // ======== FRAGMENT SHADER ========
@@ -85,8 +70,6 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
 
     float density = tex3D(volume_sampler, input.tex_coord).r;
     res.color = float4(density, density, density, density);
-    //res.color = float4(0, 1, 0, 0.3f);
-    //res.color = float4(input.tex_coord, 1.0f);
 
     return res;
 }

@@ -16,8 +16,6 @@
 using namespace MHWRender;
 
 //==============================================================================
-// CLASS ProgressBar
-//==============================================================================
 class ProgressBar
 {
 public:
@@ -87,6 +85,7 @@ private:
     bool fShowProgress;  // whether to show the progress bar
 };
 
+//==============================================================================
 template<class TreeType>
 class MinMaxVoxel
 {
@@ -135,82 +134,80 @@ openvdb::Vec3d operator/(const openvdb::Coord& lhs, const openvdb::Coord& rhs)
     return{ double(lhs.x()) / rhs.x(), double(lhs.y()) / rhs.y(), double(lhs.z()) / rhs.z() };
 }
 
-MTexture* volumeTextureFromGrid(const openvdb::FloatGrid* grid, const openvdb::Coord& slice_counts, MTextureManager* texture_manager)
+//==============================================================================
+MTexture* volumeTextureFromGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& grid, const openvdb::Coord& texture_extents, MTextureManager* texture_manager)
 {
-    ProgressBar pb("Resampling VDB grid...", 100);
-    pb.stepProgress();
+    //ProgressBar pb("Resampling VDB grid...", 100);
+    //pb.stepProgress();
 
-#if 1
     using namespace openvdb;
 
-    //Timer timer;
+    // Calculate the bounding box of the finest grid.
+    CoordBBox fine_bbox = grid.grid(0)->evalActiveVoxelBoundingBox();
 
-    CoordBBox grid_bbox;
-    grid->tree().evalActiveVoxelBoundingBox(grid_bbox);
+    // BBox splitting treats both ends of the bbox as inclusive, so subtract 1 from the slice counts to get inclusive bbox.
+    const auto coarse_bbox = openvdb::CoordBBox(openvdb::Coord(), texture_extents - openvdb::Coord(1, 1, 1));
 
-    // Scale and filter grid to slice_counts size.
-    //timer.start("Scaling and filtering grid...");
-    FloatGrid::Ptr filtered_grid = FloatGrid::create(grid->background());
-    const auto scale_factor = slice_counts / grid_bbox.extents();
-    tools::GridTransformer(math::scale<Mat4R>(scale_factor)).transformGrid<tools::BoxSampler, FloatGrid>(*grid, *filtered_grid);
-    CoordBBox filtered_grid_bbox;
-    filtered_grid->tree().evalActiveVoxelBoundingBox(filtered_grid_bbox);
-    //timer.end();
+    // Create coarse -> fine index transform funcition.
+    const auto coarse_voxel_size = fine_bbox.extents() / texture_extents;
+    const auto index_transform = [&fine_bbox, &coarse_voxel_size](const Coord& coarse_index) {
+        return fine_bbox.min().asVec3d() + coarse_index.asVec3d() * coarse_voxel_size;
+    };
 
-    // Transform grid values to [0, 1].
-    //timer.start("Rescaling grid values to [0, 1]...");
+    // Calculate LOD level.
+    const auto max_component = std::max(std::max(coarse_voxel_size.x(), coarse_voxel_size.y()), coarse_voxel_size.z());
+    const auto lod_level = std::log2(max_component);
+
+    // Get min and max voxel values and create value transform function.
+    // TODO: leave values as is and use shader parameter for the value range.
     float min_voxel_value, max_voxel_value;
-    tree::LeafManager<const FloatTree> leafs(filtered_grid->tree());
+    tree::LeafManager<const FloatTree> leafs(grid.grid(0)->tree());
     {
         MinMaxVoxel<const FloatTree> minmax(leafs);
         minmax.runParallel();
         min_voxel_value = minmax.minVoxel();
         max_voxel_value = minmax.maxVoxel();
     }
-    tools::foreach(filtered_grid->beginValueAll(), [min_voxel_value, max_voxel_value](const FloatGrid::ValueAllIter& iter) {
-        iter.setValue((*iter - min_voxel_value) / (max_voxel_value - min_voxel_value));
+    const auto value_transform = [min_voxel_value, max_voxel_value](float value) {
+        return (value - min_voxel_value) / (max_voxel_value - min_voxel_value);
+    };
+
+    // Sample the multires grid on the sparse lattice using the LOD level.
+
+    std::vector<float> samples(texture_extents.x() * texture_extents.y() * texture_extents.z());
+    const auto stride = openvdb::Vec3i(1, texture_extents.x(), texture_extents.x() * texture_extents.y());
+
+    tbb::parallel_for(coarse_bbox, [&grid, &index_transform, lod_level, &value_transform, &stride, &samples](const CoordBBox& bbox) {
+        constexpr int SAMPLING_ORDER = 1;
+        typedef int32_t index_t;
+        for (index_t z = bbox.min().z(); z <= bbox.max().z(); ++z) {
+            const index_t base_z = z * stride.z();
+            for (index_t y = bbox.min().y(); y <= bbox.max().y(); ++y) {
+                const index_t base_y = base_z + y * stride.y();
+                for (index_t x = bbox.min().x(); x <= bbox.max().x(); ++x) {
+                    const auto sample_pos = index_transform(openvdb::Coord(x, y, z));
+                    const auto sample_value = grid.sampleValue<SAMPLING_ORDER>(sample_pos, lod_level);
+                    const auto out_index = base_y + x;
+                    samples[out_index] = value_transform(sample_value);
+                }
+            }
+        }
     });
-    //timer.end();
 
-    // Create dense grid.
-    //timer.start("Creating dense grid...");
-    using FloatDenseGrid = tools::Dense<float, tools::LayoutXYZ>;
-    FloatDenseGrid dense_grid(filtered_grid_bbox);
-    tools::copyToDense(*filtered_grid, dense_grid);
-    //timer.end();
 
-    // Create output texture.
-    //out_volume.genTexture(filtered_grid_bbox.extents(), dense_grid.data());
-    const auto extents = filtered_grid_bbox.extents();
-#else
-    const auto extents = slice_counts;
-#endif
+    // Create texture from the samples.
 
     MHWRender::MTextureDescription texture_desc;
-    texture_desc.fWidth = extents.x();
-    texture_desc.fHeight = extents.y();
-    texture_desc.fDepth = extents.z();
+    texture_desc.fWidth = texture_extents.x();
+    texture_desc.fHeight = texture_extents.y();
+    texture_desc.fDepth = texture_extents.z();
     texture_desc.fBytesPerRow = 4 * texture_desc.fWidth;
     texture_desc.fBytesPerSlice = texture_desc.fBytesPerRow * texture_desc.fHeight;
-    //texture_desc.fBytesPerRow = 0;
-    //texture_desc.fBytesPerSlice = 0;
     texture_desc.fMipmaps = 1;
+    texture_desc.fArraySlices = 1;
     texture_desc.fFormat = kR32_FLOAT;
     texture_desc.fTextureType = kVolumeTexture;
     texture_desc.fEnvMapType = kEnvNone;
 
-    return texture_manager->acquireTexture("", texture_desc, dense_grid.data(), false);
-
-#if 0
-    std::vector<float> v(extents.x() * extents.y() * extents.z());
-    for (int k = 0; k < extents.z(); ++k) {
-        for (int j = 0; j < extents.y(); ++j) {
-            for (int i = 0; i < extents.x(); ++i) {
-                int idx = i + extents.x() * j + extents.x() * extents.y() * k;
-                v[idx] = (float(i) / extents.x()) * (float(j) / extents.y()) * (float(k) / extents.z());
-            }
-        }
-    }
-    return texture_manager->acquireTexture("", texture_desc, v.data(), false);
-#endif
+    return texture_manager->acquireTexture("", texture_desc, samples.data(), true);
 }

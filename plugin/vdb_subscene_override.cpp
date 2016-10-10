@@ -1,12 +1,16 @@
 #include "vdb_subscene_override.h"
 
+#include <cmath>
+#include <chrono>
+
 #include <boost/filesystem.hpp>
 
 #include <maya/MFnDagNode.h>
 #include <maya/MGlobal.h>
-//#include <maya/MProgressWindow.h>
 #include <maya/MSelectionList.h>
 #include <maya/MShaderManager.h>
+
+#include <openvdb/tools/MultiResGrid.h>
 
 #include "vdb_visualizer.h"
 #include "volume_sampler.h"
@@ -22,27 +26,11 @@ struct VDBSubSceneOverrideError
 
 VDBSubSceneOverride::~VDBSubSceneOverride()
 {
-    // Obtain pointers to rendering managers.
-    MRenderer* renderer = MRenderer::theRenderer();
-    if (!renderer) return;
-    const MShaderManager* shader_manager = renderer->getShaderManager();
-    if (!shader_manager) return;
-
-    // Release resources.
-    //if (m_volume_shader) {
-        //shader_manager->releaseShader(m_volume_shader);
-    //}
-    //if (m_volume_verts) {
-        // TODO
-    //}
-    //if (m_volume_inds) {
-        // TODO
-    //}
 }
 
 bool VDBSubSceneOverride::requiresUpdate(const MHWRender::MSubSceneContainer& container, const MHWRender::MFrameContext& frameContext) const
 {
-    return true; // (container.count() == 0);
+    return true;
 }
 
 void VDBSubSceneOverride::initRenderItem()
@@ -72,8 +60,8 @@ void VDBSubSceneOverride::initRenderItem()
     // Create render item.
     m_volume_render_item = MRenderItem::Create("vdb_volume", MRenderItem::RenderItemType::MaterialSceneItem, MHWRender::MGeometry::kTriangles);
     m_volume_render_item->setDrawMode(MGeometry::kAll);
-    //m_volume_render_item->castsShadows(false);
-    //m_volume_render_item->receivesShadows(false);
+    m_volume_render_item->castsShadows(false);
+    m_volume_render_item->receivesShadows(false);
     if (!m_volume_render_item->setShader(m_volume_shader.get())) {
         std::cerr << "VDBSubSceneOverride::initRenderItem: Could not set volume shader." << std::endl;
     }
@@ -93,12 +81,23 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
     // Sample grid
     if (data->vdb_file)
     {
-        if (!data->vdb_file->isOpen())
+        if (!data->vdb_file->isOpen()) {
             data->vdb_file->open(false);
-        auto grid_ptr = data->vdb_file->readGrid("density"); // TODO: use cached attribute
-        auto grid = dynamic_cast<const openvdb::FloatGrid*>(grid_ptr.get());
+        }
+        auto grid_ptr = openvdb::gridPtrCast<openvdb::FloatGrid>(data->vdb_file->readGrid("density")); // TODO: use cached attribute
+        const auto grid_extent = grid_ptr->evalActiveVoxelBoundingBox().extents();
+        const size_t levels = openvdb::math::Ceil(std::log2(grid_extent[grid_extent.maxIndex()]));
 
-        m_volume_texture.reset(volumeTextureFromGrid(grid, openvdb::Coord(32, 32, 32), texture_manager));
+        auto start_time = std::chrono::steady_clock::now();
+        openvdb::tools::MultiResGrid<openvdb::FloatTree> multi_res_grid(levels, grid_ptr);
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time).count();
+        std::cout << "MultiResGrid generation time: " << elapsed << "ms." << std::endl;
+
+        // TODO: use multi res grid
+        start_time = std::chrono::steady_clock::now();
+        m_volume_texture.reset(volumeTextureFromGrid(multi_res_grid, openvdb::Coord(32, 32, 32), texture_manager));
+        elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time).count();
+        std::cout << "Texture generation time: " << elapsed << "ms." << std::endl;
     }
 
     MHWRender::MTextureAssignment volume_texture_resource;
@@ -232,11 +231,13 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
     }
     instance_transform_array.setLength(num_instances);
 
-    // Apply instance transforms if any of them have changed.
     if (m_num_instances == 0 && num_instances == 1) {
-        CHECK_MSTATUS(addInstanceTransform(*m_volume_render_item, instance_transform_array[0]));
-    } else if (any_instance_changed || m_num_instances != num_instances) {
-        CHECK_MSTATUS(setInstanceTransformArray(*m_volume_render_item, instance_transform_array));
+        // First instance.
+        addInstanceTransform(*m_volume_render_item, instance_transform_array[0]);
+        m_num_instances = num_instances;
+    } else if (num_instances > m_num_instances) {
+        // Multiple instances are not supported (yet?).
+        std::cerr << "VDBVisualizer node does not support instancing." << std::endl;
         m_num_instances = num_instances;
     }
 }
