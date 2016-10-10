@@ -68,7 +68,7 @@ set_target_properties(ZLIB PROPERTIES INTERFACE_INCLUDE_DIRECTORIES ${ZLIB_ROOT}
 
 # OpenVDB
 add_library(OpenVDB STATIC IMPORTED)
-set(OPENVDB_ROOT ${DIGIC_DEV_LIB_DIR}/OpenVDB/3.1.0)
+set(OPENVDB_ROOT ${DIGIC_DEV_LIB_DIR}/OpenVDB/3.2.0)
 set_target_properties(OpenVDB PROPERTIES IMPORTED_LOCATION_RELEASE      ${OPENVDB_ROOT}/lib_win64/OpenVDB_static_vc140_md.lib)
 set_target_properties(OpenVDB PROPERTIES IMPORTED_LOCATION_DEBUG        ${OPENVDB_ROOT}/lib_win64/OpenVDB_static_vc140_md_gd.lib)
 set_target_properties(OpenVDB PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${OPENVDB_ROOT}/include;${OPENVDB_ROOT}/include/openvdb")
@@ -84,6 +84,7 @@ add_library(${PLUGIN_NAME} SHARED ${SRC} ${HDR_h} ${HDR_hpp} volume.cgfx)
 set_target_properties(${PLUGIN_NAME} PROPERTIES PREFIX "")
 set_target_properties(${PLUGIN_NAME} PROPERTIES SUFFIX ".mll")
 target_link_libraries(${PLUGIN_NAME} ${MAYA_LIBS} GLEW GL OpenVDB Boost::regex)
+target_compile_definitions(${PLUGIN_NAME} PRIVATE -DNOMINMAX)
 
 cotire(${PLUGIN_NAME})
 
