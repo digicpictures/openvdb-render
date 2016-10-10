@@ -17,6 +17,8 @@
 
 using namespace MHWRender;
 
+#define NUM_SLICES 80
+
 struct VDBSubSceneOverrideError
 {
     VDBSubSceneOverrideError(const char *what) : m_what(what) {}
@@ -33,16 +35,19 @@ bool VDBSubSceneOverride::requiresUpdate(const MHWRender::MSubSceneContainer& co
     return true;
 }
 
-void VDBSubSceneOverride::initRenderItem()
+bool VDBSubSceneOverride::initRenderItem()
 {
     assert(!m_volume_render_item);
 
     // Obtain pointers to rendering managers.
     MRenderer* renderer = MRenderer::theRenderer();
-    if (!renderer) return;
+    if (!renderer) {
+        return false;
+    }
     const MShaderManager* shader_manager = renderer->getShaderManager();
     if (!shader_manager) {
-        throw VDBSubSceneOverrideError("Unable to obtain pointer to shader manager.");
+        std::cerr << "Unable to obtain pointer to shader manager." << std::endl;
+        return false;
     }
 
     if (!m_volume_shader) {
@@ -52,7 +57,12 @@ void VDBSubSceneOverride::initRenderItem()
         path effect_file = path(__FILE__).parent_path() / "volume.cgfx";
         m_volume_shader.reset(shader_manager->getEffectsFileShader(effect_file.c_str(), "Main", 0, 0, false));
         if (!m_volume_shader) {
-            throw VDBSubSceneOverrideError("Cannot load cgfx file.");
+            static bool first_time = true;
+            if (first_time) {
+                std::cerr << "Cannot load cgfx file." << std::endl;
+                first_time = false;
+            }
+            return false;
         }
         m_volume_shader->setIsTransparent(true);
     }
@@ -64,7 +74,10 @@ void VDBSubSceneOverride::initRenderItem()
     m_volume_render_item->receivesShadows(false);
     if (!m_volume_render_item->setShader(m_volume_shader.get())) {
         std::cerr << "VDBSubSceneOverride::initRenderItem: Could not set volume shader." << std::endl;
+        return false;
     }
+
+    return true;
 }
 
 void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
@@ -73,8 +86,8 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
 
     const MFloatVector bbox_size = data->bbox.max() - data->bbox.min();
     const MFloatVector bbox_origin = data->bbox.min();
-    CHECK_MSTATUS(m_volume_shader->setParameter("volume_size", bbox_size));
-    CHECK_MSTATUS(m_volume_shader->setParameter("volume_origin", bbox_origin));
+    CHECK_MSTATUS(m_volume_shader->setParameter("volume_size_model", bbox_size));
+    CHECK_MSTATUS(m_volume_shader->setParameter("volume_origin_model", bbox_origin));
 
     auto texture_manager = MRenderer::theRenderer()->getTextureManager();
 
@@ -95,7 +108,7 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
 
         // TODO: use multi res grid
         start_time = std::chrono::steady_clock::now();
-        m_volume_texture.reset(volumeTextureFromGrid(multi_res_grid, openvdb::Coord(32, 32, 32), texture_manager));
+        m_volume_texture.reset(volumeTextureFromGrid(multi_res_grid, openvdb::Coord(NUM_SLICES, NUM_SLICES, NUM_SLICES), texture_manager));
         elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time).count();
         std::cout << "Texture generation time: " << elapsed << "ms." << std::endl;
     }
@@ -118,7 +131,7 @@ void VDBSubSceneOverride::updateGeometry(const VDBVisualizerData* data)
     assert(data);
 
     // Create geometry.
-    const int num_slices = 32; // TODO: get from node attribute
+    const int num_slices = NUM_SLICES; // TODO: get from node attribute
     const int num_vertices = num_slices * 4;
     const int num_indices = num_slices * 6;
 
@@ -158,10 +171,7 @@ void VDBSubSceneOverride::updateGeometry(const VDBVisualizerData* data)
 void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const MHWRender::MFrameContext& frameContext)
 {
     if (!m_volume_render_item) {
-        try {
-            initRenderItem();
-        } catch (const VDBSubSceneOverrideError& error) {
-            std::cerr << error.what() << std::endl;
+        if (!initRenderItem()) {
             return;
         }
 

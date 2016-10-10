@@ -39,7 +39,7 @@ private:
         m_volume_position_buffer(nullptr),
         m_volume_index_buffer(nullptr) {}
 
-    void initRenderItem();
+    bool initRenderItem();
     void updateShaderParams(const VDBVisualizerData* data);
     void updateGeometry(const VDBVisualizerData* data);
 
