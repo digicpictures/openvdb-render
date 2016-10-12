@@ -18,9 +18,9 @@
 // Disable "decorated name length exceeded, name was truncated" warning.
 #pragma warning(disable: 4503)
 
-using namespace MHWRender;
+#define NUM_SLICES 64
 
-#define NUM_SLICES 80
+using namespace MHWRender;
 
 struct VDBSubSceneOverrideError
 {
@@ -94,27 +94,89 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
 
     auto texture_manager = MRenderer::theRenderer()->getTextureManager();
 
-    // Sample grid
-    if (data->vdb_file)
+    // Shading parameters.
+    m_volume_shader->setParameter("light_dir",   data->light_direction);
+    auto v = data->light_direction;
+    m_volume_shader->setParameter("light_color", data->light_color);
+    m_volume_shader->setParameter("scattering",  data->scattering);
+    m_volume_shader->setParameter("absorption",  data->absorption);
+    m_volume_shader->setParameter("shadow_gain", data->shadow_gain);
+    m_volume_shader->setParameter("shadow_sample_count", data->shadow_sample_count);
+
+    // Bail if no vdb file is specified.
+    if (!data->vdb_file)
     {
+        m_volume_texture.reset();
+        MHWRender::MTextureAssignment volume_texture_resource;
+        volume_texture_resource.texture = nullptr;
+        m_volume_shader->setParameter("volume_texture", volume_texture_resource);
+        return;
+    }
+
+    // Check if we need to recreate the volume texture.
+
+    struct VDBChannel {
+        std::string m_file_name;
+        std::string m_density_channel_name;
+
+        VDBChannel(const std::string& file_name = "", const std::string& density_channel_name = "")
+            : m_file_name(file_name), m_density_channel_name(density_channel_name) {}
+        bool operator==(const VDBChannel& rhs) const { return m_file_name == rhs.m_file_name && m_density_channel_name == rhs.m_density_channel_name; }
+    };
+
+    VDBChannel channel(data->vdb_path, data->density_channel);
+    static VDBChannel cache;
+    if (cache == channel) {
+        return;
+    }
+    cache = channel;
+
+    // Load channel data.
+    openvdb::FloatGrid::ConstPtr grid_ptr;
+    try {
         if (!data->vdb_file->isOpen()) {
             data->vdb_file->open(false);
         }
-        auto grid_ptr = openvdb::gridPtrCast<openvdb::FloatGrid>(data->vdb_file->readGrid("density")); // TODO: use cached attribute
-        const auto grid_extent = grid_ptr->evalActiveVoxelBoundingBox().extents();
-        const size_t levels = openvdb::math::Ceil(std::log2(grid_extent[grid_extent.maxIndex()]));
-
-        auto start_time = std::chrono::steady_clock::now();
-        openvdb::tools::MultiResGrid<openvdb::FloatTree> multi_res_grid(levels, grid_ptr);
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time).count();
-        std::cout << "MultiResGrid generation time: " << elapsed << "ms." << std::endl;
-
-        // TODO: use multi res grid
-        start_time = std::chrono::steady_clock::now();
-        m_volume_texture.reset(volumeTextureFromGrid(multi_res_grid, openvdb::Coord(NUM_SLICES, NUM_SLICES, NUM_SLICES), texture_manager));
-        elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time).count();
-        std::cout << "Texture generation time: " << elapsed << "ms." << std::endl;
+        // TODO: uncomment
+        grid_ptr = openvdb::gridPtrCast<openvdb::FloatGrid>(data->vdb_file->readGrid(data->density_channel));
+        //grid_ptr = openvdb::gridPtrCast<openvdb::FloatGrid>(data->vdb_file->readGrid("density"));
+    } catch (const openvdb::Exception& e) {
+        std::cerr << "error reading file " << data->vdb_path << " : " << e.what() << std::endl;
+        return;
     }
+
+    // TODO
+    auto texture_extents = openvdb::Coord(NUM_SLICES, NUM_SLICES, NUM_SLICES);
+
+    /*
+    const auto grid_extent = grid_ptr->evalActiveVoxelBoundingBox().extents();
+    const size_t levels = openvdb::math::Ceil(std::log2(grid_extent[grid_extent.maxIndex()]));
+
+    auto start_time = std::chrono::steady_clock::now();
+    openvdb::tools::MultiResGrid<openvdb::FloatTree> multi_res_grid(levels, grid_ptr);
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time).count();
+    std::cout << "MultiResGrid generation time: " << elapsed << "ms." << std::endl;
+
+    // TODO: use multi res grid
+    start_time = std::chrono::steady_clock::now();
+    m_volume_texture.reset(volumeTextureFromGrid(multi_res_grid, openvdb::Coord(NUM_SLICES, NUM_SLICES, NUM_SLICES), texture_manager));
+    elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time).count();
+    std::cout << "Texture generation time: " << elapsed << "ms." << std::endl;
+    */
+
+    // Sample the density channel grid and create a volume texture from the samples.
+
+    auto start_time = std::chrono::steady_clock::now();
+
+    auto volume_sampler = VolumeSampler(texture_manager);
+    auto volume = volume_sampler.sampleGrid(*grid_ptr, texture_extents);
+    m_volume_texture.reset(volume.texture);
+
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time).count();
+    std::cout << "Sampling time: " << elapsed << "ms." << std::endl;
+
+    m_volume_shader->setParameter("min_voxel_value", volume.min_value);
+    m_volume_shader->setParameter("max_voxel_value", volume.max_value);
 
     MHWRender::MTextureAssignment volume_texture_resource;
     volume_texture_resource.texture = m_volume_texture.get();

@@ -67,6 +67,18 @@ public:
     static MObject s_voxel_size;
     static MObject s_matte;
 
+    // sliced display parameters
+    static MObject s_light_color;
+    static MObject s_light_intensity;
+    static MObject s_light_direction;
+    static MObject s_scattering_color;
+    static MObject s_scattering_intensity;
+    static MObject s_absorption_color;
+    static MObject s_absorption_intensity;
+    static MObject s_density_channel;
+    static MObject s_shadow_gain;
+    static MObject s_shadow_sample_count;
+
     // display parameters
     static MObject s_point_size;
     static MObject s_point_jitter;

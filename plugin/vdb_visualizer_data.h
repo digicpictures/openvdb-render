@@ -18,6 +18,18 @@ enum VDBDisplayMode{
 struct VDBVisualizerData{
     MBoundingBox bbox;
 
+    // Sliced display mode
+    float value_min;
+    float value_max;
+    MFloatVector light_color;
+    MFloatVector light_direction;
+    MFloatVector scattering;
+    MFloatVector absorption;
+    float shadow_gain;
+    int shadow_sample_count;
+    std::string density_channel;
+
+    // ===
     MFloatVector scattering_color;
     MFloatVector attenuation_color;
     MFloatVector emission_color;

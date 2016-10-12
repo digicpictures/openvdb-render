@@ -57,6 +57,18 @@ MObject VDBVisualizerShape::s_channel_stats;
 MObject VDBVisualizerShape::s_voxel_size;
 MObject VDBVisualizerShape::s_matte;
 
+// Sliced display params;
+MObject VDBVisualizerShape::s_light_color;
+MObject VDBVisualizerShape::s_light_intensity;
+MObject VDBVisualizerShape::s_light_direction;
+MObject VDBVisualizerShape::s_scattering_color;
+MObject VDBVisualizerShape::s_scattering_intensity;
+MObject VDBVisualizerShape::s_absorption_color;
+MObject VDBVisualizerShape::s_absorption_intensity;
+MObject VDBVisualizerShape::s_density_channel;
+MObject VDBVisualizerShape::s_shadow_gain;
+MObject VDBVisualizerShape::s_shadow_sample_count;
+
 MObject VDBVisualizerShape::s_point_size;
 MObject VDBVisualizerShape::s_point_jitter;
 MObject VDBVisualizerShape::s_point_skip;
@@ -240,7 +252,8 @@ MStatus VDBVisualizerShape::compute(const MPlug& plug, MDataBlock& dataBlock)
     {
         std::string vdb_path = dataBlock.inputValue(s_vdb_path).asString().asChar();
 
-        if (boost::regex_match(vdb_path, s_frame_expr))
+
+        if (vdb_path.find('#', 0) >= 0 || boost::regex_match(vdb_path, s_frame_expr))
         {
             const double cache_time = dataBlock.inputValue(s_cache_time).asTime().as(MTime::uiUnit());
             const double cache_playback_offset = dataBlock.inputValue(s_cache_playback_offset).asTime().as(MTime::uiUnit());
@@ -465,7 +478,7 @@ MStatus VDBVisualizerShape::initialize()
     eAttr.addField("Volumetric Shaded", DISPLAY_SHADED);
     eAttr.addField("Mesh", DISPLAY_MESH);
     eAttr.addField("Slices", DISPLAY_SLICES);
-    eAttr.setDefault(DISPLAY_GRID_BBOX);
+    eAttr.setDefault(DISPLAY_SLICES);
 
     addAttribute(s_display_mode);
 
@@ -550,6 +563,70 @@ MStatus VDBVisualizerShape::initialize()
     nAttr.setDefault(10);
     nAttr.setChannelBox(true);
 
+    // Sliced display attributes.
+
+    s_light_color = nAttr.createColor("lightColor", "light_color");
+    nAttr.setDefault(0.7, 0.7, 0.7);
+    addAttribute(s_light_color);
+    attributeAffects(s_light_color, s_update_trigger);
+
+    s_light_intensity = nAttr.create("lightIntensity", "light_intensity", MFnNumericData::kFloat);
+    nAttr.setDefault(5.0);
+    nAttr.setMin(0.0);
+    nAttr.setSoftMax(20.0);
+    addAttribute(s_light_intensity);
+    attributeAffects(s_light_intensity, s_update_trigger);
+
+    s_light_direction = nAttr.createPoint("lightDirection", "light_direction");
+    nAttr.setDefault(0.3, 0.3, 0.0);
+    addAttribute(s_light_direction);
+    attributeAffects(s_light_direction, s_update_trigger);
+
+    s_scattering_color = nAttr.createColor("scatteringColor", "scattering_color");
+    nAttr.setDefault(1.0, 1.0, 1.0);
+    addAttribute(s_scattering_color);
+    attributeAffects(s_scattering_color, s_update_trigger);
+
+    s_scattering_intensity = nAttr.create("scatteringIntensity", "scattering_intensity", MFnNumericData::kFloat);
+    nAttr.setDefault(1.5);
+    nAttr.setMin(0.0);
+    nAttr.setSoftMax(20.0);
+    addAttribute(s_scattering_intensity);
+    attributeAffects(s_scattering_intensity, s_update_trigger);
+
+    s_absorption_color = nAttr.createColor("absorptionColor", "absorption_color");
+    nAttr.setDefault(1.0, 1.0, 1.0);
+    addAttribute(s_absorption_color);
+    attributeAffects(s_absorption_color, s_update_trigger);
+
+    s_absorption_intensity = nAttr.create("absorptionIntensity", "absorption_intensity", MFnNumericData::kFloat);
+    nAttr.setDefault(0.1);
+    nAttr.setMin(0.0);
+    nAttr.setSoftMax(20.0);
+    addAttribute(s_absorption_intensity);
+    attributeAffects(s_absorption_intensity, s_update_trigger);
+
+    s_shadow_gain = nAttr.create("shadowGain", "shadow_gain", MFnNumericData::kFloat);
+    nAttr.setDefault(0.2);
+    nAttr.setMin(0.0);
+    nAttr.setSoftMax(4.0);
+    addAttribute(s_shadow_gain);
+    attributeAffects(s_shadow_gain, s_update_trigger);
+
+    s_shadow_sample_count = nAttr.create("shadowSampleCount", "shadow_sample_count", MFnNumericData::kInt);
+    nAttr.setDefault(8);
+    nAttr.setMin(0);
+    nAttr.setSoftMax(16);
+    addAttribute(s_shadow_sample_count);
+    attributeAffects(s_shadow_sample_count, s_update_trigger);
+
+    s_density_channel = tAttr.create("densityChannel", "density_channel", MFnData::kString);
+    tAttr.setDefault(MFnStringData().create("density"));
+    addAttribute(s_density_channel);
+    attributeAffects(s_density_channel, s_update_trigger);
+
+    //
+
     s_override_shader = nAttr.create("overrideShader", "override_shader", MFnNumericData::kBoolean);
     nAttr.setDefault(false);
     nAttr.setChannelBox(true);
@@ -623,6 +700,11 @@ MStatus VDBVisualizerShape::initialize()
     return status;
 }
 
+MFloatVector plugAsFloatVector(const MPlug plug)
+{
+    return { plug.child(0).asFloat(), plug.child(1).asFloat(), plug.child(2).asFloat() };
+}
+
 VDBVisualizerData* VDBVisualizerShape::get_update()
 {
     const int update_trigger = MPlug(thisMObject(), s_update_trigger).asInt();
@@ -636,8 +718,22 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
         m_vdb_data.point_skip = MPlug(tmo, s_point_skip).asInt();
         m_vdb_data.update_trigger = update_trigger;
 
-        if (m_vdb_data.display_mode >= DISPLAY_POINT_CLOUD)
+        if (m_vdb_data.display_mode < DISPLAY_POINT_CLOUD)
         {
+            return &m_vdb_data;
+        }
+        else if (m_vdb_data.display_mode == DISPLAY_SLICES)
+        {
+            m_vdb_data.light_color =       plugAsFloatVector(MPlug(tmo, s_light_color)) * MPlug(tmo, s_light_intensity).asFloat();
+            m_vdb_data.light_direction =   plugAsFloatVector(MPlug(tmo, s_light_direction));
+            m_vdb_data.scattering =        plugAsFloatVector(MPlug(tmo, s_scattering_color)) * MPlug(tmo, s_scattering_intensity).asFloat();
+            m_vdb_data.absorption =        plugAsFloatVector(MPlug(tmo, s_absorption_color)) * MPlug(tmo, s_absorption_intensity).asFloat();
+            m_vdb_data.shadow_gain =       MPlug(tmo, s_shadow_gain).asFloat();
+            m_vdb_data.shadow_sample_count = MPlug(tmo, s_shadow_sample_count).asInt();
+            m_vdb_data.density_channel =   MPlug(tmo, s_density_channel).asString().asChar();
+        }
+
+        /*
             const short shader_mode = MPlug(tmo, s_shader_mode).asShort();
             if (shader_mode == SHADER_MODE_VOLUME_COLLECTOR)
             {
@@ -755,7 +851,7 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
                 m_vdb_data.attenuation_gradient.clear();
                 m_vdb_data.emission_gradient.clear();
             }
-        }
+        */
 
         return &m_vdb_data;
     }
