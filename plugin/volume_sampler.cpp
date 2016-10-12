@@ -13,6 +13,9 @@
 #include <openvdb/tree/LeafManager.h>
 #include <openvdb/Exceptions.h>
 
+// Disable "decorated name length exceeded, name was truncated" warning.
+#pragma warning(disable: 4503)
+
 using namespace MHWRender;
 
 //==============================================================================

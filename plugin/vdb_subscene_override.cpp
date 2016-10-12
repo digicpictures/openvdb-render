@@ -15,6 +15,9 @@
 #include "vdb_visualizer.h"
 #include "volume_sampler.h"
 
+// Disable "decorated name length exceeded, name was truncated" warning.
+#pragma warning(disable: 4503)
+
 using namespace MHWRender;
 
 #define NUM_SLICES 80

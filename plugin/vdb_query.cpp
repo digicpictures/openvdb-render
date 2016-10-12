@@ -14,6 +14,9 @@
 
 #include "../util/maya_utils.hpp"
 
+// Disable "decorated name length exceeded, name was truncated" warning.
+#pragma warning(disable: 4503)
+
 namespace {
     const char* file_short_flag = "f";
     const char* file_long_flag = "file";
