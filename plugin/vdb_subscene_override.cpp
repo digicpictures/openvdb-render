@@ -102,6 +102,7 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
     m_volume_shader->setParameter("absorption",  data->absorption);
     m_volume_shader->setParameter("shadow_gain", data->shadow_gain);
     m_volume_shader->setParameter("shadow_sample_count", data->shadow_sample_count);
+    m_volume_shader->setParameter("slice_size_model", data->slice_size);
 
     // Bail if no vdb file is specified.
     if (!data->vdb_file)

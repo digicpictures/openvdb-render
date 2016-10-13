@@ -261,6 +261,7 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
 
         self.addSeparator()
         self.addControl("densityChannel",      label="Density Channel")
+        self.addControl("slice_size",          label="Slice Size")
         self.addControl("lightColor",          label="Light Color")
         self.addControl("lightIntensity",      label="Light Intensity")
         self.addControl("lightDirection",      label="Light Direction")

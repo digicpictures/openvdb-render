@@ -59,6 +59,7 @@ MObject VDBVisualizerShape::s_matte;
 
 // Sliced display params;
 MObject VDBVisualizerShape::s_density_channel;
+MObject VDBVisualizerShape::s_slice_size;
 MObject VDBVisualizerShape::s_light_color;
 MObject VDBVisualizerShape::s_light_intensity;
 MObject VDBVisualizerShape::s_light_direction;
@@ -625,6 +626,10 @@ MStatus VDBVisualizerShape::initialize()
     addAttribute(s_shadow_sample_count);
     attributeAffects(s_shadow_sample_count, s_update_trigger);
 
+    s_slice_size = nAttr.createPoint("sliceSize", "slice_size");
+    nAttr.setDefault(0.2, 0.2, 0.2);
+    addAttribute(s_slice_size);
+    attributeAffects(s_slice_size, s_update_trigger);
 
     //
 
@@ -726,6 +731,7 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
         else if (m_vdb_data.display_mode == DISPLAY_SLICES)
         {
             m_vdb_data.density_channel =     MPlug(tmo, s_density_channel).asString().asChar();
+            m_vdb_data.slice_size =          plugAsFloatVector(MPlug(tmo, s_slice_size));
             m_vdb_data.light_color =         plugAsFloatVector(MPlug(tmo, s_light_color)) * MPlug(tmo, s_light_intensity).asFloat();
             m_vdb_data.light_direction =     plugAsFloatVector(MPlug(tmo, s_light_direction));
             m_vdb_data.scattering =          plugAsFloatVector(MPlug(tmo, s_scattering_color)) * MPlug(tmo, s_scattering_intensity).asFloat();
