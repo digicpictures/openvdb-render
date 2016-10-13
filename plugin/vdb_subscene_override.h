@@ -33,7 +33,6 @@ private:
     VDBSubSceneOverride(const MObject& obj)
         : MPxSubSceneOverride(obj),
         m_object(obj),
-        m_num_instances(0),
         m_volume_render_item(nullptr),
         m_volume_shader(nullptr),
         m_volume_position_buffer(nullptr),
@@ -44,21 +43,6 @@ private:
     void updateGeometry(const VDBVisualizerData* data);
 
     MObject m_object;
-
-    struct InstanceInfo
-    {
-        MMatrix m_transform;
-        bool m_is_selected;
-
-        InstanceInfo() : m_is_selected(false) {}
-        InstanceInfo(const MMatrix& matrix, bool selected) : m_transform(matrix), m_is_selected(selected) {}
-        bool operator==(const InstanceInfo& rhs) const { return m_is_selected == rhs.m_is_selected && m_transform.isEquivalent(rhs.m_transform); }
-        bool operator!=(const InstanceInfo& rhs) const { return !(*this == rhs); }
-    };
-    //typedef std::map<unsigned int, InstanceInfo> InstanceInfoMap;
-    typedef boost::container::flat_map<unsigned int, InstanceInfo> InstanceInfoMap;
-    InstanceInfoMap m_instance_info_cache;
-    int m_num_instances;
 
     struct ShaderInstanceDeleter {
         void operator()(MHWRender::MShaderInstance* ptr) const; 

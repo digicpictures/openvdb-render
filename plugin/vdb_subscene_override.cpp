@@ -260,61 +260,9 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
         updateGeometry(data);
     }
 
-    // TODO: handle selection.
-    MSelectionList selected_list;
-    MGlobal::getActiveSelectionList(selected_list);
-
-    // Handle instancing.
-    MDagPathArray instances;
-    if (!node.getAllPaths(instances) || instances.length() == 0) {
-        return;
-    }
-
-    auto is_any_ancestor_selected = [&selected_list](MDagPath path) {
-        MStatus status;
-        do {
-            if (selected_list.hasItem(path)) {
-                return true;
-            }
-            status = path.pop();
-        } while (status);
-        return false;
-    };
-
-    MMatrixArray instance_transform_array(instances.length());
-    int num_instances = 0;
-    bool any_instance_changed = false;
-    for (auto i = 0u; i < instances.length(); ++i) {
-        auto& instance = instances[i];
-        if (!instance.isValid() || !instance.isVisible()) {
-            continue;
-        }
-
-        // Add or update instance info.
-        InstanceInfo instance_info(instance.inclusiveMatrix(), is_any_ancestor_selected(instance));
-        const int instance_number = instance.instanceNumber();
-        InstanceInfoMap::iterator iter = m_instance_info_cache.find(instance_number);
-        if (iter == m_instance_info_cache.end()) {
-            m_instance_info_cache[instance_number] = instance_info;
-            any_instance_changed = true;
-        } else if (iter->second != instance_info) {
-            iter->second = instance_info;
-            any_instance_changed = true;
-        }
-
-        instance_transform_array[num_instances++] = instance_info.m_transform;
-    }
-    instance_transform_array.setLength(num_instances);
-
-    if (m_num_instances == 0 && num_instances == 1) {
-        // First instance.
-        addInstanceTransform(*m_volume_render_item, instance_transform_array[0]);
-        m_num_instances = num_instances;
-    } else if (num_instances > m_num_instances) {
-        // Multiple instances are not supported (yet?).
-        std::cerr << "VDBVisualizer node does not support instancing." << std::endl;
-        m_num_instances = num_instances;
-    }
+    MDagPath path;
+    node.getPath(path);
+    m_volume_render_item->setMatrix(&path.inclusiveMatrix());
 }
 
 MString VDBSubSceneOverride::registrantId = "VDBVisualizerSubSceneOverride";
