@@ -30,7 +30,8 @@ float SampleVolume(float3 tex_coords, float lod)
 
 struct VERT_INPUT
 {
-    float3 pos_unit_cube : Position;
+    float3 dummy_pos : Position;
+    int id : VERTEXID;
 };
 
 struct VERT_OUTPUT
@@ -47,6 +48,44 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
 
     int3 volume_size_voxels = tex3Dsize(volume_sampler, 0);
 
+    int id = input.id;
+    float2 pos_slice = float2(id & 1, (id >> 1) & 1);
+
+    int slice_idx = id >> 2;
+    //int3 slice_idx_ofs = int3(volume_origin_model / slice_size_model);
+    //int3 slice_count = int3(volume_size_model / slice_size_model) + int3(1, 1, 1);
+
+    // Use dummy attrib to prevent the compiler optimizing it away.
+    slice_idx += int(0.000001 * input.dummy_pos.x);
+
+    //float3 pos_unit_cube = input.pos_unit_cube;
+    //float3 pos_unit_cube = float3(pos_slice, input.pos_unit_cube.z);
+
+    //float3 pos_unit_cube; // = float3(pos_slice, slice_idx);
+    float3 pos_model;
+
+    // Define a macro for position calculation.
+    // Slice axis can be x, y or z, other_axes can be yz, zx or xy.
+#define ALIGN_SLICES(slice_axis, other_axes) do { \
+        /* Reorder slices if needed for correct transparency. */ \
+        if (slice_axis > 0) slice_idx = (max_slice_count - 1) - slice_idx; \
+        /* Constrain slice distance to get at most max_slice_count slices. */ \
+        float slice_distance = max(slice_size_model, volume_size_model.slice_axis / (max_slice_count - 1)); \
+        /* Calculate model position so that a slice will always intersect the origin. */ \
+        int slice_idx_ofs = volume_origin_model.slice_axis / slice_distance; \
+        pos_model.slice_axis = (slice_idx + slice_idx_ofs) * slice_distance; \
+        /* Kill vertex if out of bounding box. */ \
+        if (pos_model.slice_axis < volume_origin_model.slice_axis || \
+            pos_model.slice_axis > volume_origin_model.slice_axis + volume_size_model.slice_axis) { \
+            output.pos_clip = float4(0, 0, 0, 0); \
+            return output; \
+        } \
+        /* Model position along non-slice axes. */ \
+        pos_model.other_axes = pos_slice * volume_size_model.other_axes + volume_origin_model.other_axes; \
+        /* The slice vector points toward the slice axis and has slice distance magnitude. */ \
+        output.slice_vector_world = local_##slice_axis##_world * slice_distance; \
+    } while (false) // Stupid but classic macro trick.
+
     // Slice along axis of steepest angle w.r.t. camera.
     float3 local_x_world = normalize(world_mat._m00_m10_m20);
     float3 local_y_world = normalize(world_mat._m01_m11_m21);
@@ -55,26 +94,18 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
           y = dot(local_y_world, view_dir_world),
           z = dot(local_z_world, view_dir_world);
     float ax = abs(x), ay = abs(y), az = abs(z);
-    float3 pos_unit_cube = input.pos_unit_cube;
     if (ax > ay && ax > az) {
-        pos_unit_cube = pos_unit_cube.zxy;
-        if (x > 0) pos_unit_cube.x = 1 - pos_unit_cube.x;
-        output.slice_vector_world = local_x_world * volume_size_model.x / volume_size_voxels.x;
+        ALIGN_SLICES(x, yz);
     } else if (ay > ax && ay > az) {
-        pos_unit_cube = pos_unit_cube.yzx;
-        if (y > 0) pos_unit_cube.y = 1 - pos_unit_cube.y;
-        output.slice_vector_world = local_y_world * volume_size_model.y / volume_size_voxels.y;
+        ALIGN_SLICES(y, zx);
     } else {
-        pos_unit_cube = pos_unit_cube.xyz;
-        if (z > 0) pos_unit_cube.z = 1 - pos_unit_cube.z;
-        output.slice_vector_world = local_z_world * volume_size_model.z / volume_size_voxels.z;
+        ALIGN_SLICES(z, xy);
     }
+    output.pos_model = pos_model;
 
-    // Pass adjusted unit cube position to fragment shader.
-    output.tex_coord = pos_unit_cube;
+    // Texture coordinates are based on model space position, so that slicing axis doesn't affect volume orientation.
+    output.tex_coord = (pos_model - volume_origin_model) / volume_size_model;
 
-    // Transform position to model space, and then clip space.
-    output.pos_model = volume_size_model * pos_unit_cube + volume_origin_model;
     output.pos_clip = mul(world_view_proj_mat, float4(output.pos_model, 1));
 
     return output;
