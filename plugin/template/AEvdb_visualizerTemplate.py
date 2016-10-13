@@ -260,6 +260,7 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         #self.addControl("pointSkip", label="Point Skip")
 
         self.addSeparator()
+        self.addControl("densityChannel",      label="Density Channel")
         self.addControl("lightColor",          label="Light Color")
         self.addControl("lightIntensity",      label="Light Intensity")
         self.addControl("lightDirection",      label="Light Direction")
@@ -267,7 +268,6 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.addControl("scatteringIntensity", label="Scattering Intensity")
         self.addControl("absorptionColor",     label="Absorption Color")
         self.addControl("absorptionIntensity", label="Absorption Intensity")
-        self.addControl("densityChannel",      label="Density Channel")
         self.addControl("shadowGain",          label="Shadow ray gain")
         self.addControl("shadowSampleCount",   label="Shadow ray sample count")
 

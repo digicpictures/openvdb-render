@@ -21,13 +21,13 @@ struct VDBVisualizerData{
     // Sliced display mode
     float value_min;
     float value_max;
+    std::string density_channel;
     MFloatVector light_color;
     MFloatVector light_direction;
     MFloatVector scattering;
     MFloatVector absorption;
     float shadow_gain;
     int shadow_sample_count;
-    std::string density_channel;
 
     // ===
     MFloatVector scattering_color;

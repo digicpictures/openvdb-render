@@ -58,6 +58,7 @@ MObject VDBVisualizerShape::s_voxel_size;
 MObject VDBVisualizerShape::s_matte;
 
 // Sliced display params;
+MObject VDBVisualizerShape::s_density_channel;
 MObject VDBVisualizerShape::s_light_color;
 MObject VDBVisualizerShape::s_light_intensity;
 MObject VDBVisualizerShape::s_light_direction;
@@ -65,7 +66,6 @@ MObject VDBVisualizerShape::s_scattering_color;
 MObject VDBVisualizerShape::s_scattering_intensity;
 MObject VDBVisualizerShape::s_absorption_color;
 MObject VDBVisualizerShape::s_absorption_intensity;
-MObject VDBVisualizerShape::s_density_channel;
 MObject VDBVisualizerShape::s_shadow_gain;
 MObject VDBVisualizerShape::s_shadow_sample_count;
 
@@ -565,6 +565,11 @@ MStatus VDBVisualizerShape::initialize()
 
     // Sliced display attributes.
 
+    s_density_channel = tAttr.create("densityChannel", "density_channel", MFnData::kString);
+    tAttr.setDefault(MFnStringData().create("density"));
+    addAttribute(s_density_channel);
+    attributeAffects(s_density_channel, s_update_trigger);
+
     s_light_color = nAttr.createColor("lightColor", "light_color");
     nAttr.setDefault(0.7, 0.7, 0.7);
     addAttribute(s_light_color);
@@ -620,10 +625,6 @@ MStatus VDBVisualizerShape::initialize()
     addAttribute(s_shadow_sample_count);
     attributeAffects(s_shadow_sample_count, s_update_trigger);
 
-    s_density_channel = tAttr.create("densityChannel", "density_channel", MFnData::kString);
-    tAttr.setDefault(MFnStringData().create("density"));
-    addAttribute(s_density_channel);
-    attributeAffects(s_density_channel, s_update_trigger);
 
     //
 
@@ -724,13 +725,13 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
         }
         else if (m_vdb_data.display_mode == DISPLAY_SLICES)
         {
+            m_vdb_data.density_channel =     MPlug(tmo, s_density_channel).asString().asChar();
             m_vdb_data.light_color =       plugAsFloatVector(MPlug(tmo, s_light_color)) * MPlug(tmo, s_light_intensity).asFloat();
             m_vdb_data.light_direction =   plugAsFloatVector(MPlug(tmo, s_light_direction));
             m_vdb_data.scattering =        plugAsFloatVector(MPlug(tmo, s_scattering_color)) * MPlug(tmo, s_scattering_intensity).asFloat();
             m_vdb_data.absorption =        plugAsFloatVector(MPlug(tmo, s_absorption_color)) * MPlug(tmo, s_absorption_intensity).asFloat();
             m_vdb_data.shadow_gain =       MPlug(tmo, s_shadow_gain).asFloat();
             m_vdb_data.shadow_sample_count = MPlug(tmo, s_shadow_sample_count).asInt();
-            m_vdb_data.density_channel =   MPlug(tmo, s_density_channel).asString().asChar();
         }
 
         /*
