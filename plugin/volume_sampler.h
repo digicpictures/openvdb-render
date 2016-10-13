@@ -40,7 +40,7 @@ private:
     MHWRender::MTextureManager* m_texture_manager;
 
 
-    static constexpr int N_FILT_SAMP = 2;
+    static constexpr int N_FILT_SAMP = 1;
     void initSampleJitter();
     std::vector<openvdb::Vec3d> m_sample_jitter;
 };
