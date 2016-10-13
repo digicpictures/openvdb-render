@@ -9,6 +9,7 @@ sampler3D volume_sampler = sampler_state {
     Texture = <volume_texture>;
 };
 
+uniform int max_slice_count; // How many slices does the vertex buffer has vertices for.
 uniform float slice_size_model;
 uniform float min_voxel_value = 0;
 uniform float max_voxel_value = 1;

@@ -68,6 +68,7 @@ bool VDBSubSceneOverride::initRenderItem()
             return false;
         }
         m_volume_shader->setIsTransparent(true);
+        m_volume_shader->setParameter("max_slice_count", NUM_SLICES);
     }
 
     // Create render item.
