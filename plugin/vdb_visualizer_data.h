@@ -22,7 +22,7 @@ struct VDBVisualizerData{
     float value_min;
     float value_max;
     std::string density_channel;
-    MFloatVector slice_size;
+    float slice_size;
     MFloatVector light_color;
     MFloatVector light_direction;
     MFloatVector scattering;
