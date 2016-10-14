@@ -88,11 +88,6 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
 {
     assert(data);
 
-    const MFloatVector bbox_size = data->bbox.max() - data->bbox.min();
-    const MFloatVector bbox_origin = data->bbox.min();
-    CHECK_MSTATUS(m_volume_shader->setParameter("volume_size_model", bbox_size));
-    CHECK_MSTATUS(m_volume_shader->setParameter("volume_origin_model", bbox_origin));
-
     auto texture_manager = MRenderer::theRenderer()->getTextureManager();
 
     // Shading parameters.
@@ -139,25 +134,34 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
             data->vdb_file->open(false);
         }
         grid_ptr = openvdb::gridPtrCast<openvdb::FloatGrid>(data->vdb_file->readGrid(data->density_channel));
+
     } catch (const openvdb::Exception& e) {
         std::cerr << "error reading file " << data->vdb_path << " : " << e.what() << std::endl;
         return;
     }
 
-    auto texture_extents = openvdb::Coord(NUM_SLICES, NUM_SLICES, NUM_SLICES);
-    // Sample the density channel grid and create a volume texture from the samples.
+    static auto volume_sampler = VolumeSampler(texture_manager);
 
-    auto start_time = std::chrono::steady_clock::now();
+    // Model space volume sizes (world space in the vdb grid's perspective).
+    const auto grid_bbox_is = read_index_space_bounding_box(grid_ptr.get());
+    const auto grid_bbox_ws = grid_ptr->transform().indexToWorld(grid_bbox_is);
+    const auto mayavec_from_vec3d = [](const auto& vec) { return MFloatVector(vec.x(), vec.y(), vec.z()); };
+    CHECK_MSTATUS(m_volume_shader->setParameter("volume_size_model", mayavec_from_vec3d(grid_bbox_ws.extents())));
+    CHECK_MSTATUS(m_volume_shader->setParameter("volume_origin_model", mayavec_from_vec3d(grid_bbox_ws.min())));
 
-    auto volume_sampler = VolumeSampler(texture_manager);
-    auto volume = volume_sampler.sampleGrid(*grid_ptr, texture_extents);
+    // Create multi resolution grid (mip chain).
+    const auto grid_extents_is = grid_bbox_is.extents();
+    const size_t levels = openvdb::math::Ceil(std::log2(grid_extents_is[grid_extents_is.maxIndex()]));
+    openvdb::tools::MultiResGrid<openvdb::FloatTree> multi_res_grid(levels, *grid_ptr);
+
+    // Sample the multi resolution grid at regular intervals.
+    const auto texture_extents = openvdb::Coord(NUM_SLICES, NUM_SLICES, NUM_SLICES);
+    auto volume = volume_sampler.sampleMultiResGrid(multi_res_grid, texture_extents);
     m_volume_texture.reset(volume.texture);
 
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time).count();
-    std::cout << "Sampling time: " << elapsed << "ms." << std::endl;
 
-    m_volume_shader->setParameter("min_voxel_value", volume.min_value);
-    m_volume_shader->setParameter("max_voxel_value", volume.max_value);
+    m_volume_shader->setParameter("min_voxel_value", volume.value_range.min);
+    m_volume_shader->setParameter("max_voxel_value", volume.value_range.max);
 
     MHWRender::MTextureAssignment volume_texture_resource;
     volume_texture_resource.texture = m_volume_texture.get();
@@ -178,13 +182,12 @@ void VDBSubSceneOverride::updateGeometry(const VDBVisualizerData* data)
 
     // Create geometry.
     const int num_slices = NUM_SLICES; // TODO: get from node attribute
-    const int num_vertices = num_slices * 4;
-    const int num_indices = num_slices * 6;
 
     // - Vertices
     // Note: descriptor name (first ctor arg) MUST be "", or setGeometryForRenderItem will return kFailure.
     const MVertexBufferDescriptor pos_desc("", MGeometry::kPosition, MGeometry::kFloat, 3);
     m_volume_position_buffer.reset(new MVertexBuffer(pos_desc));
+    const int num_vertices = num_slices * 4;
     MFloatVector* positions = reinterpret_cast<MFloatVector*>(m_volume_position_buffer->acquire(static_cast<unsigned int>(num_vertices), false));
     for (int i = 0; i < num_slices; ++i)
     {
@@ -198,6 +201,7 @@ void VDBSubSceneOverride::updateGeometry(const VDBVisualizerData* data)
 
     // - Indices
     m_volume_index_buffer.reset(new MIndexBuffer(MGeometry::kUnsignedInt32));
+    const int num_indices = num_slices * 6;
     unsigned int* indices = reinterpret_cast<unsigned int*>(m_volume_index_buffer->acquire(num_indices, false));
     for (unsigned int i = 0; i < num_slices; ++i) {
         indices[6*i+0] = 4*i+0;

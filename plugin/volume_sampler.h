@@ -11,11 +11,24 @@ namespace MHWRender {
     class MTextureManager;
 }
 
-struct Texture
+struct ValueRange
+{
+    float min, max;
+    ValueRange() : min(0), max(0) {}
+    ValueRange(float min_ , float max_) : min(min_), max(max_) {}
+};
+
+struct VolumeTexture
 {
     MHWRender::MTexture* texture;
-    float min_value;
-    float max_value;
+    ValueRange value_range;
+
+    VolumeTexture() : texture(nullptr) {}
+    VolumeTexture(const openvdb::Coord& extents, const float* data_norm, const ValueRange& value_range_, MHWRender::MTextureManager* texture_manager)
+        : texture(acquireVolumeTexture(extents, data_norm, texture_manager)), value_range(value_range_) {}
+
+private:
+    MHWRender::MTexture* acquireVolumeTexture(const openvdb::Coord& texture_extents, const float* pixel_data, MHWRender::MTextureManager* texture_manager);
 };
 
 class VolumeSampler
@@ -24,23 +37,18 @@ public:
     VolumeSampler(MHWRender::MTextureManager* texture_manager) : m_texture_manager(texture_manager) { initSampleJitter(); }
 
     // Sample a single grid. Filtering is done by getting multiple (jittered) samples.
-    Texture sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents);
+    VolumeTexture sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents);
     // Sample a multi res grid. Filtering is done by the built-in sampling mechanism of MultiResGrid.
-    Texture sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents);
+    VolumeTexture sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents);
 
 private:
-    MHWRender::MTexture* acquireVolumeTexture(const openvdb::Coord& texture_extents, const float* pixel_data);
-
-    //std::vector<openvdb::Vec3d> createSampleJitter(int n_samp);
-
-    std::vector<float>
-    samplingLoop(const openvdb::CoordBBox& input_domain, const openvdb::Coord& output_extents,
-                 std::function<float(openvdb::Vec3d)> sampling_func);
+    void
+    samplingLoop(float* output, const openvdb::CoordBBox& domain, std::function<void(openvdb::Coord,float&)> sampling_func);
 
     MHWRender::MTextureManager* m_texture_manager;
-
 
     static constexpr int N_FILT_SAMP = 1;
     void initSampleJitter();
     std::vector<openvdb::Vec3d> m_sample_jitter;
+    std::vector<float> m_buffer;
 };
