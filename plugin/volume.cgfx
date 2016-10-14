@@ -64,7 +64,7 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
         /* Constrain slice distance to get at most max_slice_count slices. */ \
         float slice_distance = max(slice_size_model, volume_size_model.slice_axis / (max_slice_count - 1)); \
         /* Calculate model position so that a slice will always intersect the origin. */ \
-        int slice_idx_ofs = volume_origin_model.slice_axis / slice_distance; \
+        int slice_idx_ofs = -int(-(volume_origin_model.slice_axis / slice_distance)); \
         pos_model.slice_axis = (slice_idx + slice_idx_ofs) * slice_distance; \
         /* Kill vertex if out of bounding box. */ \
         if (pos_model.slice_axis < volume_origin_model.slice_axis || \
