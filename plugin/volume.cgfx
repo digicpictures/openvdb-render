@@ -46,22 +46,14 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
 {
     VERT_OUTPUT output;
 
-    int3 volume_size_voxels = tex3Dsize(volume_sampler, 0);
 
     int id = input.id;
     float2 pos_slice = float2(id & 1, (id >> 1) & 1);
-
     int slice_idx = id >> 2;
-    //int3 slice_idx_ofs = int3(volume_origin_model / slice_size_model);
-    //int3 slice_count = int3(volume_size_model / slice_size_model) + int3(1, 1, 1);
 
     // Use dummy attrib to prevent the compiler optimizing it away.
     slice_idx += int(0.000001 * input.dummy_pos.x);
 
-    //float3 pos_unit_cube = input.pos_unit_cube;
-    //float3 pos_unit_cube = float3(pos_slice, input.pos_unit_cube.z);
-
-    //float3 pos_unit_cube; // = float3(pos_slice, slice_idx);
     float3 pos_model;
 
     // Define a macro for position calculation.

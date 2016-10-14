@@ -97,7 +97,6 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
 
     // Shading parameters.
     m_volume_shader->setParameter("light_dir",   data->light_direction);
-    auto v = data->light_direction;
     m_volume_shader->setParameter("light_color", data->light_color);
     m_volume_shader->setParameter("scattering",  data->scattering);
     m_volume_shader->setParameter("absorption",  data->absorption);
@@ -139,33 +138,13 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
         if (!data->vdb_file->isOpen()) {
             data->vdb_file->open(false);
         }
-        // TODO: uncomment
         grid_ptr = openvdb::gridPtrCast<openvdb::FloatGrid>(data->vdb_file->readGrid(data->density_channel));
-        //grid_ptr = openvdb::gridPtrCast<openvdb::FloatGrid>(data->vdb_file->readGrid("density"));
     } catch (const openvdb::Exception& e) {
         std::cerr << "error reading file " << data->vdb_path << " : " << e.what() << std::endl;
         return;
     }
 
-    // TODO
     auto texture_extents = openvdb::Coord(NUM_SLICES, NUM_SLICES, NUM_SLICES);
-
-    /*
-    const auto grid_extent = grid_ptr->evalActiveVoxelBoundingBox().extents();
-    const size_t levels = openvdb::math::Ceil(std::log2(grid_extent[grid_extent.maxIndex()]));
-
-    auto start_time = std::chrono::steady_clock::now();
-    openvdb::tools::MultiResGrid<openvdb::FloatTree> multi_res_grid(levels, grid_ptr);
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time).count();
-    std::cout << "MultiResGrid generation time: " << elapsed << "ms." << std::endl;
-
-    // TODO: use multi res grid
-    start_time = std::chrono::steady_clock::now();
-    m_volume_texture.reset(volumeTextureFromGrid(multi_res_grid, openvdb::Coord(NUM_SLICES, NUM_SLICES, NUM_SLICES), texture_manager));
-    elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time).count();
-    std::cout << "Texture generation time: " << elapsed << "ms." << std::endl;
-    */
-
     // Sample the density channel grid and create a volume texture from the samples.
 
     auto start_time = std::chrono::steady_clock::now();
