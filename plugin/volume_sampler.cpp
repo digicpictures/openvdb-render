@@ -40,20 +40,25 @@ namespace {
 } // unnamed namespace
 
 VolumeTexture
-VolumeSampler::sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents)
+VolumeSampler::sampleMultiResGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents)
 {
-    const auto& grid = multires.grid(0);
     const auto index_bbox = getIndexSpaceBoundingBox(&grid);
-    const auto world_bbox = grid->transform().indexToWorld(index_bbox);
+    const auto world_bbox = grid.transform().indexToWorld(index_bbox);
 
     const auto domain = openvdb::CoordBBox(openvdb::Coord(), texture_extents - openvdb::Coord(1, 1, 1));
     m_buffer.resize(domain.volume());
 
     // Calculate LOD level.
-    const auto coarse_voxel_size = index_bbox.extents().asVec3d() / texture_extents.asVec3d();
-    const auto max_component = std::max(std::max(coarse_voxel_size.x(), coarse_voxel_size.y()), coarse_voxel_size.z());
-    const auto lod_level = boost::algorithm::clamp(std::log2(max_component), 0, double(multires.coarsestLevel()));
+    const auto grid_extents = index_bbox.extents().asVec3d();
+    const auto coarse_voxel_size = grid_extents / texture_extents.asVec3d();
+    const auto max_levels = openvdb::math::Ceil(std::log2(maxComponent(grid_extents)));
+    const auto lod_level = boost::algorithm::clamp(std::log2(maxComponent(coarse_voxel_size)), 0, max_levels);
+    const auto num_levels = size_t(openvdb::math::Ceil(lod_level)) + 1;
 
+    // Create multi res grid.
+    openvdb::tools::MultiResGrid<openvdb::FloatTree> multires(num_levels, grid);
+
+    // Sample the grid on a uniform lattice.
     std::atomic<float> min_value = 0.0, max_value = 0.0;
     samplingLoop(m_buffer.data(), domain, [&multires, lod_level, domain_extents = texture_extents.asVec3d(), &world_bbox, &min_value, &max_value](const openvdb::Coord& index, float& output) {
         const auto sample_pos_ws = (index.asVec3d() + 0.5) / domain_extents * world_bbox.extents() + world_bbox.min();

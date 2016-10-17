@@ -147,16 +147,10 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
     CHECK_MSTATUS(m_volume_shader->setParameter("volume_size_model", mayavecFromVec3f(grid_bbox_ws.extents())));
     CHECK_MSTATUS(m_volume_shader->setParameter("volume_origin_model", mayavecFromVec3f(grid_bbox_ws.min())));
 
-    // Create multi resolution grid (mip chain).
-    const auto grid_extents_is = grid_bbox_is.extents();
-    const size_t levels = openvdb::math::Ceil(std::log2(grid_extents_is[grid_extents_is.maxIndex()]));
-    openvdb::tools::MultiResGrid<openvdb::FloatTree> multi_res_grid(levels, *grid_ptr);
-
     // Sample the multi resolution grid at regular intervals.
     const auto texture_extents = openvdb::Coord(MAX_SLICE_COUNT, MAX_SLICE_COUNT, MAX_SLICE_COUNT);
-    auto volume = volume_sampler.sampleMultiResGrid(multi_res_grid, texture_extents);
+    auto volume = volume_sampler.sampleMultiResGrid(*grid_ptr, texture_extents);
     m_volume_texture.reset(volume.texture);
-
 
     m_volume_shader->setParameter("min_voxel_value", volume.value_range.min);
     m_volume_shader->setParameter("max_voxel_value", volume.value_range.max);

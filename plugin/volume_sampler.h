@@ -39,7 +39,7 @@ public:
     // Sample a single grid. Filtering is done by getting multiple (jittered) samples.
     VolumeTexture sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents);
     // Sample a multi res grid. Filtering is done by the built-in sampling mechanism of MultiResGrid.
-    VolumeTexture sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents);
+    VolumeTexture sampleMultiResGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents);
 
 private:
     void

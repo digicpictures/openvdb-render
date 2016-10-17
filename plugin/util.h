@@ -27,3 +27,9 @@ mayavecFromVec3f(const openvdb::Vec3f& vec)
 {
     return { vec.x(), vec.y(), vec.z() };
 }
+
+template <typename VecT>
+typename VecT::value_type maxComponent(const VecT& v)
+{
+    return std::max(std::max(v.x(), v.y()), v.z());
+}
