@@ -46,14 +46,10 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
 {
     VERT_OUTPUT output;
 
-
-    int id = input.id;
-    float2 pos_slice = float2(id & 1, (id >> 1) & 1);
-    int slice_idx = id >> 2;
-
+    int slice_idx = input.id >> 2;
     // Use dummy attrib to prevent the compiler optimizing it away.
     slice_idx += int(0.000001 * input.dummy_pos.x);
-
+    float2 pos_slice = float2(input.id & 1, (input.id >> 1) & 1);
     float3 pos_model;
 
     // Define a macro for position calculation.
@@ -93,11 +89,10 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
     } else {
         ALIGN_SLICES(z, xy);
     }
-    output.pos_model = pos_model;
 
     // Texture coordinates are based on model space position, so that slicing axis doesn't affect volume orientation.
     output.tex_coord = (pos_model - volume_origin_model) / volume_size_model;
-
+    output.pos_model = pos_model;
     output.pos_clip = mul(world_view_proj_mat, float4(output.pos_model, 1));
 
     return output;
