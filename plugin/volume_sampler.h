@@ -33,7 +33,7 @@ private:
 class VolumeSampler
 {
 public:
-    VolumeSampler(MHWRender::MTextureManager* texture_manager) : m_texture_manager(texture_manager) { initSampleJitter(); }
+    VolumeSampler(MHWRender::MTextureManager* texture_manager) : m_texture_manager(texture_manager) {}
 
     // Sample a single grid using simple box filter.
     VolumeTexture sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents);
@@ -45,9 +45,5 @@ private:
     samplingLoop(float* output, const openvdb::CoordBBox& domain, std::function<void(openvdb::Coord,float&)> sampling_func);
 
     MHWRender::MTextureManager* m_texture_manager;
-
-    static constexpr int N_FILT_SAMP = 1;
-    void initSampleJitter();
-    std::vector<openvdb::Vec3d> m_sample_jitter;
     std::vector<float> m_buffer;
 };

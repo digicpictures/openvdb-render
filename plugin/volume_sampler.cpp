@@ -129,60 +129,6 @@ VolumeSampler::samplingLoop(float* output, const openvdb::CoordBBox& domain, std
     });
 }
 
-void
-VolumeSampler::initSampleJitter()
-{
-    std::default_random_engine gen;
-    std::uniform_real_distribution<float> dist(0.0, 1.0);
-
-    // Canonical arrangement.
-    m_sample_jitter.resize(N_FILT_SAMP * N_FILT_SAMP * N_FILT_SAMP);
-    auto it = m_sample_jitter.begin();
-    for (int k = 0; k < N_FILT_SAMP; ++k) {
-        for (int j = 0; j < N_FILT_SAMP; ++j) {
-            for (int i = 0; i < N_FILT_SAMP; ++i) {
-                const float x = (i + (j + (k + dist(gen)) / N_FILT_SAMP) / N_FILT_SAMP) / N_FILT_SAMP;
-                const float y = (j + (k + (i + dist(gen)) / N_FILT_SAMP) / N_FILT_SAMP) / N_FILT_SAMP;
-                const float z = (k + (i + (j + dist(gen)) / N_FILT_SAMP) / N_FILT_SAMP) / N_FILT_SAMP;
-                *it++ = openvdb::Vec3d(x, y, z) - openvdb::Vec3d(0.5, 0.5, 0.5);
-            }
-        }
-    }
-
-    // Shuffle -- 1st dimension.
-    for (int i = 0; i < N_FILT_SAMP; ++i) {
-        const int i_new = static_cast<int>(i + dist(gen) * (N_FILT_SAMP - i));
-        for (int k = 0; k < N_FILT_SAMP; ++k) {
-            for (int j = 0; j < N_FILT_SAMP; ++j) {
-                std::swap(m_sample_jitter[i     + j * N_FILT_SAMP + k * N_FILT_SAMP * N_FILT_SAMP],
-                          m_sample_jitter[i_new + j * N_FILT_SAMP + k * N_FILT_SAMP * N_FILT_SAMP]);
-            }
-        }
-    }
-
-    // Shuffle -- 2nd dimension.
-    for (int j = 0; j < N_FILT_SAMP; ++j) {
-        const int j_new = static_cast<int>(j + dist(gen) * (N_FILT_SAMP - j));
-        for (int k = 0; k < N_FILT_SAMP; ++k) {
-            for (int i = 0; i < N_FILT_SAMP; ++i) {
-                std::swap(m_sample_jitter[i + j     * N_FILT_SAMP + k * N_FILT_SAMP * N_FILT_SAMP],
-                          m_sample_jitter[i + j_new * N_FILT_SAMP + k * N_FILT_SAMP * N_FILT_SAMP]);
-            }
-        }
-    }
-
-    // Shuffle -- 3rd dimension.
-    for (int k = 0; k < N_FILT_SAMP; ++k) {
-        const int k_new = static_cast<int>(k + dist(gen) * (N_FILT_SAMP - k));
-        for (int j = 0; j < N_FILT_SAMP; ++j) {
-            for (int i = 0; i < N_FILT_SAMP; ++i) {
-                std::swap(m_sample_jitter[i + j * N_FILT_SAMP + k     * N_FILT_SAMP * N_FILT_SAMP],
-                          m_sample_jitter[i + j * N_FILT_SAMP + k_new * N_FILT_SAMP * N_FILT_SAMP]);
-            }
-        }
-    }
-}
-
 MHWRender::MTexture*
 VolumeTexture::acquireVolumeTexture(const openvdb::Coord& texture_extents, const float* pixel_data, MHWRender::MTextureManager* texture_manager)
 {
