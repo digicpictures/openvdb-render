@@ -90,6 +90,8 @@ cotire(${PLUGIN_NAME})
 
 install(TARGETS ${PLUGIN_NAME}
         DESTINATION plug-ins)
+install(FILES volume.cgfx
+        DESTINATION plug-ins/shader/)
 
 file(GLOB TEMPLATES template/*.py)
 

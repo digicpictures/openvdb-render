@@ -12,6 +12,7 @@
 
 #include <openvdb/tools/MultiResGrid.h>
 
+#include "paths.h"
 #include "util.h"
 #include "vdb_visualizer.h"
 #include "volume_sampler.h"
@@ -56,10 +57,7 @@ bool VDBSubSceneOverride::initRenderItem()
 
     if (!m_volume_shader) {
         // Create shader instance.
-        // TODO: compile in effect source.
-        using boost::filesystem::path;
-        path effect_file = path(__FILE__).parent_path() / "volume.cgfx";
-        m_volume_shader.reset(shader_manager->getEffectsFileShader(effect_file.c_str(), "Main", 0, 0, false));
+        m_volume_shader.reset(shader_manager->getEffectsFileShader(Paths::getVolumeEffectFile().c_str(), "Main", 0, 0, false));
         if (!m_volume_shader) {
             static bool first_time = true;
             if (first_time) {

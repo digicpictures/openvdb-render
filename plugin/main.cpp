@@ -13,6 +13,7 @@
 #include "vdb_sampler.h"
 #include "vdb_shader.h"
 #include "vdb_simple_shader.h"
+#include "paths.h"
 
 PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
 {
@@ -35,6 +36,8 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
     }
 
     MFnPlugin plugin(obj, "Luma Pictures", "0.0.1", "Any");
+
+    Paths::init(plugin.loadPath());
 
     status = plugin.registerShape(VDBVisualizerShape::typeName, VDBVisualizerShape::typeId,
                                   VDBVisualizerShape::creator, VDBVisualizerShape::initialize,
