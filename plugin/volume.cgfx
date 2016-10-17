@@ -37,9 +37,8 @@ struct VERT_INPUT
 struct VERT_OUTPUT
 {
     float4 pos_clip : Position;
-    float3 tex_coord : Texcoord0;
-    float3 pos_model : Texcoord1;
-    float3 slice_vector_world : Texcoord2;
+    float3 pos_model : Texcoord0;
+    float3 slice_vector_world : Texcoord1;
 };
 
 VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
@@ -91,7 +90,6 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
     }
 
     // Texture coordinates are based on model space position, so that slicing axis doesn't affect volume orientation.
-    output.tex_coord = (pos_model - volume_origin_model) / volume_size_model;
     output.pos_model = pos_model;
     output.pos_clip = mul(world_view_proj_mat, float4(output.pos_model, 1));
 
@@ -142,7 +140,8 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     float3 shadow = shadow_raymarch(input.pos_model, -light_dir_norm, extinction);
     float3 lumi = albedo * shadow;
 
-    float density = SampleVolume(input.tex_coord, 0);
+    float3 tex_coord = (pos_model - volume_origin_model) / volume_size_model;
+    float density = SampleVolume(tex_coord, 0);
     float slice_thickness = dot(input.slice_vector_world, input.slice_vector_world) / abs(dot(input.slice_vector_world, view_dir_world));
     float3 transmittance = exp(extinction * density * slice_thickness);
 
