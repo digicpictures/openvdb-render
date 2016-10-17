@@ -10,8 +10,6 @@
 #include <maya/MSelectionList.h>
 #include <maya/MShaderManager.h>
 
-#include <openvdb/tools/MultiResGrid.h>
-
 #include "paths.h"
 #include "util.h"
 #include "vdb_visualizer.h"
