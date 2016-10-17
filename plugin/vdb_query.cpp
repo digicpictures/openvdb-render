@@ -10,6 +10,7 @@
 #include <maya/MTime.h>
 #include <maya/MAnimControl.h>
 
+#include "util.h"
 #include "vdb_visualizer.h"
 
 #include "../util/maya_utils.hpp"
@@ -47,28 +48,19 @@ namespace {
 
     void build_file_list(const std::string& path, int start_frame, int end_frame, std::vector<std::string>& out_paths)
     {
-        if (boost::regex_match(path, VDBVisualizerShape::s_frame_expr))
+        MayaPathSpec path_spec = path;
+        if (path_spec.hasFrameField())
         {
             if (end_frame < start_frame)
                 return;
-            size_t hash_count = 0;
-            for (auto c : path)
-            {
-                if (c == '#')
-                    ++hash_count;
-            }
             out_paths.reserve(static_cast<size_t>(std::max(end_frame - start_frame + 1, 1)));
             for (int frame = start_frame; frame < end_frame; ++frame)
             {
-                std::stringstream ss;
-                ss.fill('0');
-                ss.width(hash_count);
-                ss << frame;
-                out_paths.push_back(boost::regex_replace(path, VDBVisualizerShape::s_hash_expr, ss.str()));
+                out_paths.push_back(path_spec.getPath(frame));
             }
         }
         else
-            out_paths.push_back(path);
+            out_paths.push_back(path_spec.getPath());
     }
 }
 

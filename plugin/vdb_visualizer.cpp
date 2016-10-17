@@ -27,13 +27,11 @@
 #include <maya/MFnDependencyNode.h>
 #include <maya/MViewport2Renderer.h>
 
-#include <boost/regex.hpp>
-
 #include <sstream>
 #include <maya/MGlobal.h>
 #include <maya/MNodeMessage.h>
 
-
+#include "util.h"
 #include "../util/maya_utils.hpp"
 
 const MTypeId VDBVisualizerShape::typeId(ID_VDB_VISUALIZER);
@@ -88,9 +86,6 @@ MObject VDBVisualizerShape::s_bounds_slack;
 MObject VDBVisualizerShape::s_shader_mode;
 VDBShaderParams VDBVisualizerShape::s_shader_params;
 VDBSimpleShaderParams VDBVisualizerShape::s_simple_shader_params;
-
-const boost::regex VDBVisualizerShape::s_frame_expr("[^#]*\\/[^/]+[\\._]#+[\\._][^/]*vdb");
-const boost::regex VDBVisualizerShape::s_hash_expr("#+");
 
 namespace {
     enum {
@@ -251,10 +246,10 @@ MStatus VDBVisualizerShape::compute(const MPlug& plug, MDataBlock& dataBlock)
 
     if (plug == s_out_vdb_path)
     {
-        std::string vdb_path = dataBlock.inputValue(s_vdb_path).asString().asChar();
+        MayaPathSpec vdb_path_spec = dataBlock.inputValue(s_vdb_path).asString().asChar();
+        std::string vdb_path;
 
-
-        if (vdb_path.find('#', 0) >= 0 || boost::regex_match(vdb_path, s_frame_expr))
+        if (vdb_path_spec.hasFrameField())
         {
             const double cache_time = dataBlock.inputValue(s_cache_time).asTime().as(MTime::uiUnit());
             const double cache_playback_offset = dataBlock.inputValue(s_cache_playback_offset).asTime().as(MTime::uiUnit());
@@ -290,27 +285,15 @@ MStatus VDBVisualizerShape::compute(const MPlug& plug, MDataBlock& dataBlock)
             }
             cache_frame = std::max(0, cache_frame);
 
-            if (frame_in_range)
-            {
-                size_t hash_count = 0;
-                for (auto c : vdb_path)
-                {
-                    if (c == '#')
-                        ++hash_count;
-                }
-                std::stringstream ss;
-                ss.fill('0');
-                ss.width(hash_count);
-                ss << cache_frame;
-                vdb_path = boost::regex_replace(vdb_path, s_hash_expr, ss.str());
-            }
-            else
+            if (frame_in_range) {
+                vdb_path = vdb_path_spec.getPath(cache_frame);
+            } else {
                 vdb_path = "";
+            }
         }
 
         if (vdb_path != m_vdb_data.vdb_path)
         {
-
             m_vdb_data.clear();
             m_vdb_data.vdb_path = vdb_path;
             if (m_vdb_data.vdb_file != nullptr)

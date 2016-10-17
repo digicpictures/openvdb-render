@@ -104,9 +104,6 @@ public:
     static VDBShaderParams s_shader_params;
     static VDBSimpleShaderParams s_simple_shader_params;
 
-    static const boost::regex s_frame_expr;
-    static const boost::regex s_hash_expr;
-
     VDBVisualizerData* get_update();
 private:
     static void attribute_changed(MNodeMessage::AttributeMessage msg, MPlug& plug, MPlug& other_plug, void* client_data);

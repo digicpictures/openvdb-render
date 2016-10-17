@@ -83,7 +83,7 @@ file(GLOB HDR_hpp *.hpp)
 add_library(${PLUGIN_NAME} SHARED ${SRC} ${HDR_h} ${HDR_hpp} volume.cgfx)
 set_target_properties(${PLUGIN_NAME} PROPERTIES PREFIX "")
 set_target_properties(${PLUGIN_NAME} PROPERTIES SUFFIX ".mll")
-target_link_libraries(${PLUGIN_NAME} ${MAYA_LIBS} GLEW GL OpenVDB Boost::regex)
+target_link_libraries(${PLUGIN_NAME} ${MAYA_LIBS} GLEW GL OpenVDB)
 target_compile_definitions(${PLUGIN_NAME} PRIVATE -DNOMINMAX)
 
 cotire(${PLUGIN_NAME})

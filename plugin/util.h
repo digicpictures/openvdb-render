@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <maya/MFloatVector.h>
 #include <openvdb/Types.h>
 
@@ -33,3 +34,41 @@ typename VecT::value_type maxComponent(const VecT& v)
 {
     return std::max(std::max(v.x(), v.y()), v.z());
 }
+
+class MayaPathSpec
+{
+public:
+    MayaPathSpec(const std::string& path_spec) : m_path_spec(path_spec)
+    {
+        m_field_begin = m_path_spec.find(FIELD_CHAR, 0);
+        const auto field_end = m_path_spec.find_first_not_of(FIELD_CHAR, m_field_begin + 1);
+        m_field_length = field_end - m_field_begin;
+    }
+    MayaPathSpec(const MayaPathSpec&) = default;
+    MayaPathSpec(MayaPathSpec&&) = default;
+    MayaPathSpec& operator=(const MayaPathSpec&) = default;
+    MayaPathSpec& operator=(MayaPathSpec&&) = default;
+
+    bool hasFrameField() const { return m_field_begin != std::string::npos; }
+
+    std::string getPath() const { return m_path_spec; }
+    std::string getPath(int frame_num) const
+    {
+        assert(hasFrameField());
+
+        std::stringstream ss;
+        ss.fill('0');
+        ss.width(m_field_length);
+        ss << frame_num;
+
+        std::string path = m_path_spec;
+        path.replace(m_field_begin, m_field_length, ss.str());
+        return path;
+    }
+
+private:
+    std::string m_path_spec;
+    size_t m_field_begin, m_field_length;
+
+    static constexpr char FIELD_CHAR = '#';
+};
