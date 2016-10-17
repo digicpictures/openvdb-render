@@ -36,7 +36,7 @@ class VolumeSampler
 public:
     VolumeSampler(MHWRender::MTextureManager* texture_manager) : m_texture_manager(texture_manager) { initSampleJitter(); }
 
-    // Sample a single grid. Filtering is done by getting multiple (jittered) samples.
+    // Sample a single grid using simple box filter.
     VolumeTexture sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents);
     // Sample a multi res grid. Filtering is done by the built-in sampling mechanism of MultiResGrid.
     VolumeTexture sampleMultiResGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents);

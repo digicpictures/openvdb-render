@@ -42,23 +42,26 @@ namespace {
 VolumeTexture
 VolumeSampler::sampleMultiResGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents)
 {
-    const auto index_bbox = getIndexSpaceBoundingBox(&grid);
-    const auto world_bbox = grid.transform().indexToWorld(index_bbox);
-
-    const auto domain = openvdb::CoordBBox(openvdb::Coord(), texture_extents - openvdb::Coord(1, 1, 1));
-    m_buffer.resize(domain.volume());
-
     // Calculate LOD level.
+    const auto index_bbox = getIndexSpaceBoundingBox(&grid);
     const auto grid_extents = index_bbox.extents().asVec3d();
     const auto coarse_voxel_size = grid_extents / texture_extents.asVec3d();
     const auto max_levels = openvdb::math::Ceil(std::log2(maxComponent(grid_extents)));
     const auto lod_level = boost::algorithm::clamp(std::log2(maxComponent(coarse_voxel_size)), 0, max_levels);
     const auto num_levels = size_t(openvdb::math::Ceil(lod_level)) + 1;
 
+    if (num_levels == 1) {
+        // No need for mult res grid.
+        return sampleGrid(grid, texture_extents);
+    }
+
     // Create multi res grid.
     openvdb::tools::MultiResGrid<openvdb::FloatTree> multires(num_levels, grid);
 
     // Sample the grid on a uniform lattice.
+    const auto world_bbox = grid.transform().indexToWorld(index_bbox);
+    const auto domain = openvdb::CoordBBox(openvdb::Coord(), texture_extents - openvdb::Coord(1, 1, 1));
+    m_buffer.resize(domain.volume());
     std::atomic<float> min_value = 0.0, max_value = 0.0;
     samplingLoop(m_buffer.data(), domain, [&multires, lod_level, domain_extents = texture_extents.asVec3d(), &world_bbox, &min_value, &max_value](const openvdb::Coord& index, float& output) {
         const auto sample_pos_ws = (index.asVec3d() + 0.5) / domain_extents * world_bbox.extents() + world_bbox.min();
@@ -84,35 +87,13 @@ VolumeSampler::sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& 
     const auto domain = openvdb::CoordBBox(openvdb::Coord(), texture_extents - openvdb::Coord(1, 1, 1));
     m_buffer.resize(domain.volume());
 
-    auto sampler = openvdb::tools::GridSampler<openvdb::FloatGrid, openvdb::tools::PointSampler>(grid);
+    auto sampler = openvdb::tools::GridSampler<openvdb::FloatGrid, openvdb::tools::BoxSampler>(grid);
 
     std::atomic<float> min_value = 0.0, max_value = 0.0;
     samplingLoop(m_buffer.data(), domain,
-        [&texture_extents, &sample_jitter = m_sample_jitter, &world_bbox, &sampler, &min_value, &max_value](const openvdb::Coord& index, float& output) {
-
-        auto jitter_stride = openvdb::Vec3i(1, N_FILT_SAMP, N_FILT_SAMP * N_FILT_SAMP);
-        // Use prime number of different jitter arrangements to reduce the chance of banding -- hence the 5.
-        const int permut = index.asVec3i().dot(texture_extents.asVec3i()) % 5;
-        for (int i = 0; i < permut; ++i) {
-            std::next_permutation(jitter_stride.asPointer(), jitter_stride.asPointer() + 3);
-        }
-
-        const auto domain_extents = texture_extents.asVec3d();
-        const auto jitter_mag = (world_bbox.extents() / domain_extents) / N_FILT_SAMP;
+        [domain_extents = texture_extents.asVec3d(), &world_bbox, &sampler, &min_value, &max_value](const openvdb::Coord& index, float& output) {
         const auto sample_pos_ws = (index.asVec3d() + 0.5) / domain_extents * world_bbox.extents() + world_bbox.min();
-        const float weight = 1.0f / (N_FILT_SAMP * N_FILT_SAMP * N_FILT_SAMP);
-        const auto n_half = openvdb::Vec3d(0.5 * N_FILT_SAMP);
-        float sample_value = 0;
-        for (int k = 0; k < N_FILT_SAMP; ++k) {
-            for (int j = 0; j < N_FILT_SAMP; ++j) {
-                for (int i = 0; i < N_FILT_SAMP; ++i) {
-                    const auto sample_idx = openvdb::Vec3i(i, j, k);
-                    const auto jitter_idx = sample_idx.dot(jitter_stride);
-                    const auto jitter = (sample_jitter[jitter_idx] + sample_idx - n_half) * jitter_mag;
-                    sample_value += weight * sampler.wsSample(sample_pos_ws + jitter);
-                }
-            }
-        }
+        float sample_value = sampler.wsSample(sample_pos_ws);
 
         min_value.store(std::min(sample_value, min_value.load(std::memory_order::memory_order_relaxed)), std::memory_order::memory_order_relaxed);
         max_value.store(std::max(sample_value, max_value.load(std::memory_order::memory_order_relaxed)), std::memory_order::memory_order_relaxed);
