@@ -43,7 +43,7 @@ VolumeTexture
 VolumeSampler::sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents)
 {
     const auto& grid = multires.grid(0);
-    const auto index_bbox = read_index_space_bounding_box(grid.get());
+    const auto index_bbox = getIndexSpaceBoundingBox(&grid);
     const auto world_bbox = grid->transform().indexToWorld(index_bbox);
 
     const auto domain = openvdb::CoordBBox(openvdb::Coord(), texture_extents - openvdb::Coord(1, 1, 1));
@@ -74,7 +74,7 @@ VolumeSampler::sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::Fl
 VolumeTexture
 VolumeSampler::sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents)
 {
-    const auto world_bbox = grid.transform().indexToWorld(read_index_space_bounding_box(&grid));
+    const auto world_bbox = grid.transform().indexToWorld(getIndexSpaceBoundingBox(&grid));
 
     const auto domain = openvdb::CoordBBox(openvdb::Coord(), texture_extents - openvdb::Coord(1, 1, 1));
     m_buffer.resize(domain.volume());

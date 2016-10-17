@@ -12,6 +12,7 @@
 
 #include <openvdb/tools/MultiResGrid.h>
 
+#include "util.h"
 #include "vdb_visualizer.h"
 #include "volume_sampler.h"
 
@@ -143,11 +144,10 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
     static auto volume_sampler = VolumeSampler(texture_manager);
 
     // Model space volume sizes (world space in the vdb grid's perspective).
-    const auto grid_bbox_is = read_index_space_bounding_box(grid_ptr.get());
+    const auto grid_bbox_is = getIndexSpaceBoundingBox(grid_ptr.get());
     const auto grid_bbox_ws = grid_ptr->transform().indexToWorld(grid_bbox_is);
-    const auto mayavec_from_vec3d = [](const auto& vec) { return MFloatVector(vec.x(), vec.y(), vec.z()); };
-    CHECK_MSTATUS(m_volume_shader->setParameter("volume_size_model", mayavec_from_vec3d(grid_bbox_ws.extents())));
-    CHECK_MSTATUS(m_volume_shader->setParameter("volume_origin_model", mayavec_from_vec3d(grid_bbox_ws.min())));
+    CHECK_MSTATUS(m_volume_shader->setParameter("volume_size_model", mayavecFromVec3f(grid_bbox_ws.extents())));
+    CHECK_MSTATUS(m_volume_shader->setParameter("volume_origin_model", mayavecFromVec3f(grid_bbox_ws.min())));
 
     // Create multi resolution grid (mip chain).
     const auto grid_extents_is = grid_bbox_is.extents();
