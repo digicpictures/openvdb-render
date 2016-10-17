@@ -66,14 +66,23 @@ set_target_properties(ZLIB PROPERTIES IMPORTED_LOCATION_RELEASE     ${ZLIB_ROOT}
 set_target_properties(ZLIB PROPERTIES IMPORTED_LOCATION_DEBUG       ${ZLIB_ROOT}/lib_win64/zlibstatic.lib)
 set_target_properties(ZLIB PROPERTIES INTERFACE_INCLUDE_DIRECTORIES ${ZLIB_ROOT}/include)
 
+# Blosc
+add_library(Blosc SHARED IMPORTED)
+set(Blosc_ROOT ${DIGIC_DEV_LIB_DIR}/blosc)
+set_target_properties(Blosc PROPERTIES IMPORTED_LOCATION_RELEASE     ${Blosc_ROOT}/lib_win64/blosc.dll)
+set_target_properties(Blosc PROPERTIES IMPORTED_IMPLIB_RELEASE       ${Blosc_ROOT}/lib_win64/blosc.lib)
+set_target_properties(Blosc PROPERTIES IMPORTED_LOCATION_DEBUG       ${Blosc_ROOT}/lib_win64/blosc.dll)
+set_target_properties(Blosc PROPERTIES IMPORTED_IMPLIB_DEBUG         ${Blosc_ROOT}/lib_win64/blosc.lib)
+set_target_properties(Blosc PROPERTIES INTERFACE_INCLUDE_DIRECTORIES ${Blosc_ROOT}/include)
+
 # OpenVDB
 add_library(OpenVDB STATIC IMPORTED)
 set(OPENVDB_ROOT ${DIGIC_DEV_LIB_DIR}/OpenVDB/3.2.0)
 set_target_properties(OpenVDB PROPERTIES IMPORTED_LOCATION_RELEASE      ${OPENVDB_ROOT}/lib_win64/OpenVDB_static_vc140_md.lib)
 set_target_properties(OpenVDB PROPERTIES IMPORTED_LOCATION_DEBUG        ${OPENVDB_ROOT}/lib_win64/OpenVDB_static_vc140_md_gd.lib)
 set_target_properties(OpenVDB PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${OPENVDB_ROOT}/include;${OPENVDB_ROOT}/include/openvdb")
-set_target_properties(OpenVDB PROPERTIES INTERFACE_COMPILE_DEFINITIONS "OPENVDB_STATICLIB;OPENVDB_OPENEXR_STATICLIB")
-set_target_properties(OpenVDB PROPERTIES INTERFACE_LINK_LIBRARIES      "OpenEXR_Half;TBB;ZLIB")
+set_target_properties(OpenVDB PROPERTIES INTERFACE_COMPILE_DEFINITIONS "OPENVDB_STATICLIB;OPENVDB_OPENEXR_STATICLIB;OPENEXR_USE_BLOSC")
+set_target_properties(OpenVDB PROPERTIES INTERFACE_LINK_LIBRARIES      "Blosc;OpenEXR_Half;TBB;ZLIB")
 
 # lib
 file(GLOB SRC *.cpp)
