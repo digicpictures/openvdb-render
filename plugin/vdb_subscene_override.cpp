@@ -18,7 +18,7 @@
 // Disable "decorated name length exceeded, name was truncated" warning.
 #pragma warning(disable: 4503)
 
-#define NUM_SLICES 64
+#define MAX_SLICE_COUNT 64
 
 using namespace MHWRender;
 
@@ -68,7 +68,7 @@ bool VDBSubSceneOverride::initRenderItem()
             return false;
         }
         m_volume_shader->setIsTransparent(true);
-        m_volume_shader->setParameter("max_slice_count", NUM_SLICES);
+        m_volume_shader->setParameter("max_slice_count", MAX_SLICE_COUNT);
     }
 
     // Create render item.
@@ -155,7 +155,7 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
     openvdb::tools::MultiResGrid<openvdb::FloatTree> multi_res_grid(levels, *grid_ptr);
 
     // Sample the multi resolution grid at regular intervals.
-    const auto texture_extents = openvdb::Coord(NUM_SLICES, NUM_SLICES, NUM_SLICES);
+    const auto texture_extents = openvdb::Coord(MAX_SLICE_COUNT, MAX_SLICE_COUNT, MAX_SLICE_COUNT);
     auto volume = volume_sampler.sampleMultiResGrid(multi_res_grid, texture_extents);
     m_volume_texture.reset(volume.texture);
 
@@ -181,7 +181,7 @@ void VDBSubSceneOverride::updateGeometry(const VDBVisualizerData* data)
     assert(data);
 
     // Create geometry.
-    const int num_slices = NUM_SLICES; // TODO: get from node attribute
+    const int num_slices = MAX_SLICE_COUNT;
 
     // - Vertices
     // Note: descriptor name (first ctor arg) MUST be "", or setGeometryForRenderItem will return kFailure.
