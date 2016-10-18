@@ -173,16 +173,16 @@ void VDBSubSceneOverride::updateDensityVolume(const DensityGridData& grid_data)
     m_volume_shader->setParameter("volume_sampler", *volume_sampler_resource);
 }
 
-void VDBSubSceneOverride::updateGeometry(unsigned int num_slices)
+void VDBSubSceneOverride::updateGeometry(unsigned int slice_count)
 {
     // - Vertices
     // Note: descriptor name (first ctor arg) MUST be "", or setGeometryForRenderItem will return kFailure.
     const MVertexBufferDescriptor pos_desc("", MGeometry::kPosition, MGeometry::kFloat, 3);
     m_volume_position_buffer.reset(new MVertexBuffer(pos_desc));
-    const auto num_vertices = num_slices * 4;
-    MFloatVector* positions = reinterpret_cast<MFloatVector*>(m_volume_position_buffer->acquire(static_cast<unsigned int>(num_vertices), false));
-    for (unsigned int i = 0; i < num_slices; ++i) {
-        const float z = i * 1.0f / (num_slices - 1.0f);
+    const auto vertex_count = slice_count * 4;
+    MFloatVector* positions = reinterpret_cast<MFloatVector*>(m_volume_position_buffer->acquire(static_cast<unsigned int>(vertex_count), false));
+    for (unsigned int i = 0; i < slice_count; ++i) {
+        const float z = i * 1.0f / (slice_count - 1.0f);
         positions[4*i+0] = MFloatVector(0.0, 0.0, z);
         positions[4*i+1] = MFloatVector(1.0, 0.0, z);
         positions[4*i+2] = MFloatVector(0.0, 1.0, z);
@@ -192,9 +192,9 @@ void VDBSubSceneOverride::updateGeometry(unsigned int num_slices)
 
     // - Indices
     m_volume_index_buffer.reset(new MIndexBuffer(MGeometry::kUnsignedInt32));
-    const auto num_indices = num_slices * 6;
-    unsigned int* indices = reinterpret_cast<unsigned int*>(m_volume_index_buffer->acquire(num_indices, false));
-    for (unsigned int i = 0; i < num_slices; ++i) {
+    const auto index_count = slice_count * 6;
+    unsigned int* indices = reinterpret_cast<unsigned int*>(m_volume_index_buffer->acquire(index_count, false));
+    for (unsigned int i = 0; i < slice_count; ++i) {
         indices[6*i+0] = 4*i+0;
         indices[6*i+1] = 4*i+1;
         indices[6*i+2] = 4*i+3;

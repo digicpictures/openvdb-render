@@ -6,7 +6,7 @@
 #include "gradient.hpp"
 #include "util.h"
 
-enum VDBDisplayMode{
+enum VDBDisplayMode {
     DISPLAY_AXIS_ALIGNED_BBOX = 0,
     DISPLAY_GRID_BBOX,
     DISPLAY_POINT_CLOUD,
@@ -31,7 +31,7 @@ struct DensityGridData {
     std::string grid_name;
 };
 
-struct VDBVisualizerData{
+struct VDBVisualizerData {
     MBoundingBox bbox;
 
     // Sliced display shader params.
