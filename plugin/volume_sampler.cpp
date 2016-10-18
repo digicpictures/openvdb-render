@@ -143,7 +143,7 @@ VolumeTexture::acquireVolumeTexture(const openvdb::Coord& texture_extents, const
     texture_desc.fDepth = texture_extents.z();
     texture_desc.fBytesPerRow = 4 * texture_desc.fWidth;
     texture_desc.fBytesPerSlice = texture_desc.fBytesPerRow * texture_desc.fHeight;
-    texture_desc.fMipmaps = 1;
+    texture_desc.fMipmaps = 0;
     texture_desc.fArraySlices = 1;
     texture_desc.fFormat = kR32_FLOAT;
     texture_desc.fTextureType = kVolumeTexture;
