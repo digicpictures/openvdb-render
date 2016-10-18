@@ -148,7 +148,7 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
 
     // Sample the multi resolution grid at regular intervals.
     const auto texture_extents = openvdb::Coord(MAX_SLICE_COUNT, MAX_SLICE_COUNT, MAX_SLICE_COUNT);
-    auto volume = volume_sampler.sampleMultiResGrid(*grid_ptr, texture_extents);
+    auto volume = volume_sampler.sampleGridWithMipmapFilter(*grid_ptr, texture_extents);
     m_volume_texture.reset(volume.texture);
 
     m_volume_shader->setParameter("min_voxel_value", volume.value_range.min);

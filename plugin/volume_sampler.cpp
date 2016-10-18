@@ -18,6 +18,8 @@
 #include <openvdb/tree/LeafManager.h>
 #include <openvdb/Exceptions.h>
 
+#include <tbb/parallel_for.h>
+
 #include "util.h"
 
 // Disable "decorated name length exceeded, name was truncated" warning.
@@ -44,8 +46,19 @@ namespace {
 
 } // unnamed namespace
 
-VolumeTexture
-VolumeSampler::sampleMultiResGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents)
+VolumeTexture VolumeSampler::sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents)
+{
+    const auto sampler = openvdb::tools::GridSampler<openvdb::FloatGrid, openvdb::tools::BoxSampler>(grid);
+    const auto world_bbox = grid.transform().indexToWorld(getIndexSpaceBoundingBox(&grid));
+    const auto domain_extents = texture_extents.asVec3d();
+    auto sampling_func = [&sampler, &world_bbox, &domain_extents](const openvdb::Vec3d& domain_index) {
+        const auto sample_pos_ws = (domain_index + 0.5) / domain_extents * world_bbox.extents() + world_bbox.min();
+        return sampler.wsSample(sample_pos_ws);
+    };
+    return sampleVolume(texture_extents, sampling_func);
+}
+
+VolumeTexture VolumeSampler::sampleGridWithMipmapFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents)
 {
     // Calculate LOD level.
     const auto index_bbox = getIndexSpaceBoundingBox(&grid);
@@ -57,81 +70,61 @@ VolumeSampler::sampleMultiResGrid(const openvdb::FloatGrid& grid, const openvdb:
 
     if (num_levels == 1) {
         // No need for mult res grid.
-        return sampleGrid(grid, texture_extents);
+        return sampleGridWithBoxFilter(grid, texture_extents);
     }
 
-    // Create multi res grid.
+    // Create and sample multi res grid.
     openvdb::tools::MultiResGrid<openvdb::FloatTree> multires(num_levels, grid);
 
-    // Sample the grid on a uniform lattice.
     const auto world_bbox = grid.transform().indexToWorld(index_bbox);
-    const auto domain = openvdb::CoordBBox(openvdb::Coord(), texture_extents - openvdb::Coord(1, 1, 1));
-    m_buffer.resize(domain.volume());
-    std::atomic<float> min_value = 0.0, max_value = 0.0;
-    samplingLoop(m_buffer.data(), domain, [&multires, lod_level, domain_extents = texture_extents.asVec3d(), &world_bbox, &min_value, &max_value](const openvdb::Coord& index, float& output) {
-        const auto sample_pos_ws = (index.asVec3d() + 0.5) / domain_extents * world_bbox.extents() + world_bbox.min();
+    const auto domain_extents = texture_extents.asVec3d();
+    auto sampling_func = [&multires, lod_level, &world_bbox, &domain_extents](const openvdb::Vec3d& domain_index) {
+        const auto sample_pos_ws = (domain_index + 0.5) / domain_extents * world_bbox.extents() + world_bbox.min();
         const auto sample_pos_is = multires.transform().worldToIndex(sample_pos_ws);
-        const auto sample_value = multires.sampleValue<1>(sample_pos_is, lod_level);
-        min_value.store(std::min(sample_value, min_value.load(std::memory_order::memory_order_relaxed)), std::memory_order::memory_order_relaxed);
-        max_value.store(std::max(sample_value, max_value.load(std::memory_order::memory_order_relaxed)), std::memory_order::memory_order_relaxed);
-        output = sample_value;
-    });
-
-    samplingLoop(m_buffer.data(), domain, [min_value = min_value.load(), max_value = max_value.load()](const openvdb::Coord, float& output){
-        output = unlerp(min_value, max_value, output);
-    });
-
-    return { texture_extents, m_buffer.data(), ValueRange(min_value, max_value) };
+        return multires.sampleValue<1>(sample_pos_is, lod_level);
+    };
+    return sampleVolume(texture_extents, sampling_func);
 }
 
-VolumeTexture
-VolumeSampler::sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents)
+template <typename SamplingFunc>
+VolumeTexture VolumeSampler::sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func)
 {
-    const auto world_bbox = grid.transform().indexToWorld(getIndexSpaceBoundingBox(&grid));
-
-    const auto domain = openvdb::CoordBBox(openvdb::Coord(), texture_extents - openvdb::Coord(1, 1, 1));
+    const auto domain = openvdb::CoordBBox(openvdb::Coord(), extents - openvdb::Coord(1, 1, 1));
     m_buffer.resize(domain.volume());
 
-    auto sampler = openvdb::tools::GridSampler<openvdb::FloatGrid, openvdb::tools::BoxSampler>(grid);
-
-    std::atomic<float> min_value = 0.0, max_value = 0.0;
-    samplingLoop(m_buffer.data(), domain,
-        [domain_extents = texture_extents.asVec3d(), &world_bbox, &sampler, &min_value, &max_value](const openvdb::Coord& index, float& output) {
-        const auto sample_pos_ws = (index.asVec3d() + 0.5) / domain_extents * world_bbox.extents() + world_bbox.min();
-        float sample_value = sampler.wsSample(sample_pos_ws);
-
-        min_value.store(std::min(sample_value, min_value.load(std::memory_order::memory_order_relaxed)), std::memory_order::memory_order_relaxed);
-        max_value.store(std::max(sample_value, max_value.load(std::memory_order::memory_order_relaxed)), std::memory_order::memory_order_relaxed);
-        output = sample_value;
-    });
-
-    samplingLoop(m_buffer.data(), domain, [min_value = min_value.load(), max_value = max_value.load()](const openvdb::Coord, float& output){
-        output = unlerp(min_value, max_value, output);
-    });
-
-    return { texture_extents, m_buffer.data(), ValueRange(min_value, max_value) };
-}
-
-void
-VolumeSampler::samplingLoop(float* output, const openvdb::CoordBBox& domain, std::function<void(openvdb::Coord,float&)> sampling_func)
-{
-
-    // Iterate through coarse voxels and pass in fine coords to sampling func.
-    const auto extents = domain.extents();
+    // Sample on a lattice.
+    using PerThreadRange = tbb::enumerable_thread_specific<FloatRange>;
+    PerThreadRange per_thread_ranges;
     const auto stride = openvdb::Vec3i(1, extents.x(), extents.x() * extents.y());
-    tbb::parallel_for(domain, [&stride, &sampling_func, output](const CoordBBox& bbox) {
-        typedef int32_t index_t;
-        for (index_t z = bbox.min().z(); z <= bbox.max().z(); ++z) {
-            const index_t base_z = z * stride.z();
-            for (index_t y = bbox.min().y(); y <= bbox.max().y(); ++y) {
-                const index_t base_y = base_z + y * stride.y();
-                for (index_t x = bbox.min().x(); x <= bbox.max().x(); ++x) {
-                    const auto out_index = base_y + x;
-                    sampling_func(openvdb::Coord(x, y, z), output[out_index]);
+    tbb::parallel_for(domain, [&sampling_func, &stride, &per_thread_ranges, output = m_buffer.data()](const CoordBBox& bbox) {
+        PerThreadRange::reference this_thread_range = per_thread_ranges.local();
+        for (auto z = bbox.min().z(); z <= bbox.max().z(); ++z) {
+            for (auto y = bbox.min().y(); y <= bbox.max().y(); ++y) {
+                for (auto x = bbox.min().x(); x <= bbox.max().x(); ++x) {
+                    const auto domain_index = openvdb::Vec3i(x, y, z);
+                    const auto linear_index = domain_index.dot(stride);
+                    const auto sample_value = sampling_func(domain_index);
+                    output[linear_index] = sample_value;
+                    this_thread_range.update(sample_value);
                 }
             }
         }
     });
+    FloatRange value_range;
+    for (const FloatRange& per_thread_range : per_thread_ranges) {
+        value_range.update(per_thread_range);
+    }
+
+    // Remap sample values to [0, 1].
+    using tbb_range = tbb::blocked_range<size_t>;
+    tbb::parallel_for(tbb_range(0, m_buffer.size()),
+                      [buffer = m_buffer.data(), &value_range](const tbb_range& range) {
+        for (auto i = range.begin(); i < range.end(); ++i) {
+            buffer[i] = unlerp(value_range.min, value_range.max, buffer[i]);
+        }
+    });
+
+    return { extents, m_buffer.data(), value_range };
 }
 
 MHWRender::MTexture*
