@@ -37,6 +37,11 @@ namespace {
         return (x - a) / (b - a);
     }
 
+    MHWRender::MTextureManager* getTextureManager()
+    {
+        return MHWRender::MRenderer::theRenderer()->getTextureManager();
+    }
+
 } // unnamed namespace
 
 VolumeTexture
@@ -76,7 +81,7 @@ VolumeSampler::sampleMultiResGrid(const openvdb::FloatGrid& grid, const openvdb:
         output = unlerp(min_value, max_value, output);
     });
 
-    return { texture_extents, m_buffer.data(), ValueRange(min_value, max_value), m_texture_manager };
+    return { texture_extents, m_buffer.data(), ValueRange(min_value, max_value) };
 }
 
 VolumeTexture
@@ -104,7 +109,7 @@ VolumeSampler::sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& 
         output = unlerp(min_value, max_value, output);
     });
 
-    return { texture_extents, m_buffer.data(), ValueRange(min_value, max_value), m_texture_manager };
+    return { texture_extents, m_buffer.data(), ValueRange(min_value, max_value) };
 }
 
 void
@@ -130,7 +135,7 @@ VolumeSampler::samplingLoop(float* output, const openvdb::CoordBBox& domain, std
 }
 
 MHWRender::MTexture*
-VolumeTexture::acquireVolumeTexture(const openvdb::Coord& texture_extents, const float* pixel_data, MHWRender::MTextureManager* texture_manager)
+VolumeTexture::acquireVolumeTexture(const openvdb::Coord& texture_extents, const float* pixel_data)
 {
     MHWRender::MTextureDescription texture_desc;
     texture_desc.fWidth = texture_extents.x();
@@ -143,5 +148,5 @@ VolumeTexture::acquireVolumeTexture(const openvdb::Coord& texture_extents, const
     texture_desc.fFormat = kR32_FLOAT;
     texture_desc.fTextureType = kVolumeTexture;
     texture_desc.fEnvMapType = kEnvNone;
-    return texture_manager->acquireTexture("", texture_desc, pixel_data, true);
+    return getTextureManager()->acquireTexture("", texture_desc, pixel_data, true);
 }

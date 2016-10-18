@@ -137,7 +137,7 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
         return;
     }
 
-    static auto volume_sampler = VolumeSampler(texture_manager);
+    static VolumeSampler volume_sampler;
 
     // Model space volume sizes (world space in the vdb grid's perspective).
     const auto grid_bbox_is = getIndexSpaceBoundingBox(grid_ptr.get());

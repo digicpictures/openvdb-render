@@ -23,18 +23,18 @@ struct VolumeTexture
     ValueRange value_range;
 
     VolumeTexture() : texture(nullptr) {}
-    VolumeTexture(const openvdb::Coord& extents, const float* data_norm, const ValueRange& value_range_, MHWRender::MTextureManager* texture_manager)
-        : texture(acquireVolumeTexture(extents, data_norm, texture_manager)), value_range(value_range_) {}
+    VolumeTexture(const openvdb::Coord& extents, const float* data_norm, const ValueRange& value_range_)
+        : texture(acquireVolumeTexture(extents, data_norm)), value_range(value_range_) {}
+    VolumeTexture(VolumeTexture&&) = default;
+    VolumeTexture& operator=(VolumeTexture&&) = default;
 
 private:
-    MHWRender::MTexture* acquireVolumeTexture(const openvdb::Coord& texture_extents, const float* pixel_data, MHWRender::MTextureManager* texture_manager);
+    MHWRender::MTexture* acquireVolumeTexture(const openvdb::Coord& texture_extents, const float* pixel_data);
 };
 
 class VolumeSampler
 {
 public:
-    VolumeSampler(MHWRender::MTextureManager* texture_manager) : m_texture_manager(texture_manager) {}
-
     // Sample a single grid using simple box filter.
     VolumeTexture sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents);
     // Sample a multi res grid. Filtering is done by the built-in sampling mechanism of MultiResGrid.
@@ -44,6 +44,5 @@ private:
     void
     samplingLoop(float* output, const openvdb::CoordBBox& domain, std::function<void(openvdb::Coord,float&)> sampling_func);
 
-    MHWRender::MTextureManager* m_texture_manager;
     std::vector<float> m_buffer;
 };
