@@ -34,6 +34,9 @@
 #include "util.h"
 #include "../util/maya_utils.hpp"
 
+// Disable "decorated name length exceeded, name was truncated" warning.
+#pragma warning(disable: 4503)
+
 const MTypeId VDBVisualizerShape::typeId(ID_VDB_VISUALIZER);
 const MString VDBVisualizerShape::typeName("vdb_visualizer");
 const MString VDBVisualizerShape::drawDbClassification("drawdb/subscene/volume/vdb_visualizer");
