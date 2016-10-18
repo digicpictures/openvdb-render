@@ -6,7 +6,6 @@
 #include <maya/MDrawRegistry.h>
 #include <maya/MShaderManager.h>
 
-//#include "vdb_geometry_override.h"
 #include "vdb_subscene_override.h"
 #include "vdb_visualizer.h"
 #include "vdb_query.h"
@@ -76,18 +75,6 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
         return status;
     }
 
-    //status = MHWRender::MDrawRegistry::registerGeometryOverrideCreator(
-    //        VDBVisualizerShape::drawDbClassification,
-    //        VDBGeometryOverride::registrantId,
-    //        VDBGeometryOverride::creator
-    //);
-
-    //if (!status)
-    //{
-    //    status.perror("[openvdb] Error registering the VDBVisualizer Geometry Override.");
-    //    return status;
-    //}
-
     status = MHWRender::MDrawRegistry::registerSubSceneOverrideCreator(
             VDBVisualizerShape::drawDbClassification,
             VDBSubSceneOverride::registrantId,
@@ -96,7 +83,7 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
 
     if (!status)
     {
-        status.perror("[openvdb] Error registering the VDBVisualizer Geometry Override.");
+        status.perror("[openvdb] Error registering the VDBVisualizer SubScene Override.");
         return status;
     }
 
@@ -154,17 +141,6 @@ PLUGIN_EXPORT MStatus uninitializePlugin(MObject obj)
         status.perror("[openvdb] Error deregistering the VDBSimpleShader Node.");
         return status;
     }
-
-    //status = MHWRender::MDrawRegistry::deregisterGeometryOverrideCreator(
-    //        VDBVisualizerShape::drawDbClassification,
-    //        VDBGeometryOverride::registrantId
-    //);
-
-    //if (!status)
-    //{
-    //    status.perror("[openvdb] Error deregistering the VDBVisualizer Geometry Override.");
-    //    return status;
-    //}
 
     status = MHWRender::MDrawRegistry::deregisterSubSceneOverrideCreator(
             VDBVisualizerShape::drawDbClassification,
