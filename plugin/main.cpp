@@ -14,6 +14,9 @@
 #include "vdb_simple_shader.h"
 #include "paths.h"
 
+// Disable "decorated name length exceeded, name was truncated" warning.
+#pragma warning(disable: 4503)
+
 PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
 {
     const bool is_interactive = MGlobal::mayaState() == MGlobal::kInteractive;
