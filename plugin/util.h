@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <sstream>
 #include <maya/MFloatVector.h>
 #include <openvdb/Types.h>
 
@@ -21,18 +22,6 @@ getIndexSpaceBoundingBox(const openvdb::GridBase* grid)
     }
 
     return { file_bbox_min, file_bbox_max };
-}
-
-MFloatVector inline
-mayavecFromVec3f(const openvdb::Vec3f& vec)
-{
-    return { vec.x(), vec.y(), vec.z() };
-}
-
-template <typename VecT>
-typename VecT::value_type maxComponent(const VecT& v)
-{
-    return std::max(std::max(v.x(), v.y()), v.z());
 }
 
 class MayaPathSpec

@@ -22,6 +22,15 @@
 
 using namespace MHWRender;
 
+namespace {
+
+    MFloatVector inline mayavecFromVec3f(const openvdb::Vec3f& vec)
+    {
+        return{ vec.x(), vec.y(), vec.z() };
+    }
+
+} // unnamed namespace
+
 struct VDBSubSceneOverrideError
 {
     VDBSubSceneOverrideError(const char *what) : m_what(what) {}

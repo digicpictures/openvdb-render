@@ -39,6 +39,12 @@ namespace {
         return (x - a) / (b - a);
     }
 
+    template <typename VecT>
+    typename VecT::value_type maxComponentValue(const VecT& v)
+    {
+        return std::max(std::max(v.x(), v.y()), v.z());
+    }
+
     MHWRender::MTextureManager* getTextureManager()
     {
         return MHWRender::MRenderer::theRenderer()->getTextureManager();
@@ -64,8 +70,8 @@ VolumeTexture VolumeSampler::sampleGridWithMipmapFilter(const openvdb::FloatGrid
     const auto index_bbox = getIndexSpaceBoundingBox(&grid);
     const auto grid_extents = index_bbox.extents().asVec3d();
     const auto coarse_voxel_size = grid_extents / texture_extents.asVec3d();
-    const auto max_levels = openvdb::math::Ceil(std::log2(maxComponent(grid_extents)));
-    const auto lod_level = boost::algorithm::clamp(std::log2(maxComponent(coarse_voxel_size)), 0, max_levels);
+    const auto max_levels = openvdb::math::Ceil(std::log2(maxComponentValue(grid_extents)));
+    const auto lod_level = boost::algorithm::clamp(std::log2(maxComponentValue(coarse_voxel_size)), 0, max_levels);
     const auto num_levels = size_t(openvdb::math::Ceil(lod_level)) + 1;
 
     if (num_levels == 1) {
