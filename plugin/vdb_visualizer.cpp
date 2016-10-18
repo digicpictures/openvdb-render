@@ -320,6 +320,8 @@ MStatus VDBVisualizerShape::compute(const MPlug& plug, MDataBlock& dataBlock)
             {
                 m_vdb_data.clear(MBoundingBox(MPoint(-1.0, -1.0, -1.0), MPoint(1.0, 1.0, 1.0)));
             }
+
+            m_vdb_data.density_grid_data.getDirtyRef().vdb_file = m_vdb_data.vdb_file;
         }
         MDataHandle out_vdb_path_handle = dataBlock.outputValue(s_out_vdb_path);
         out_vdb_path_handle.setString(vdb_path.c_str());
@@ -718,14 +720,20 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
         }
         else if (m_vdb_data.display_mode == DISPLAY_SLICES)
         {
-            m_vdb_data.density_channel =     MPlug(tmo, s_density_channel).asString().asChar();
-            m_vdb_data.slice_size =          MPlug(tmo, s_slice_size).asFloat();
-            m_vdb_data.light_color =         plugAsFloatVector(MPlug(tmo, s_light_color)) * MPlug(tmo, s_light_intensity).asFloat();
-            m_vdb_data.light_direction =     plugAsFloatVector(MPlug(tmo, s_light_direction));
-            m_vdb_data.scattering =          plugAsFloatVector(MPlug(tmo, s_scattering_color)) * MPlug(tmo, s_scattering_intensity).asFloat();
-            m_vdb_data.absorption =          plugAsFloatVector(MPlug(tmo, s_absorption_color)) * MPlug(tmo, s_absorption_intensity).asFloat();
-            m_vdb_data.shadow_gain =         MPlug(tmo, s_shadow_gain).asFloat();
-            m_vdb_data.shadow_sample_count = MPlug(tmo, s_shadow_sample_count).asInt();
+            std::string grid_name = MPlug(tmo, s_density_channel).asString().asChar();
+            if (m_vdb_data.density_grid_data.peek().grid_name != grid_name) {
+                m_vdb_data.density_grid_data.getDirtyRef().grid_name = grid_name;
+            }
+
+            SliceShaderParams shader_params;
+            shader_params.slice_size =          MPlug(tmo, s_slice_size).asFloat();
+            shader_params.light_color =         plugAsFloatVector(MPlug(tmo, s_light_color)) * MPlug(tmo, s_light_intensity).asFloat();
+            shader_params.light_direction =     plugAsFloatVector(MPlug(tmo, s_light_direction));
+            shader_params.scattering =          plugAsFloatVector(MPlug(tmo, s_scattering_color)) * MPlug(tmo, s_scattering_intensity).asFloat();
+            shader_params.absorption =          plugAsFloatVector(MPlug(tmo, s_absorption_color)) * MPlug(tmo, s_absorption_intensity).asFloat();
+            shader_params.shadow_gain =         MPlug(tmo, s_shadow_gain).asFloat();
+            shader_params.shadow_sample_count = MPlug(tmo, s_shadow_sample_count).asInt();
+            m_vdb_data.slice_shader_params.getDirtyRef() = shader_params;
         }
 
         /*

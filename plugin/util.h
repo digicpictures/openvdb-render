@@ -1,7 +1,10 @@
 #pragma once
 
+#include <algorithm>
+#include <limits>
 #include <string>
 #include <sstream>
+#include <utility>
 #include <maya/MFloatVector.h>
 #include <openvdb/Types.h>
 
@@ -23,6 +26,35 @@ getIndexSpaceBoundingBox(const openvdb::GridBase* grid)
 
     return { file_bbox_min, file_bbox_max };
 }
+
+
+template <typename T>
+struct ValueRange
+{
+    T min, max;
+    ValueRange() noexcept : min(std::numeric_limits<T>::max()), max(std::numeric_limits<T>::min()) {}
+    ValueRange(T min_ , T max_) noexcept : min(min_), max(max_) {}
+    void update(T value) { min = std::min(min, value); max = std::max(max, value); }
+    void update(const ValueRange<T>& value_range) { min = std::min(min, value_range.min); max = std::max(max, value_range.max); }
+    ValueRange merge(const ValueRange<T>& value_range) { return { std::min(min, value_range.min), std::max(max, value_range.max) }; }
+};
+using FloatRange = ValueRange<float>;
+
+
+template <typename T>
+class CachedData {
+public:
+    template <typename... Args>
+    CachedData(Args&&... args) : m_data(std::forward<Args>(args)...), m_dirty(false) {}
+    const T& peek() const { return m_data; }
+    bool isDirty() const { return m_dirty; }
+    T& getDirtyRef() { m_dirty = true; return m_data; }
+    const T& clearAndGet() const { m_dirty = false; return m_data; }
+
+private:
+    T m_data;
+    mutable bool m_dirty;
+};
 
 class MayaPathSpec
 {

@@ -4,6 +4,7 @@
 #include <maya/MFloatVector.h>
 #include <openvdb/io/File.h>
 #include "gradient.hpp"
+#include "util.h"
 
 enum VDBDisplayMode{
     DISPLAY_AXIS_ALIGNED_BBOX = 0,
@@ -15,13 +16,7 @@ enum VDBDisplayMode{
     DISPLAY_SLICES
 };
 
-struct VDBVisualizerData{
-    MBoundingBox bbox;
-
-    // Sliced display mode
-    float value_min;
-    float value_max;
-    std::string density_channel;
+struct SliceShaderParams {
     float slice_size;
     MFloatVector light_color;
     MFloatVector light_direction;
@@ -29,6 +24,19 @@ struct VDBVisualizerData{
     MFloatVector absorption;
     float shadow_gain;
     int shadow_sample_count;
+};
+
+struct DensityGridData {
+    openvdb::io::File* vdb_file;
+    std::string grid_name;
+};
+
+struct VDBVisualizerData{
+    MBoundingBox bbox;
+
+    // Sliced display shader params.
+    CachedData<DensityGridData> density_grid_data;
+    CachedData<SliceShaderParams> slice_shader_params;
 
     // ===
     MFloatVector scattering_color;

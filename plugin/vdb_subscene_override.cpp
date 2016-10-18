@@ -29,6 +29,11 @@ namespace {
         return{ vec.x(), vec.y(), vec.z() };
     }
 
+    MBoundingBox inline mayabboxFromBBoxd(const openvdb::BBoxd& bbox)
+    {
+        return { mayavecFromVec3f(bbox.min()), mayavecFromVec3f(bbox.max()) };
+    }
+
 } // unnamed namespace
 
 struct VDBSubSceneOverrideError
@@ -91,75 +96,67 @@ bool VDBSubSceneOverride::initRenderItem()
     return true;
 }
 
-void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
+void VDBSubSceneOverride::updateShaderParams(const SliceShaderParams& params)
 {
-    assert(data);
-
-    auto texture_manager = MRenderer::theRenderer()->getTextureManager();
-
     // Shading parameters.
-    m_volume_shader->setParameter("light_dir",   data->light_direction);
-    m_volume_shader->setParameter("light_color", data->light_color);
-    m_volume_shader->setParameter("scattering",  data->scattering);
-    m_volume_shader->setParameter("absorption",  data->absorption);
-    m_volume_shader->setParameter("shadow_gain", data->shadow_gain);
-    m_volume_shader->setParameter("shadow_sample_count", data->shadow_sample_count);
-    m_volume_shader->setParameter("slice_size_model", data->slice_size);
+    m_volume_shader->setParameter("light_dir", params.light_direction);
+    m_volume_shader->setParameter("light_color", params.light_color);
+    m_volume_shader->setParameter("scattering", params.scattering);
+    m_volume_shader->setParameter("absorption", params.absorption);
+    m_volume_shader->setParameter("shadow_gain", params.shadow_gain);
+    m_volume_shader->setParameter("shadow_sample_count", params.shadow_sample_count);
+    m_volume_shader->setParameter("slice_size_model", params.slice_size);
+}
 
-    // Bail if no vdb file is specified.
-    if (!data->vdb_file)
-    {
+void VDBSubSceneOverride::updateDensityVolume(const DensityGridData& grid_data)
+{
+    // Clean-up routine.
+    const auto clean_texture = [&m_volume_texture = m_volume_texture, &m_volume_shader = m_volume_shader]() {
         m_volume_texture.reset();
         MHWRender::MTextureAssignment volume_texture_resource;
         volume_texture_resource.texture = nullptr;
         m_volume_shader->setParameter("volume_texture", volume_texture_resource);
-        return;
-    }
-
-    // Check if we need to recreate the volume texture.
-
-    struct VDBChannel {
-        std::string m_file_name;
-        std::string m_density_channel_name;
-
-        VDBChannel(const std::string& file_name = "", const std::string& density_channel_name = "")
-            : m_file_name(file_name), m_density_channel_name(density_channel_name) {}
-        bool operator==(const VDBChannel& rhs) const { return m_file_name == rhs.m_file_name && m_density_channel_name == rhs.m_density_channel_name; }
     };
 
-    VDBChannel channel(data->vdb_path, data->density_channel);
-    static VDBChannel cache;
-    if (cache == channel) {
+    // Bail unless vdb_file is specified and loaded.
+    if (!grid_data.vdb_file || !grid_data.vdb_file->isOpen()) {
+        clean_texture();
         return;
     }
-    cache = channel;
 
-    // Load channel data.
+    // Load the density grid.
     openvdb::FloatGrid::ConstPtr grid_ptr;
     try {
-        if (!data->vdb_file->isOpen()) {
-            data->vdb_file->open(false);
-        }
-        grid_ptr = openvdb::gridPtrCast<openvdb::FloatGrid>(data->vdb_file->readGrid(data->density_channel));
-
+        grid_ptr = openvdb::gridConstPtrCast<openvdb::FloatGrid>(grid_data.vdb_file->readGrid(grid_data.grid_name));
     } catch (const openvdb::Exception& e) {
-        std::cerr << "error reading file " << data->vdb_path << " : " << e.what() << std::endl;
+        std::cerr << "error reading grid " << grid_data.grid_name << ": " << e.what() << std::endl;
+        clean_texture();
         return;
     }
 
-    static VolumeSampler volume_sampler;
+    // Bail unless we have a valid grid pointer.
+    if (!grid_ptr) {
+        clean_texture();
+        return;
+    }
 
-    // Model space volume sizes (world space in the vdb grid's perspective).
-    const auto grid_bbox_is = getIndexSpaceBoundingBox(grid_ptr.get());
-    const auto grid_bbox_ws = grid_ptr->transform().indexToWorld(grid_bbox_is);
+    // Set model space volume bounds (world space in the vdb grid's perspective).
+    const auto bbox_is = getIndexSpaceBoundingBox(grid_ptr.get());
+    const auto grid_bbox_ws = grid_ptr->transform().indexToWorld(bbox_is);
     CHECK_MSTATUS(m_volume_shader->setParameter("volume_size_model", mayavecFromVec3f(grid_bbox_ws.extents())));
     CHECK_MSTATUS(m_volume_shader->setParameter("volume_origin_model", mayavecFromVec3f(grid_bbox_ws.min())));
 
+    // Set render item bbox.
+    const auto bbox_ws_maya = mayabboxFromBBoxd(grid_ptr->transform().indexToWorld(bbox_is));
+    CHECK_MSTATUS(setGeometryForRenderItem(*m_volume_render_item, m_volume_vertex_buffers, *m_volume_index_buffer, &bbox_ws_maya));
+
     // Sample the multi resolution grid at regular intervals.
+    VolumeSampler volume_sampler;
     const auto texture_extents = openvdb::Coord(MAX_SLICE_COUNT, MAX_SLICE_COUNT, MAX_SLICE_COUNT);
     auto volume = volume_sampler.sampleGridWithMipmapFilter(*grid_ptr, texture_extents);
     m_volume_texture.reset(volume.texture);
 
+    // Set shader params.
     m_volume_shader->setParameter("min_voxel_value", volume.value_range.min);
     m_volume_shader->setParameter("max_voxel_value", volume.value_range.max);
 
@@ -176,21 +173,15 @@ void VDBSubSceneOverride::updateShaderParams(const VDBVisualizerData* data)
     m_volume_shader->setParameter("volume_sampler", *volume_sampler_resource);
 }
 
-void VDBSubSceneOverride::updateGeometry(const VDBVisualizerData* data)
+void VDBSubSceneOverride::updateGeometry(unsigned int num_slices)
 {
-    assert(data);
-
-    // Create geometry.
-    const int num_slices = MAX_SLICE_COUNT;
-
     // - Vertices
     // Note: descriptor name (first ctor arg) MUST be "", or setGeometryForRenderItem will return kFailure.
     const MVertexBufferDescriptor pos_desc("", MGeometry::kPosition, MGeometry::kFloat, 3);
     m_volume_position_buffer.reset(new MVertexBuffer(pos_desc));
-    const int num_vertices = num_slices * 4;
+    const auto num_vertices = num_slices * 4;
     MFloatVector* positions = reinterpret_cast<MFloatVector*>(m_volume_position_buffer->acquire(static_cast<unsigned int>(num_vertices), false));
-    for (int i = 0; i < num_slices; ++i)
-    {
+    for (unsigned int i = 0; i < num_slices; ++i) {
         const float z = i * 1.0f / (num_slices - 1.0f);
         positions[4*i+0] = MFloatVector(0.0, 0.0, z);
         positions[4*i+1] = MFloatVector(1.0, 0.0, z);
@@ -201,7 +192,7 @@ void VDBSubSceneOverride::updateGeometry(const VDBVisualizerData* data)
 
     // - Indices
     m_volume_index_buffer.reset(new MIndexBuffer(MGeometry::kUnsignedInt32));
-    const int num_indices = num_slices * 6;
+    const auto num_indices = num_slices * 6;
     unsigned int* indices = reinterpret_cast<unsigned int*>(m_volume_index_buffer->acquire(num_indices, false));
     for (unsigned int i = 0; i < num_slices; ++i) {
         indices[6*i+0] = 4*i+0;
@@ -213,9 +204,8 @@ void VDBSubSceneOverride::updateGeometry(const VDBVisualizerData* data)
     }
     m_volume_index_buffer->commit(indices);
 
-    MVertexBufferArray volume_vertex_buffers;
-    CHECK_MSTATUS(volume_vertex_buffers.addBuffer("pos_model", m_volume_position_buffer.get()));
-    CHECK_MSTATUS(setGeometryForRenderItem(*m_volume_render_item, volume_vertex_buffers, *m_volume_index_buffer, &data->bbox));
+    m_volume_vertex_buffers.clear();
+    CHECK_MSTATUS(m_volume_vertex_buffers.addBuffer("pos_model", m_volume_position_buffer.get()));
 }
 
 void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const MHWRender::MFrameContext& frameContext)
@@ -224,6 +214,7 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
         if (!initRenderItem()) {
             return;
         }
+        updateGeometry(MAX_SLICE_COUNT);
 
         if (!container.add(m_volume_render_item)) {
             std::cerr << "VDBSubSceneOverride::update: could not add render item." << std::endl;
@@ -234,20 +225,25 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
     MFnDagNode node(m_object, &status);
     if (!status) return;
 
+    MDagPath path;
+    node.getPath(path);
+    m_volume_render_item->setMatrix(&path.inclusiveMatrix());
+
     // Get VDB shape object from associated node.
     typedef VDBVisualizerShape ShapeType;
     ShapeType* shape_node = dynamic_cast<ShapeType*>(node.userNode());
     if (!shape_node) return;
 
     auto data = shape_node->get_update();
-    if (data) {
-        updateShaderParams(data);
-        updateGeometry(data);
+    if (!data) {
+        return;
     }
-
-    MDagPath path;
-    node.getPath(path);
-    m_volume_render_item->setMatrix(&path.inclusiveMatrix());
+    if (data->density_grid_data.isDirty()) {
+        updateDensityVolume(data->density_grid_data.clearAndGet());
+    }
+    if (data->slice_shader_params.isDirty()) {
+        updateShaderParams(data->slice_shader_params.clearAndGet());
+    }
 }
 
 MString VDBSubSceneOverride::registrantId = "VDBVisualizerSubSceneOverride";

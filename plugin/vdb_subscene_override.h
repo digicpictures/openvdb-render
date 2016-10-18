@@ -39,8 +39,9 @@ private:
         m_volume_index_buffer(nullptr) {}
 
     bool initRenderItem();
-    void updateShaderParams(const VDBVisualizerData* data);
-    void updateGeometry(const VDBVisualizerData* data);
+    void updateShaderParams(const SliceShaderParams& shader_params);
+    void updateDensityVolume(const DensityGridData& grid_data);
+    void updateGeometry(unsigned int slice_count);
 
     MObject m_object;
 
@@ -58,6 +59,7 @@ private:
     ShaderPtr m_volume_shader;
     TexturePtr m_volume_texture;
     MHWRender::MRenderItem* m_volume_render_item;
+    MHWRender::MVertexBufferArray m_volume_vertex_buffers;
     std::unique_ptr<MHWRender::MVertexBuffer> m_volume_position_buffer;
     std::unique_ptr<MHWRender::MIndexBuffer> m_volume_index_buffer;
 };
