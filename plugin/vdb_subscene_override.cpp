@@ -55,11 +55,12 @@ bool VDBSubSceneOverride::initRenderItem()
 
     if (!m_volume_shader) {
         // Create shader instance.
-        m_volume_shader.reset(shader_manager->getEffectsFileShader(Paths::getVolumeEffectFile().c_str(), "Main", 0, 0, false));
+        auto effect_file_path = Paths::getVolumeEffectFile();
+        m_volume_shader.reset(shader_manager->getEffectsFileShader(effect_file_path.c_str(), "Main", 0, 0, false));
         if (!m_volume_shader) {
             static bool first_time = true;
             if (first_time) {
-                std::cerr << "Cannot load cgfx file." << std::endl;
+                std::cerr << "Cannot load cgfx file: " << effect_file_path << std::endl;
                 first_time = false;
             }
             return false;
