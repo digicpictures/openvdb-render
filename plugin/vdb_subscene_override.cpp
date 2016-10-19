@@ -36,13 +36,6 @@ namespace {
 
 } // unnamed namespace
 
-struct VDBSubSceneOverrideError
-{
-    VDBSubSceneOverrideError(const char *what) : m_what(what) {}
-    const char *what() const { return m_what; }
-    const char *m_what;
-};
-
 VDBSubSceneOverride::~VDBSubSceneOverride()
 {
 }
