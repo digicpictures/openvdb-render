@@ -150,9 +150,9 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     return output;
 }
 
-technique Main < int isTransparent = 1; > // TODO: annotations
+technique Main < int isTransparent = 1; >
 {
-    pass P0 // TODO: annotations
+    pass P0
     {
         BlendEnable = true;
         BlendFunc = int2(SrcAlpha, OneMinusSrcAlpha);
