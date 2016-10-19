@@ -30,20 +30,17 @@ public:
         const MHWRender::MFrameContext& frameContext) override;
 
 private:
-    VDBSubSceneOverride(const MObject& obj)
-        : MPxSubSceneOverride(obj),
-        m_object(obj),
-        m_volume_render_item(nullptr),
-        m_volume_shader(nullptr),
-        m_volume_position_buffer(nullptr),
-        m_volume_index_buffer(nullptr) {}
+    VDBSubSceneOverride(const MObject& obj);
 
-    bool initRenderItem();
+    bool initVolumeRenderItem();
+    bool initBBoxRenderItem();
     void updateShaderParams(const SliceShaderParams& shader_params);
-    void updateDensityVolume(const DensityGridData& grid_data);
-    void updateGeometry(unsigned int slice_count);
+    void updateDensityVolume(const DensityGridSpec& grid_spec);
+    void updateBBoxGeometry(const openvdb::BBoxd& bbox);
 
     MObject m_object;
+
+    // Rendering resources.
 
     struct ShaderInstanceDeleter {
         void operator()(MHWRender::MShaderInstance* ptr) const; 
@@ -55,11 +52,20 @@ private:
     };
     typedef std::unique_ptr<MHWRender::MTexture, TextureDeleter> TexturePtr;
 
-    // Rendering resources.
     ShaderPtr m_volume_shader;
     TexturePtr m_volume_texture;
-    MHWRender::MRenderItem* m_volume_render_item;
-    MHWRender::MVertexBufferArray m_volume_vertex_buffers;
-    std::unique_ptr<MHWRender::MVertexBuffer> m_volume_position_buffer;
-    std::unique_ptr<MHWRender::MIndexBuffer> m_volume_index_buffer;
+
+    struct RenderItem {
+        MHWRender::MRenderItem *render_item;
+        MHWRender::MVertexBufferArray vertex_buffer_array;
+        std::unique_ptr<MHWRender::MVertexBuffer> position_buffer;
+        std::unique_ptr<MHWRender::MIndexBuffer> index_buffer;
+        MPxSubSceneOverride* parent;
+
+        RenderItem(MPxSubSceneOverride* parent_) : render_item(nullptr), parent(parent_) {}
+        void updateGeometry(const MBoundingBox& bbox);
+    };
+
+    RenderItem m_volume_render_item;
+    RenderItem m_bbox_render_item;
 };

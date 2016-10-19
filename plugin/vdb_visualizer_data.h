@@ -26,7 +26,7 @@ struct SliceShaderParams {
     int shadow_sample_count;
 };
 
-struct DensityGridData {
+struct DensityGridSpec {
     openvdb::io::File* vdb_file;
     std::string grid_name;
 };
@@ -35,7 +35,7 @@ struct VDBVisualizerData {
     MBoundingBox bbox;
 
     // Sliced display shader params.
-    CachedData<DensityGridData> density_grid_data;
+    CachedData<DensityGridSpec> density_grid_data;
     CachedData<SliceShaderParams> slice_shader_params;
 
     // ===

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdlib>
 #include <algorithm>
 #include <limits>
 #include <string>
@@ -93,3 +94,13 @@ private:
 
     static constexpr char FIELD_CHAR = '#';
 };
+
+#define LOG_ERROR(msg) ::log_error(msg, __FILE__, __LINE__)
+inline void log_error(const std::string& msg, const char *file_name, int line_no)
+{
+#if _DEBUG
+    std::cerr << "openvdb_render error: " << file_name << ": line " << line_no << ": " << msg << std::endl;
+#else
+    std::cerr << "openvdb_render error: " << msg << std::endl;
+#endif
+}
