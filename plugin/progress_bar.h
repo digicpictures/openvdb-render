@@ -3,6 +3,8 @@
 #include <maya/MGlobal.h>
 #include <maya/MString.h>
 
+// Copied from the gpuCache plugin from the devkit.
+
 class ProgressBar
 {
 public:
