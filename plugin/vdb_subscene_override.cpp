@@ -26,7 +26,7 @@ namespace {
 
     MFloatVector inline mayavecFromVec3f(const openvdb::Vec3f& vec)
     {
-        return{ vec.x(), vec.y(), vec.z() };
+        return { vec.x(), vec.y(), vec.z() };
     }
 
     MBoundingBox inline mayabboxFromBBoxd(const openvdb::BBoxd& bbox)
