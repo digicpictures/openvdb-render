@@ -460,12 +460,12 @@ MStatus VDBVisualizerShape::initialize()
     eAttr.setDefault(CACHE_OUT_OF_RANGE_MODE_HOLD);
 
     s_display_mode = eAttr.create("displayMode", "display_mode");
-    eAttr.addField("Axis Aligned Bounding Box", DISPLAY_AXIS_ALIGNED_BBOX);
-    eAttr.addField("Per Grid Bounding Box", DISPLAY_GRID_BBOX);
-    eAttr.addField("Point Cloud", DISPLAY_POINT_CLOUD);
-    eAttr.addField("Volumetric Non Shaded", DISPLAY_NON_SHADED);
-    eAttr.addField("Volumetric Shaded", DISPLAY_SHADED);
-    eAttr.addField("Mesh", DISPLAY_MESH);
+    //eAttr.addField("Axis Aligned Bounding Box", DISPLAY_AXIS_ALIGNED_BBOX);
+    //eAttr.addField("Per Grid Bounding Box", DISPLAY_GRID_BBOX);
+    //eAttr.addField("Point Cloud", DISPLAY_POINT_CLOUD);
+    //eAttr.addField("Volumetric Non Shaded", DISPLAY_NON_SHADED);
+    //eAttr.addField("Volumetric Shaded", DISPLAY_SHADED);
+    //eAttr.addField("Mesh", DISPLAY_MESH);
     eAttr.addField("Slices", DISPLAY_SLICES);
     eAttr.setDefault(DISPLAY_SLICES);
 
