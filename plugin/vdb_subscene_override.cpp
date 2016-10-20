@@ -183,11 +183,11 @@ bool VDBSubSceneOverride::initBBoxRenderItem()
 void VDBSubSceneOverride::updateBBoxGeometry(const openvdb::BBoxd& bbox)
 {
     constexpr auto vertex_count = 8;
-    static MFloatVector positions[vertex_count];
+    MFloatVector* positions = static_cast<MFloatVector*>(m_bbox_render_item.position_buffer->acquire(vertex_count, true));
     for (unsigned int i = 0; i < vertex_count; ++i) {
         positions[i] = mayavecFromVec3f(openvdb::Vec3d(i & 1, (i & 2) >> 1, (i & 4) >> 2) * bbox.extents() + bbox.min());
     }
-    CHECK_MSTATUS(m_bbox_render_item.position_buffer->update(positions, 0, vertex_count, true));
+    m_bbox_render_item.position_buffer->commit(positions);
 
     m_bbox_render_item.vertex_buffer_array.clear();
     CHECK_MSTATUS(m_bbox_render_item.vertex_buffer_array.addBuffer("pos_model", m_bbox_render_item.position_buffer.get()));
