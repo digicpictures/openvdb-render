@@ -159,23 +159,25 @@ bool VDBSubSceneOverride::initBBoxRenderItem()
         LOG_ERROR("Failed to create bbox render item.");
         return false;
     }
-    m_bbox_render_item.render_item->setDrawMode(MGeometry::kAll);
-    m_bbox_render_item.render_item->depthPriority(MRenderItem::sActiveWireDepthPriority);
 
     if (!m_bbox_render_item.render_item->setShader(shader)) {
         LOG_ERROR("Failed to set shader for bbox render item.");
         return false;
     }
 
-    // Build geometry.
+    m_bbox_render_item.render_item->setDrawMode(MGeometry::kAll);
+    m_bbox_render_item.render_item->depthPriority(MRenderItem::sActiveWireDepthPriority);
+
     // Note: descriptor name (first ctor arg) MUST be "", or setGeometryForRenderItem will return kFailure.
     const MVertexBufferDescriptor pos_desc("", MGeometry::kPosition, MGeometry::kFloat, 3);
     m_bbox_render_item.position_buffer.reset(new MVertexBuffer(pos_desc));
+    m_bbox_render_item.vertex_buffer_array.clear();
+    CHECK_MSTATUS(m_bbox_render_item.vertex_buffer_array.addBuffer("pos_model", m_bbox_render_item.position_buffer.get()));
 
     m_bbox_render_item.index_buffer.reset(new MIndexBuffer(MGeometry::kUnsignedInt32));
     constexpr auto index_count = 2 * 12;
-    static const uint32_t BOX_INDICES[] = { 0, 1, 1, 3, 3, 2, 2, 0, 4, 5, 5, 7, 7, 6, 6, 4, 0, 4, 1, 5, 3, 7, 2, 6 };
-    CHECK_MSTATUS(m_bbox_render_item.index_buffer->update(BOX_INDICES, 0, index_count, true));
+    static const uint32_t BOX_WIREFRAME_INDICES[] = { 0, 1, 1, 3, 3, 2, 2, 0, 4, 5, 5, 7, 7, 6, 6, 4, 0, 4, 1, 5, 3, 7, 2, 6 };
+    CHECK_MSTATUS(m_bbox_render_item.index_buffer->update(BOX_WIREFRAME_INDICES, 0, index_count, true));
 
     return true;
 }
@@ -188,9 +190,6 @@ void VDBSubSceneOverride::updateBBoxGeometry(const openvdb::BBoxd& bbox)
         positions[i] = mayavecFromVec3f(openvdb::Vec3d(i & 1, (i & 2) >> 1, (i & 4) >> 2) * bbox.extents() + bbox.min());
     }
     m_bbox_render_item.position_buffer->commit(positions);
-
-    m_bbox_render_item.vertex_buffer_array.clear();
-    CHECK_MSTATUS(m_bbox_render_item.vertex_buffer_array.addBuffer("pos_model", m_bbox_render_item.position_buffer.get()));
 
     m_bbox_render_item.updateGeometry(mayabboxFromBBoxd(bbox));
 }

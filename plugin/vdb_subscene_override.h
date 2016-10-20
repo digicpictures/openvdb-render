@@ -56,7 +56,7 @@ private:
     TexturePtr m_volume_texture;
 
     struct RenderItem {
-        MHWRender::MRenderItem *render_item;
+        MHWRender::MRenderItem* render_item;
         MHWRender::MVertexBufferArray vertex_buffer_array;
         std::unique_ptr<MHWRender::MVertexBuffer> position_buffer;
         std::unique_ptr<MHWRender::MIndexBuffer> index_buffer;
