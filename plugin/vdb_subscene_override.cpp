@@ -7,6 +7,7 @@
 #include <boost/filesystem.hpp>
 
 #include <maya/MFnDagNode.h>
+#include <maya/MHWGeometryUtilities.h>
 #include <maya/MGlobal.h>
 #include <maya/MSelectionList.h>
 #include <maya/MShaderManager.h>
@@ -152,8 +153,6 @@ bool VDBSubSceneOverride::initBBoxRenderItem()
         LOG_ERROR("Couldn't get stock shader: k3dSolidShader.");
         return false;
     }
-    static const float color[] = {67.0f / 255.0f, 1.0f, 163.0f / 255.0f, 1.0f};
-    CHECK_MSTATUS(shader->setParameter("solidColor", color));
 
     m_bbox_render_item.render_item = MRenderItem::Create("bounding_box", MRenderItem::RenderItemType::DecorationItem, MHWRender::MGeometry::kLines);
     if (!m_bbox_render_item.render_item) {
@@ -327,6 +326,11 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
     // Handle selection.
     bool volume_is_selected = isPathSelected(path);
     m_bbox_render_item.render_item->enable(volume_is_selected);
+
+    // Set wireframe color.
+    const auto color = MGeometryUtilities::wireframeColor(path);
+    const float color_as_array[] = { color.r, color.g, color.b, color.a };
+    CHECK_MSTATUS(m_bbox_render_item.render_item->getShader()->setParameter("solidColor", color_as_array));
 
     // Set world matrix.
     m_volume_render_item.render_item->setMatrix(&path.inclusiveMatrix());
