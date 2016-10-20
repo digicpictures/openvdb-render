@@ -931,65 +931,64 @@ void* VDBVisualizerShapeUI::creator()
 
 bool VDBVisualizerShapeUI::select(MSelectInfo& selectInfo, MSelectionList& selectionList, MPointArray& worldSpaceSelectPts) const
 {
-    if (!selectInfo.isRay())
-    {
-        const MBoundingBox bbox = surfaceShape()->boundingBox();
-
-        const MPoint min = bbox.min();
-        const MPoint max = bbox.max();
-
-        M3dView view = selectInfo.view();
-        const MDagPath object_path = selectInfo.selectPath();
-        const MMatrix object_matrix = object_path.inclusiveMatrix();
-
-        SelectionRectangle rect(selectInfo);
-
-        auto convert_world_to_screen = [&] (MPoint point) -> std::pair<float, float> {
-            point *= object_matrix;
-            short x_pos = 0; short y_pos = 0;
-            view.worldToView(point, x_pos, y_pos);
-            return std::make_pair(static_cast<float>(x_pos), static_cast<float>(y_pos));
-        };
-
-        const std::array<MPoint, 8> world_points = {
-                min,
-                MPoint(min.x, max.y, min.z),
-                MPoint(min.x, max.y, max.z),
-                MPoint(min.x, min.y, max.z),
-                MPoint(max.x, min.y, min.z),
-                MPoint(max.x, max.y, min.z),
-                max,
-                MPoint(max.x, min.y, max.z)
-        };
-
-        std::pair<float, float> points[8];
-
-        for (int i = 0; i < 8; ++i)
-            points[i] = convert_world_to_screen(world_points[i]);
-
-
-        static const std::array<std::pair<int, int>, 12> line_array = {
-                std::make_pair(0, 1), std::make_pair(1, 2), std::make_pair(2, 3), std::make_pair(3, 0),
-                std::make_pair(4, 5), std::make_pair(5, 6), std::make_pair(6, 7), std::make_pair(7, 4),
-                std::make_pair(0, 4), std::make_pair(1, 5), std::make_pair(2, 6), std::make_pair(3, 7)
-        };
-
-        for (auto line : line_array)
-        {
-            const auto& p0 = points[line.first];
-            const auto& p1 = points[line.second];
-            if (rect.clip_line(p0.first, p0.second, p1.first, p1.second))
-            {
-                MSelectionList item;
-                item.add(object_path);
-                selectInfo.addSelection(item, (world_points[line.first] + world_points[line.second]) * 0.5, selectionList, worldSpaceSelectPts, MSelectionMask::kSelectMeshes, false);
-                return true;
-            }
-        }
-
+    if (selectInfo.isRay())
         return false;
+
+    const MBoundingBox bbox = surfaceShape()->boundingBox();
+
+    const MPoint min = bbox.min();
+    const MPoint max = bbox.max();
+
+    M3dView view = selectInfo.view();
+    const MDagPath object_path = selectInfo.selectPath();
+    const MMatrix object_matrix = object_path.inclusiveMatrix();
+
+    SelectionRectangle rect(selectInfo);
+
+    auto convert_world_to_screen = [&](MPoint point) -> std::pair<float, float> {
+        point *= object_matrix;
+        short x_pos = 0; short y_pos = 0;
+        view.worldToView(point, x_pos, y_pos);
+        return std::make_pair(static_cast<float>(x_pos), static_cast<float>(y_pos));
+    };
+
+    const std::array<MPoint, 8> world_points = {
+            min,
+            MPoint(min.x, max.y, min.z),
+            MPoint(min.x, max.y, max.z),
+            MPoint(min.x, min.y, max.z),
+            MPoint(max.x, min.y, min.z),
+            MPoint(max.x, max.y, min.z),
+            max,
+            MPoint(max.x, min.y, max.z)
+    };
+
+    std::pair<float, float> points[8];
+
+    for (int i = 0; i < 8; ++i)
+        points[i] = convert_world_to_screen(world_points[i]);
+
+
+    static const std::array<std::pair<int, int>, 12> line_array = {
+            std::make_pair(0, 1), std::make_pair(1, 2), std::make_pair(2, 3), std::make_pair(3, 0),
+            std::make_pair(4, 5), std::make_pair(5, 6), std::make_pair(6, 7), std::make_pair(7, 4),
+            std::make_pair(0, 4), std::make_pair(1, 5), std::make_pair(2, 6), std::make_pair(3, 7)
+    };
+
+    for (auto line : line_array)
+    {
+        const auto& p0 = points[line.first];
+        const auto& p1 = points[line.second];
+        if (rect.clip_line(p0.first, p0.second, p1.first, p1.second))
+        {
+            MSelectionList item;
+            item.add(object_path);
+            selectInfo.addSelection(item, (world_points[line.first] + world_points[line.second]) * 0.5, selectionList, worldSpaceSelectPts, MSelectionMask::kSelectMeshes, false);
+            return true;
+        }
     }
-    else return false;
+
+    return false;
 }
 
 bool VDBVisualizerShapeUI::canDrawUV() const
