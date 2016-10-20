@@ -160,6 +160,8 @@ bool VDBSubSceneOverride::initBBoxRenderItem()
         return false;
     }
     m_bbox_render_item.render_item->setDrawMode(MGeometry::kAll);
+    m_bbox_render_item.render_item->depthPriority(MRenderItem::sActiveWireDepthPriority);
+
     if (!m_bbox_render_item.render_item->setShader(shader)) {
         LOG_ERROR("Failed to set shader for bbox render item.");
         return false;
