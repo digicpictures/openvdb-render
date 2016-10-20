@@ -147,6 +147,11 @@ namespace {
             ymax = static_cast<float>(orig_y + size_y);
         }
 
+        float getXMin() const { return xmin; }
+        float getXMax() const { return xmax; }
+        float getYMin() const { return ymin; }
+        float getYMax() const { return ymax; }
+
         bool clip_line(float x0, float y0, float x1, float y1) const
         {
             // compute outcodes for P0, P1, and whatever point lies outside the clip rectangle
@@ -945,29 +950,29 @@ bool VDBVisualizerShapeUI::select(MSelectInfo& selectInfo, MSelectionList& selec
 
     SelectionRectangle rect(selectInfo);
 
-    auto convert_world_to_screen = [&](MPoint point) -> std::pair<float, float> {
+    auto convert_world_to_screen = [&](MPoint point) -> openvdb::Vec2f {
         point *= object_matrix;
         short x_pos = 0; short y_pos = 0;
         view.worldToView(point, x_pos, y_pos);
-        return std::make_pair(static_cast<float>(x_pos), static_cast<float>(y_pos));
+        return { static_cast<float>(x_pos), static_cast<float>(y_pos) };
     };
 
     const std::array<MPoint, 8> world_points = {
-            min,
-            MPoint(min.x, max.y, min.z),
-            MPoint(min.x, max.y, max.z),
-            MPoint(min.x, min.y, max.z),
-            MPoint(max.x, min.y, min.z),
-            MPoint(max.x, max.y, min.z),
-            max,
-            MPoint(max.x, min.y, max.z)
+            min,                          // 000
+            MPoint(min.x, max.y, min.z),  // 010
+            MPoint(min.x, max.y, max.z),  // 011
+            MPoint(min.x, min.y, max.z),  // 001
+            MPoint(max.x, min.y, min.z),  // 100
+            MPoint(max.x, max.y, min.z),  // 110
+            max,                          // 111
+            MPoint(max.x, min.y, max.z)   // 101
     };
 
-    std::pair<float, float> points[8];
+    typedef openvdb::Vec2f Point2D;
+    Point2D points[8];
 
     for (int i = 0; i < 8; ++i)
         points[i] = convert_world_to_screen(world_points[i]);
-
 
     static const std::array<std::pair<int, int>, 12> line_array = {
             std::make_pair(0, 1), std::make_pair(1, 2), std::make_pair(2, 3), std::make_pair(3, 0),
@@ -979,11 +984,64 @@ bool VDBVisualizerShapeUI::select(MSelectInfo& selectInfo, MSelectionList& selec
     {
         const auto& p0 = points[line.first];
         const auto& p1 = points[line.second];
-        if (rect.clip_line(p0.first, p0.second, p1.first, p1.second))
+        if (rect.clip_line(p0.x(), p0.y(), p1.x(), p1.y()))
         {
             MSelectionList item;
             item.add(object_path);
             selectInfo.addSelection(item, (world_points[line.first] + world_points[line.second]) * 0.5, selectionList, worldSpaceSelectPts, MSelectionMask::kSelectMeshes, false);
+            return true;
+        }
+    }
+
+    // No lines intersect the selection rectangle.
+    // Check if the selection rectangle is within the projected bbox (enough to check a single point).
+    auto vec2f_from_pair = [](const std::pair<float, float>& in) -> Point2D {
+        return { in.first, in.second };
+    };
+
+    typedef std::vector<Point2D> Polygon2D;
+    auto is_point_inside_polygon = [](const Point2D& test_point, const Polygon2D& polygon)
+    {
+        auto cross2d = [](const auto& v1, const auto& v2)
+        {
+            return v1.x() * v2.y() - v1.y() * v2.x();
+        };
+
+        const auto& last_point = polygon.back();
+        const bool leftOfLastEdge = cross2d(polygon[0] - last_point, test_point - last_point) >= 0;
+        for (int point_idx = 0; point_idx < polygon.size() - 1; ++point_idx)
+        {
+            const auto& v1 = polygon[point_idx];
+            const auto& v2 = polygon[point_idx + 1];
+            const bool leftOfEdge = cross2d(v2 - v1, test_point - v1) > 0;
+            if (leftOfEdge != leftOfLastEdge)
+                return false;
+        }
+
+        return true;
+    };
+
+    static const int index_array_for_faces[] = { 0, 1, 2, 3, 7, 6, 5, 4,
+                                                 0, 3, 7, 4, 1, 5, 6, 2,
+                                                 0, 4, 5, 1, 3, 2, 6, 7 };
+
+    const auto test_point = openvdb::Vec2f(rect.getXMin(), rect.getYMin());
+    for (int face_idx = 0; face_idx < 6; ++face_idx)
+    {
+        const auto index_base = index_array_for_faces + 4 * face_idx;
+        auto polygon = Polygon2D(4);
+        std::transform(index_base, index_base + 4, polygon.begin(), [&points](int point_index) {
+            return points[point_index];
+        });
+        if (is_point_inside_polygon(test_point, polygon)) {
+            MFloatVector face_midpoint;
+            for (int i = 0; i < 4; ++i)
+                face_midpoint += 0.25f * MFloatVector(world_points[index_base[i]]);
+
+            MSelectionList item;
+            item.add(object_path);
+            selectInfo.addSelection(item, MPoint(face_midpoint), selectionList, worldSpaceSelectPts, MSelectionMask::kSelectMeshes, false);
+
             return true;
         }
     }
