@@ -45,10 +45,7 @@ namespace {
 
 VDBSubSceneOverride::VDBSubSceneOverride(const MObject& obj)
     : MPxSubSceneOverride(obj),
-    m_object(obj),
-    m_volume_shader(nullptr),
-    m_volume_render_item(this),
-    m_bbox_render_item(this)
+    m_object(obj)
 {
     const MHWRender::MShaderManager* shader_manager = getShaderManager();
     assert(shader_manager);
@@ -75,9 +72,9 @@ bool VDBSubSceneOverride::requiresUpdate(const MHWRender::MSubSceneContainer& co
     return true;
 }
 
-bool VDBSubSceneOverride::initVolumeRenderItem()
+bool VDBSubSceneOverride::initSliceRenderables(MHWRender::MSubSceneContainer& container)
 {
-    if (m_volume_render_item.render_item) {
+    if (m_slices_renderable.render_item != nullptr) {
         // Already initialized.
         return true;
     }
@@ -87,11 +84,11 @@ bool VDBSubSceneOverride::initVolumeRenderItem()
         return false;
     }
 
-    m_volume_render_item.render_item = MHWRender::MRenderItem::Create("vdb_volume", MHWRender::MRenderItem::RenderItemType::MaterialSceneItem, MHWRender::MGeometry::kTriangles);
-    m_volume_render_item.render_item->setDrawMode(MGeometry::kAll);
-    m_volume_render_item.render_item->castsShadows(false);
-    m_volume_render_item.render_item->receivesShadows(false);
-    if (!m_volume_render_item.render_item->setShader(m_volume_shader.get())) {
+    m_slices_renderable.render_item = MHWRender::MRenderItem::Create("vdb_volume_slices", MHWRender::MRenderItem::RenderItemType::MaterialSceneItem, MHWRender::MGeometry::kTriangles);
+    m_slices_renderable.render_item->setDrawMode(MHWRender::MGeometry::kAll);
+    m_slices_renderable.render_item->castsShadows(false);
+    m_slices_renderable.render_item->receivesShadows(false);
+    if (!m_slices_renderable.render_item->setShader(m_volume_shader.get())) {
         LOG_ERROR("Could not set shader for volume render item.");
         return false;
     }
@@ -102,9 +99,9 @@ bool VDBSubSceneOverride::initVolumeRenderItem()
     // - Vertices
     // Note: descriptor name (first ctor arg) MUST be "", or setGeometryForRenderItem will return kFailure.
     const MHWRender::MVertexBufferDescriptor pos_desc("", MHWRender::MGeometry::kPosition, MHWRender::MGeometry::kFloat, 3);
-    m_volume_render_item.position_buffer.reset(new MHWRender::MVertexBuffer(pos_desc));
+    m_slices_renderable.position_buffer.reset(new MHWRender::MVertexBuffer(pos_desc));
     const auto vertex_count = slice_count * 4;
-    MFloatVector* positions = reinterpret_cast<MFloatVector*>(m_volume_render_item.position_buffer->acquire(static_cast<unsigned int>(vertex_count), false));
+    MFloatVector* positions = reinterpret_cast<MFloatVector*>(m_slices_renderable.position_buffer->acquire(vertex_count, true));
     for (unsigned int i = 0; i < slice_count; ++i) {
         const float z = i * 1.0f / (slice_count - 1.0f);
         positions[4*i+0] = MFloatVector(0.0, 0.0, z);
@@ -112,12 +109,12 @@ bool VDBSubSceneOverride::initVolumeRenderItem()
         positions[4*i+2] = MFloatVector(0.0, 1.0, z);
         positions[4*i+3] = MFloatVector(1.0, 1.0, z);
     }
-    m_volume_render_item.position_buffer->commit(positions);
+    m_slices_renderable.position_buffer->commit(positions);
 
     // - Indices
-    m_volume_render_item.index_buffer.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
+    m_slices_renderable.index_buffer.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
     const auto index_count = slice_count * 6;
-    unsigned int* indices = reinterpret_cast<unsigned int*>(m_volume_render_item.index_buffer->acquire(index_count, false));
+    unsigned int* indices = reinterpret_cast<unsigned int*>(m_slices_renderable.index_buffer->acquire(index_count, true));
     for (unsigned int i = 0; i < slice_count; ++i) {
         indices[6*i+0] = 4*i+0;
         indices[6*i+1] = 4*i+1;
@@ -126,16 +123,22 @@ bool VDBSubSceneOverride::initVolumeRenderItem()
         indices[6*i+4] = 4*i+3;
         indices[6*i+5] = 4*i+2;
     }
-    m_volume_render_item.index_buffer->commit(indices);
+    m_slices_renderable.index_buffer->commit(indices);
 
-    m_volume_render_item.vertex_buffer_array.clear();
-    CHECK_MSTATUS(m_volume_render_item.vertex_buffer_array.addBuffer("pos_model", m_volume_render_item.position_buffer.get()));
+    m_slices_renderable.vertex_buffer_array.clear();
+    CHECK_MSTATUS(m_slices_renderable.vertex_buffer_array.addBuffer("pos_model", m_slices_renderable.position_buffer.get()));
+
+    if (!container.add(m_slices_renderable.render_item)) {
+        LOG_ERROR("Could not add m_slices_renderable render item.");
+        return false;
+    }
+
     return true;
 }
 
-bool VDBSubSceneOverride::initBBoxRenderItem()
+bool VDBSubSceneOverride::initBBoxRenderable(MHWRender::MSubSceneContainer& container)
 {
-    if (m_bbox_render_item.render_item) {
+    if (m_bbox_renderable.render_item) {
         // Already initialized.
         return true;
     }
@@ -151,30 +154,35 @@ bool VDBSubSceneOverride::initBBoxRenderItem()
         return false;
     }
 
-    m_bbox_render_item.render_item = MHWRender::MRenderItem::Create("bounding_box", MHWRender::MRenderItem::RenderItemType::DecorationItem, MHWRender::MGeometry::kLines);
-    if (!m_bbox_render_item.render_item) {
+    m_bbox_renderable.render_item = MHWRender::MRenderItem::Create("bounding_box", MHWRender::MRenderItem::RenderItemType::DecorationItem, MHWRender::MGeometry::kLines);
+    if (!m_bbox_renderable.render_item) {
         LOG_ERROR("Failed to create bbox render item.");
         return false;
     }
 
-    if (!m_bbox_render_item.render_item->setShader(shader)) {
+    if (!m_bbox_renderable.render_item->setShader(shader)) {
         LOG_ERROR("Failed to set shader for bbox render item.");
         return false;
     }
 
-    m_bbox_render_item.render_item->setDrawMode(MGeometry::kAll);
-    m_bbox_render_item.render_item->depthPriority(MRenderItem::sActiveWireDepthPriority);
+    m_bbox_renderable.render_item->setDrawMode(MHWRender::MGeometry::kAll);
+    m_bbox_renderable.render_item->depthPriority(MHWRender::MRenderItem::sActiveWireDepthPriority);
 
     // Note: descriptor name (first ctor arg) MUST be "", or setGeometryForRenderItem will return kFailure.
     const MHWRender::MVertexBufferDescriptor pos_desc("", MHWRender::MGeometry::kPosition, MHWRender::MGeometry::kFloat, 3);
-    m_bbox_render_item.position_buffer.reset(new MHWRender::MVertexBuffer(pos_desc));
-    m_bbox_render_item.vertex_buffer_array.clear();
-    CHECK_MSTATUS(m_bbox_render_item.vertex_buffer_array.addBuffer("pos_model", m_bbox_render_item.position_buffer.get()));
+    m_bbox_renderable.position_buffer.reset(new MHWRender::MVertexBuffer(pos_desc));
+    m_bbox_renderable.vertex_buffer_array.clear();
+    CHECK_MSTATUS(m_bbox_renderable.vertex_buffer_array.addBuffer("pos_model", m_bbox_renderable.position_buffer.get()));
 
-    m_bbox_render_item.index_buffer.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
+    m_bbox_renderable.index_buffer.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
     constexpr auto index_count = 2 * 12;
     static const uint32_t BOX_WIREFRAME_INDICES[] = { 0, 1, 1, 3, 3, 2, 2, 0, 4, 5, 5, 7, 7, 6, 6, 4, 0, 4, 1, 5, 3, 7, 2, 6 };
-    CHECK_MSTATUS(m_bbox_render_item.index_buffer->update(BOX_WIREFRAME_INDICES, 0, index_count, true));
+    CHECK_MSTATUS(m_bbox_renderable.index_buffer->update(BOX_WIREFRAME_INDICES, 0, index_count, true));
+
+    if (!container.add(m_bbox_renderable.render_item)) {
+        LOG_ERROR("Could not add bbox render item.");
+        return false;
+    }
 
     return true;
 }
@@ -182,13 +190,13 @@ bool VDBSubSceneOverride::initBBoxRenderItem()
 void VDBSubSceneOverride::updateBBoxGeometry(const openvdb::BBoxd& bbox)
 {
     constexpr auto vertex_count = 8;
-    MFloatVector* positions = static_cast<MFloatVector*>(m_bbox_render_item.position_buffer->acquire(vertex_count, true));
+    MFloatVector* positions = static_cast<MFloatVector*>(m_bbox_renderable.position_buffer->acquire(vertex_count, true));
     for (unsigned int i = 0; i < vertex_count; ++i) {
         positions[i] = mayavecFromVec3f(openvdb::Vec3d(i & 1, (i & 2) >> 1, (i & 4) >> 2) * bbox.extents() + bbox.min());
     }
-    m_bbox_render_item.position_buffer->commit(positions);
+    m_bbox_renderable.position_buffer->commit(positions);
 
-    m_bbox_render_item.updateGeometry(mayabboxFromBBoxd(bbox));
+    updateGeometry(m_bbox_renderable, mayabboxFromBBoxd(bbox));
 }
 
 void VDBSubSceneOverride::updateShaderParams(const SliceShaderParams& params)
@@ -250,7 +258,7 @@ void VDBSubSceneOverride::updateDensityVolume(const DensityGridSpec& grid_spec)
     CHECK_MSTATUS(m_volume_shader->setParameter("volume_origin_model", mayavecFromVec3f(bbox_ws.min())));
 
     // Set bbox for render items.
-    m_volume_render_item.updateGeometry(mayabboxFromBBoxd(bbox_ws));
+    updateGeometry(m_slices_renderable, mayabboxFromBBoxd(bbox_ws));
     updateBBoxGeometry(bbox_ws);
 
     // Sample the multi resolution grid at regular intervals.
@@ -293,23 +301,14 @@ namespace {
 
 void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const MHWRender::MFrameContext& frameContext)
 {
-    if (!m_volume_render_item.render_item) {
-        if (!initVolumeRenderItem()) {
-            return;
-        }
-        if (!container.add(m_volume_render_item.render_item)) {
-            LOG_ERROR("Could not add volume render item.");
+    if (m_slices_renderable.render_item == nullptr) {
+        if (!initSliceRenderables(container)) {
             return;
         }
     }
 
-    if (!m_bbox_render_item.render_item) {
-        if (!initBBoxRenderItem()) {
-            return;
-        }
-
-        if (!container.add(m_bbox_render_item.render_item)) {
-            LOG_ERROR("Could not add bbox render item.");
+    if (m_bbox_renderable.render_item == nullptr) {
+        if (!initBBoxRenderable(container)) {
             return;
         }
     }
@@ -323,16 +322,16 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
 
     // Handle selection.
     bool volume_is_selected = isPathSelected(path);
-    m_bbox_render_item.render_item->enable(volume_is_selected);
+    m_bbox_renderable.render_item->enable(volume_is_selected);
 
     // Set wireframe color.
     const auto color = MHWRender::MGeometryUtilities::wireframeColor(path);
     const float color_as_array[] = { color.r, color.g, color.b, color.a };
-    CHECK_MSTATUS(m_bbox_render_item.render_item->getShader()->setParameter("solidColor", color_as_array));
+    CHECK_MSTATUS(m_bbox_renderable.render_item->getShader()->setParameter("solidColor", color_as_array));
 
     // Set world matrix.
-    m_volume_render_item.render_item->setMatrix(&path.inclusiveMatrix());
-    m_bbox_render_item.render_item->setMatrix(&path.inclusiveMatrix());
+    m_slices_renderable.render_item->setMatrix(&path.inclusiveMatrix());
+    m_bbox_renderable.render_item->setMatrix(&path.inclusiveMatrix());
 
     // Get VDB shape object from associated node.
     typedef VDBVisualizerShape ShapeType;
@@ -353,8 +352,8 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
 
 MString VDBSubSceneOverride::s_registrant_id = "VDBVisualizerSubSceneOverride";
 
-void VDBSubSceneOverride::RenderItem::updateGeometry(const MBoundingBox& bbox)
+void VDBSubSceneOverride::updateGeometry(const Renderable& renderable, const MBoundingBox& bbox)
 {
     // Note: render item has to be added to the MSubSceneContainer before calling setGeometryForRenderItem.
-    CHECK_MSTATUS(parent->setGeometryForRenderItem(*render_item, vertex_buffer_array, *index_buffer, &bbox));
+    CHECK_MSTATUS(setGeometryForRenderItem(*renderable.render_item, renderable.vertex_buffer_array, *renderable.index_buffer, &bbox));
 }

@@ -33,8 +33,8 @@ public:
 private:
     VDBSubSceneOverride(const MObject& obj);
 
-    bool initVolumeRenderItem();
-    bool initBBoxRenderItem();
+    bool initSliceRenderables(MHWRender::MSubSceneContainer& container);
+    bool initBBoxRenderable(MHWRender::MSubSceneContainer& container);
     void updateShaderParams(const SliceShaderParams& shader_params);
     void updateDensityVolume(const DensityGridSpec& grid_spec);
     void updateBBoxGeometry(const openvdb::BBoxd& bbox);
@@ -45,17 +45,17 @@ private:
     ShaderPtr m_volume_shader;
     TexturePtr m_volume_texture;
 
-    struct RenderItem {
+    struct Renderable {
         MHWRender::MRenderItem* render_item;
         MHWRender::MVertexBufferArray vertex_buffer_array;
         std::unique_ptr<MHWRender::MVertexBuffer> position_buffer;
         std::unique_ptr<MHWRender::MIndexBuffer> index_buffer;
-        MPxSubSceneOverride* parent;
 
-        RenderItem(MPxSubSceneOverride* parent_) : render_item(nullptr), parent(parent_) {}
-        void updateGeometry(const MBoundingBox& bbox);
+        Renderable() : render_item(nullptr) {}
     };
 
-    RenderItem m_volume_render_item;
-    RenderItem m_bbox_render_item;
+    void updateGeometry(const Renderable& renderable, const MBoundingBox& bbox);
+
+    Renderable m_slices_renderable;
+    Renderable m_bbox_renderable;
 };
