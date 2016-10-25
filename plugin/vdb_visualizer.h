@@ -47,7 +47,7 @@ public:
 
     static const MTypeId typeId;
     static const MString typeName;
-    static const MString drawDbClassification;
+    static const MString s_classification;
 
     static MObject s_vdb_path;
     static MObject s_cache_time;

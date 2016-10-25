@@ -354,7 +354,7 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
     }
 }
 
-MString VDBSubSceneOverride::registrantId = "VDBVisualizerSubSceneOverride";
+MString VDBSubSceneOverride::s_registrant_id = "VDBVisualizerSubSceneOverride";
 
 void VDBSubSceneOverride::ShaderInstanceDeleter::operator()(MShaderInstance* ptr) const
 {

@@ -3,12 +3,13 @@
 #include <memory>
 #include <boost/container/flat_map.hpp>
 #include <maya/MPxSubSceneOverride.h>
+#include "util.h"
 #include "vdb_visualizer_data.h"
 
 class VDBSubSceneOverride : public MHWRender::MPxSubSceneOverride
 {
 public:
-    static MString registrantId;
+    static MString s_registrant_id;
     static MPxSubSceneOverride* creator(const MObject& obj)
     {
         return new VDBSubSceneOverride(obj);

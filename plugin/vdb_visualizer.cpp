@@ -39,7 +39,7 @@
 
 const MTypeId VDBVisualizerShape::typeId(ID_VDB_VISUALIZER);
 const MString VDBVisualizerShape::typeName("vdb_visualizer");
-const MString VDBVisualizerShape::drawDbClassification("drawdb/subscene/volume/vdb_visualizer");
+const MString VDBVisualizerShape::s_classification("drawdb/subscene/volume/vdb_visualizer");
 
 MObject VDBVisualizerShape::s_update_trigger;
 MObject VDBVisualizerShape::s_vdb_path;
