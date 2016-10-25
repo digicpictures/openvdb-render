@@ -356,20 +356,6 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
 
 MString VDBSubSceneOverride::s_registrant_id = "VDBVisualizerSubSceneOverride";
 
-void VDBSubSceneOverride::ShaderInstanceDeleter::operator()(MShaderInstance* ptr) const
-{
-    if (ptr) {
-        MHWRender::MRenderer::theRenderer()->getShaderManager()->releaseShader(ptr);
-    }
-}
-
-void VDBSubSceneOverride::TextureDeleter::operator()(MTexture* ptr) const
-{
-    if (ptr) {
-        MHWRender::MRenderer::theRenderer()->getTextureManager()->releaseTexture(ptr);
-    }
-}
-
 void VDBSubSceneOverride::RenderItem::updateGeometry(const MBoundingBox& bbox)
 {
     // Note: render item has to be added to the MSubSceneContainer before calling setGeometryForRenderItem.

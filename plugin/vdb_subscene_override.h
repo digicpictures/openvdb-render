@@ -42,17 +42,6 @@ private:
     MObject m_object;
 
     // Rendering resources.
-
-    struct ShaderInstanceDeleter {
-        void operator()(MHWRender::MShaderInstance* ptr) const; 
-    };
-    typedef std::unique_ptr<MHWRender::MShaderInstance, ShaderInstanceDeleter> ShaderPtr;
-
-    struct TextureDeleter {
-        void operator()(MHWRender::MTexture* ptr) const; 
-    };
-    typedef std::unique_ptr<MHWRender::MTexture, TextureDeleter> TexturePtr;
-
     ShaderPtr m_volume_shader;
     TexturePtr m_volume_texture;
 
