@@ -22,9 +22,6 @@
 
 #include "util.h"
 
-// Disable "decorated name length exceeded, name was truncated" warning.
-#pragma warning(disable: 4503)
-
 using namespace MHWRender;
 using namespace openvdb;
 

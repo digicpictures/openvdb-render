@@ -17,9 +17,6 @@
 #include "vdb_visualizer.h"
 #include "volume_sampler.h"
 
-// Disable "decorated name length exceeded, name was truncated" warning.
-#pragma warning(disable: 4503)
-
 #define MAX_SLICE_COUNT 64
 
 namespace {

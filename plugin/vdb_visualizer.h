@@ -1,7 +1,5 @@
 #pragma once
 
-#define NOMINMAX
-
 #include <maya/MPxSurfaceShape.h>
 #include <maya/MPxSurfaceShapeUI.h>
 

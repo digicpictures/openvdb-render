@@ -3,8 +3,9 @@ set(PLUGIN_NAME openvdb_render)
 # Compile-time reduction
 include(U:/development/gilianz/common/cmake/cotire.cmake)
 
-add_definitions(-D_BOOL -DREQUIRE_IOSTREAM)
-add_definitions(-D_SCL_SECURE_NO_WARNINGS)
+if(WIN32)
+    add_definitions(-D_BOOL -DREQUIRE_IOSTREAM)
+endif(WIN32)
 
 # Maya
 find_package(Maya 2015)
@@ -93,7 +94,6 @@ add_library(${PLUGIN_NAME} SHARED ${SRC} ${HDR_h} ${HDR_hpp} volume.cgfx)
 set_target_properties(${PLUGIN_NAME} PROPERTIES PREFIX "")
 set_target_properties(${PLUGIN_NAME} PROPERTIES SUFFIX ".mll")
 target_link_libraries(${PLUGIN_NAME} ${MAYA_LIBS} GLEW GL OpenVDB)
-target_compile_definitions(${PLUGIN_NAME} PRIVATE -DNOMINMAX)
 
 cotire(${PLUGIN_NAME})
 
