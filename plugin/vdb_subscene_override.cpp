@@ -22,8 +22,6 @@
 
 #define MAX_SLICE_COUNT 64
 
-using namespace MHWRender;
-
 namespace {
 
     MFloatVector inline mayavecFromVec3f(const openvdb::Vec3f& vec)
@@ -36,7 +34,7 @@ namespace {
         return { mayavecFromVec3f(bbox.min()), mayavecFromVec3f(bbox.max()) };
     }
 
-    const MShaderManager* getShaderManager()
+    const MHWRender::MShaderManager* getShaderManager()
     {
         auto renderer = MHWRender::MRenderer::theRenderer();
         if (!renderer) return nullptr;
@@ -52,7 +50,7 @@ VDBSubSceneOverride::VDBSubSceneOverride(const MObject& obj)
     m_volume_render_item(this),
     m_bbox_render_item(this)
 {
-    const MShaderManager* shader_manager = getShaderManager();
+    const MHWRender::MShaderManager* shader_manager = getShaderManager();
     assert(shader_manager);
 
     // Load volume shader from effect file.
@@ -89,8 +87,7 @@ bool VDBSubSceneOverride::initVolumeRenderItem()
         return false;
     }
 
-    // Create render item.
-    m_volume_render_item.render_item = MRenderItem::Create("vdb_volume", MRenderItem::RenderItemType::MaterialSceneItem, MHWRender::MGeometry::kTriangles);
+    m_volume_render_item.render_item = MHWRender::MRenderItem::Create("vdb_volume", MHWRender::MRenderItem::RenderItemType::MaterialSceneItem, MHWRender::MGeometry::kTriangles);
     m_volume_render_item.render_item->setDrawMode(MGeometry::kAll);
     m_volume_render_item.render_item->castsShadows(false);
     m_volume_render_item.render_item->receivesShadows(false);
@@ -104,8 +101,8 @@ bool VDBSubSceneOverride::initVolumeRenderItem()
 
     // - Vertices
     // Note: descriptor name (first ctor arg) MUST be "", or setGeometryForRenderItem will return kFailure.
-    const MVertexBufferDescriptor pos_desc("", MGeometry::kPosition, MGeometry::kFloat, 3);
-    m_volume_render_item.position_buffer.reset(new MVertexBuffer(pos_desc));
+    const MHWRender::MVertexBufferDescriptor pos_desc("", MHWRender::MGeometry::kPosition, MHWRender::MGeometry::kFloat, 3);
+    m_volume_render_item.position_buffer.reset(new MHWRender::MVertexBuffer(pos_desc));
     const auto vertex_count = slice_count * 4;
     MFloatVector* positions = reinterpret_cast<MFloatVector*>(m_volume_render_item.position_buffer->acquire(static_cast<unsigned int>(vertex_count), false));
     for (unsigned int i = 0; i < slice_count; ++i) {
@@ -118,7 +115,7 @@ bool VDBSubSceneOverride::initVolumeRenderItem()
     m_volume_render_item.position_buffer->commit(positions);
 
     // - Indices
-    m_volume_render_item.index_buffer.reset(new MIndexBuffer(MGeometry::kUnsignedInt32));
+    m_volume_render_item.index_buffer.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
     const auto index_count = slice_count * 6;
     unsigned int* indices = reinterpret_cast<unsigned int*>(m_volume_render_item.index_buffer->acquire(index_count, false));
     for (unsigned int i = 0; i < slice_count; ++i) {
@@ -143,18 +140,18 @@ bool VDBSubSceneOverride::initBBoxRenderItem()
         return true;
     }
 
-    const MShaderManager* shader_manager = getShaderManager();
+    const MHWRender::MShaderManager* shader_manager = getShaderManager();
     if (!shader_manager) {
         return false;
     }
 
-    static auto shader = shader_manager->getStockShader(MShaderManager::k3dSolidShader);
+    static auto shader = shader_manager->getStockShader(MHWRender::MShaderManager::k3dSolidShader);
     if (!shader) {
         LOG_ERROR("Couldn't get stock shader: k3dSolidShader.");
         return false;
     }
 
-    m_bbox_render_item.render_item = MRenderItem::Create("bounding_box", MRenderItem::RenderItemType::DecorationItem, MHWRender::MGeometry::kLines);
+    m_bbox_render_item.render_item = MHWRender::MRenderItem::Create("bounding_box", MHWRender::MRenderItem::RenderItemType::DecorationItem, MHWRender::MGeometry::kLines);
     if (!m_bbox_render_item.render_item) {
         LOG_ERROR("Failed to create bbox render item.");
         return false;
@@ -169,12 +166,12 @@ bool VDBSubSceneOverride::initBBoxRenderItem()
     m_bbox_render_item.render_item->depthPriority(MRenderItem::sActiveWireDepthPriority);
 
     // Note: descriptor name (first ctor arg) MUST be "", or setGeometryForRenderItem will return kFailure.
-    const MVertexBufferDescriptor pos_desc("", MGeometry::kPosition, MGeometry::kFloat, 3);
-    m_bbox_render_item.position_buffer.reset(new MVertexBuffer(pos_desc));
+    const MHWRender::MVertexBufferDescriptor pos_desc("", MHWRender::MGeometry::kPosition, MHWRender::MGeometry::kFloat, 3);
+    m_bbox_render_item.position_buffer.reset(new MHWRender::MVertexBuffer(pos_desc));
     m_bbox_render_item.vertex_buffer_array.clear();
     CHECK_MSTATUS(m_bbox_render_item.vertex_buffer_array.addBuffer("pos_model", m_bbox_render_item.position_buffer.get()));
 
-    m_bbox_render_item.index_buffer.reset(new MIndexBuffer(MGeometry::kUnsignedInt32));
+    m_bbox_render_item.index_buffer.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
     constexpr auto index_count = 2 * 12;
     static const uint32_t BOX_WIREFRAME_INDICES[] = { 0, 1, 1, 3, 3, 2, 2, 0, 4, 5, 5, 7, 7, 6, 6, 4, 0, 4, 1, 5, 3, 7, 2, 6 };
     CHECK_MSTATUS(m_bbox_render_item.index_buffer->update(BOX_WIREFRAME_INDICES, 0, index_count, true));
@@ -275,7 +272,7 @@ void VDBSubSceneOverride::updateDensityVolume(const DensityGridSpec& grid_spec)
     volume_sampler_state_desc.addressU = MHWRender::MSamplerState::kTexClamp;
     volume_sampler_state_desc.addressV = MHWRender::MSamplerState::kTexClamp;
     volume_sampler_state_desc.addressW = MHWRender::MSamplerState::kTexClamp;
-    const MHWRender::MSamplerState *volume_sampler_resource = MStateManager::acquireSamplerState(volume_sampler_state_desc);
+    const MHWRender::MSamplerState *volume_sampler_resource = MHWRender::MStateManager::acquireSamplerState(volume_sampler_state_desc);
     m_volume_shader->setParameter("volume_sampler", *volume_sampler_resource);
 }
 
@@ -329,7 +326,7 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
     m_bbox_render_item.render_item->enable(volume_is_selected);
 
     // Set wireframe color.
-    const auto color = MGeometryUtilities::wireframeColor(path);
+    const auto color = MHWRender::MGeometryUtilities::wireframeColor(path);
     const float color_as_array[] = { color.r, color.g, color.b, color.a };
     CHECK_MSTATUS(m_bbox_render_item.render_item->getShader()->setParameter("solidColor", color_as_array));
 
