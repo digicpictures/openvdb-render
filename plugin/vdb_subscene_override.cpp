@@ -4,8 +4,6 @@
 #include <chrono>
 #include <sstream>
 
-#include <boost/filesystem.hpp>
-
 #include <maya/MFnDagNode.h>
 #include <maya/MHWGeometryUtilities.h>
 #include <maya/MGlobal.h>

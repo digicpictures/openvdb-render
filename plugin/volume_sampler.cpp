@@ -5,8 +5,6 @@
 #include <random>
 #include <thread>
 
-#include <boost/algorithm/clamp.hpp>
-
 #include <maya/MHWGeometry.h>
 #include <maya/MShaderManager.h>
 #include <maya/MTextureManager.h>
@@ -34,6 +32,12 @@ namespace {
     T unlerp(typename identity<T>::type a, typename identity<T>::type b, T x)
     {
         return (x - a) / (b - a);
+    }
+
+    template <typename T>
+    T clamp(T val, typename identity<T>::type floor, typename identity<T>::type ceil)
+    {
+        return std::min(ceil, std::max(floor, val));
     }
 
     template <typename VecT>
@@ -68,7 +72,7 @@ VolumeTexture VolumeSampler::sampleGridWithMipmapFilter(const openvdb::FloatGrid
     const auto grid_extents = index_bbox.extents().asVec3d();
     const auto coarse_voxel_size = grid_extents / texture_extents.asVec3d();
     const auto max_levels = openvdb::math::Ceil(std::log2(maxComponentValue(grid_extents)));
-    const auto lod_level = boost::algorithm::clamp(std::log2(maxComponentValue(coarse_voxel_size)), 0, max_levels);
+    const auto lod_level = clamp(std::log2(maxComponentValue(coarse_voxel_size)), 0, max_levels);
     const auto num_levels = size_t(openvdb::math::Ceil(lod_level)) + 1;
 
     if (num_levels == 1) {

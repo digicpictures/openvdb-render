@@ -1,7 +1,6 @@
 #pragma once
 
 #include <memory>
-#include <boost/container/flat_map.hpp>
 #include <maya/MPxSubSceneOverride.h>
 #include "util.h"
 #include "vdb_visualizer_data.h"

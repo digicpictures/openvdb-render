@@ -39,7 +39,7 @@ set_target_properties(GLEW PROPERTIES INTERFACE_INCLUDE_DIRECTORIES ${GLEW_ROOT}
 set(Boost_USE_STATIC_LIBS OFF)
 set(Boost_USE_MULTITHREADED ON)
 set(Boost_USE_STATIC_RUNTIME OFF)
-find_package(Boost 1.59 REQUIRED COMPONENTS thread system regex)
+find_package(Boost 1.59 REQUIRED COMPONENTS thread)
 get_filename_component(BOOST_ROOT ${Boost_INCLUDE_DIRS} DIRECTORY)
 link_directories(${BOOST_ROOT}/lib_win64)
 

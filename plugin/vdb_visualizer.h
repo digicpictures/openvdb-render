@@ -4,8 +4,6 @@
 #include <maya/MPxSurfaceShapeUI.h>
 
 #include <openvdb/openvdb.h>
-// std regex in gcc 4.8.3 is broken
-#include <boost/regex.hpp>
 #include <maya/MNodeMessage.h>
 #include <maya/MDGMessage.h>
 
