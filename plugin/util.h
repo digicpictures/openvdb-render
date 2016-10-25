@@ -10,6 +10,7 @@
 #include <maya/MShaderManager.h>
 #include <maya/MTextureManager.h>
 #include <maya/MRenderTargetManager.h>
+#include <openvdb/Grid.h>
 #include <openvdb/Types.h>
 
 struct ShaderInstanceDeleter {
@@ -70,7 +71,8 @@ struct ValueRange
     void update(const ValueRange<T>& value_range) { min = std::min(min, value_range.min); max = std::max(max, value_range.max); }
     ValueRange merge(const ValueRange<T>& value_range) { return { std::min(min, value_range.min), std::max(max, value_range.max) }; }
 };
-using FloatRange = ValueRange<float>;
+typedef ValueRange<float> FloatRange;
+
 
 
 template <typename T>

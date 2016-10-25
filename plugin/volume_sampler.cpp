@@ -28,10 +28,10 @@ using namespace openvdb;
 namespace {
 
     template <typename T>
-    using identity_t = T;
+    struct identity { typedef T type; };
 
     template <typename T>
-    T unlerp(identity_t<T> a, identity_t<T> b, T x)
+    T unlerp(typename identity<T>::type a, typename identity<T>::type b, T x)
     {
         return (x - a) / (b - a);
     }
@@ -96,7 +96,7 @@ VolumeTexture VolumeSampler::sampleVolume(const openvdb::Coord& extents, Samplin
     m_buffer.resize(domain.volume());
 
     // Sample on a lattice.
-    using PerThreadRange = tbb::enumerable_thread_specific<FloatRange>;
+    typedef tbb::enumerable_thread_specific<FloatRange> PerThreadRange ;
     PerThreadRange per_thread_ranges;
     const auto stride = openvdb::Vec3i(1, extents.x(), extents.x() * extents.y());
     tbb::parallel_for(domain, [&sampling_func, &stride, &per_thread_ranges, output = m_buffer.data()](const CoordBBox& bbox) {
@@ -119,7 +119,7 @@ VolumeTexture VolumeSampler::sampleVolume(const openvdb::Coord& extents, Samplin
     }
 
     // Remap sample values to [0, 1].
-    using tbb_range = tbb::blocked_range<size_t>;
+    typedef tbb::blocked_range<size_t> tbb_range;
     tbb::parallel_for(tbb_range(0, m_buffer.size()),
                       [buffer = m_buffer.data(), &value_range](const tbb_range& range) {
         for (auto i = range.begin(); i < range.end(); ++i) {

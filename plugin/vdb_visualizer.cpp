@@ -27,6 +27,7 @@
 #include <maya/MFnDependencyNode.h>
 #include <maya/MViewport2Renderer.h>
 
+#include <array>
 #include <sstream>
 #include <maya/MGlobal.h>
 #include <maya/MNodeMessage.h>

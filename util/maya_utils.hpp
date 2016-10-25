@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include <openvdb/openvdb.h>
 
 #include <maya/MBoundingBox.h>
