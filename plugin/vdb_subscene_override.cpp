@@ -194,13 +194,13 @@ void VDBSubSceneOverride::updateBBoxGeometry(const openvdb::BBoxd& bbox)
 void VDBSubSceneOverride::updateShaderParams(const SliceShaderParams& params)
 {
     // Shading parameters.
-    m_volume_shader->setParameter("light_dir", params.light_direction);
-    m_volume_shader->setParameter("light_color", params.light_color);
-    m_volume_shader->setParameter("scattering", params.scattering);
-    m_volume_shader->setParameter("absorption", params.absorption);
-    m_volume_shader->setParameter("shadow_gain", params.shadow_gain);
-    m_volume_shader->setParameter("shadow_sample_count", params.shadow_sample_count);
-    m_volume_shader->setParameter("slice_size_model", params.slice_size);
+    CHECK_MSTATUS(m_volume_shader->setParameter("light_dir", params.light_direction));
+    CHECK_MSTATUS(m_volume_shader->setParameter("light_color", params.light_color));
+    CHECK_MSTATUS(m_volume_shader->setParameter("scattering", params.scattering));
+    CHECK_MSTATUS(m_volume_shader->setParameter("absorption", params.absorption));
+    CHECK_MSTATUS(m_volume_shader->setParameter("shadow_gain", params.shadow_gain));
+    CHECK_MSTATUS(m_volume_shader->setParameter("shadow_sample_count", params.shadow_sample_count));
+    CHECK_MSTATUS(m_volume_shader->setParameter("slice_size_model", params.slice_size));
 }
 
 namespace {
@@ -240,7 +240,7 @@ void VDBSubSceneOverride::updateDensityVolume(const DensityGridSpec& grid_spec)
         m_volume_texture.reset();
         MHWRender::MTextureAssignment volume_texture_resource;
         volume_texture_resource.texture = nullptr;
-        m_volume_shader->setParameter("volume_texture", volume_texture_resource);
+        CHECK_MSTATUS(m_volume_shader->setParameter("volume_texture", volume_texture_resource));
         return;
     }
 
@@ -260,8 +260,8 @@ void VDBSubSceneOverride::updateDensityVolume(const DensityGridSpec& grid_spec)
     m_volume_texture.reset(volume.texture);
 
     // Set shader params.
-    m_volume_shader->setParameter("min_voxel_value", volume.value_range.min);
-    m_volume_shader->setParameter("max_voxel_value", volume.value_range.max);
+    CHECK_MSTATUS(m_volume_shader->setParameter("min_voxel_value", volume.value_range.min));
+    CHECK_MSTATUS(m_volume_shader->setParameter("max_voxel_value", volume.value_range.max));
 
     MHWRender::MTextureAssignment volume_texture_resource;
     volume_texture_resource.texture = m_volume_texture.get();
