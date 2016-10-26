@@ -90,7 +90,7 @@ file(GLOB SRC *.cpp)
 file(GLOB HDR_h *.h)
 file(GLOB HDR_hpp *.hpp)
 
-add_library(${PLUGIN_NAME} SHARED ${SRC} ${HDR_h} ${HDR_hpp} volume.cgfx)
+add_library(${PLUGIN_NAME} SHARED ${SRC} ${HDR_h} ${HDR_hpp})
 set_target_properties(${PLUGIN_NAME} PROPERTIES PREFIX "")
 if (WIN32)
     set_target_properties(${PLUGIN_NAME} PROPERTIES SUFFIX ".mll")
@@ -101,8 +101,6 @@ cotire(${PLUGIN_NAME})
 
 install(TARGETS ${PLUGIN_NAME}
         DESTINATION plug-ins)
-install(FILES volume.cgfx
-        DESTINATION plug-ins/shader/)
 
 file(GLOB TEMPLATES template/*.py)
 
