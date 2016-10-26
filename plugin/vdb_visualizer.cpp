@@ -12,7 +12,7 @@
 
 #include "vdb_visualizer.h"
 
-#include "lumaNodeId.h"
+#include "../util/node_ids.h"
 
 #include <maya/MFnNumericAttribute.h>
 #include <maya/MFnTypedAttribute.h>
@@ -33,11 +33,11 @@
 #include <maya/MNodeMessage.h>
 
 #include "util.h"
-#include "../util/maya_utils.hpp"
+#include "vdb_maya_utils.hpp"
 
 const MTypeId VDBVisualizerShape::typeId(ID_VDB_VISUALIZER);
 const MString VDBVisualizerShape::typeName("vdb_visualizer");
-const MString VDBVisualizerShape::s_classification("drawdb/subscene/volume/vdb_visualizer");
+const MString VDBVisualizerShape::drawDbClassification("drawdb/subscene/volume/vdb_visualizer");
 
 MObject VDBVisualizerShape::s_update_trigger;
 MObject VDBVisualizerShape::s_vdb_path;
@@ -220,13 +220,13 @@ VDBVisualizerData::~VDBVisualizerData()
 
 void VDBVisualizerData::clear(const MBoundingBox& bb)
 {
-    if (vdb_file)
+    if (vdb_file != nullptr)
     {
         if (vdb_file->isOpen())
             vdb_file->close();
         delete vdb_file;
+        vdb_file = nullptr;
     }
-    vdb_file = nullptr;
     bbox = bb;
 }
 
@@ -323,8 +323,6 @@ MStatus VDBVisualizerShape::compute(const MPlug& plug, MDataBlock& dataBlock)
             {
                 m_vdb_data.clear(MBoundingBox(MPoint(-1.0, -1.0, -1.0), MPoint(1.0, 1.0, 1.0)));
             }
-
-            m_vdb_data.density_grid_data.getDirtyRef().vdb_file = m_vdb_data.vdb_file;
         }
         MDataHandle out_vdb_path_handle = dataBlock.outputValue(s_out_vdb_path);
         out_vdb_path_handle.setString(vdb_path.c_str());
@@ -463,12 +461,12 @@ MStatus VDBVisualizerShape::initialize()
     eAttr.setDefault(CACHE_OUT_OF_RANGE_MODE_HOLD);
 
     s_display_mode = eAttr.create("displayMode", "display_mode");
-    //eAttr.addField("Axis Aligned Bounding Box", DISPLAY_AXIS_ALIGNED_BBOX);
-    //eAttr.addField("Per Grid Bounding Box", DISPLAY_GRID_BBOX);
-    //eAttr.addField("Point Cloud", DISPLAY_POINT_CLOUD);
-    //eAttr.addField("Volumetric Non Shaded", DISPLAY_NON_SHADED);
-    //eAttr.addField("Volumetric Shaded", DISPLAY_SHADED);
-    //eAttr.addField("Mesh", DISPLAY_MESH);
+    eAttr.addField("Axis Aligned Bounding Box", DISPLAY_AXIS_ALIGNED_BBOX);
+    eAttr.addField("Per Grid Bounding Box", DISPLAY_GRID_BBOX);
+    eAttr.addField("Point Cloud", DISPLAY_POINT_CLOUD);
+    eAttr.addField("Volumetric Non Shaded", DISPLAY_NON_SHADED);
+    eAttr.addField("Volumetric Shaded", DISPLAY_SHADED);
+    eAttr.addField("Mesh", DISPLAY_MESH);
     eAttr.addField("Slices", DISPLAY_SLICES);
     eAttr.setDefault(DISPLAY_SLICES);
 
@@ -521,14 +519,14 @@ MStatus VDBVisualizerShape::initialize()
         s_update_trigger, s_grid_names, s_out_vdb_path, s_bbox_min, s_bbox_max, s_channel_stats, s_voxel_size
     };
 
-    for (auto output_param : output_params)
+    for (const auto& output_param : output_params)
         addAttribute(output_param);
 
-    for (auto input_param : input_params)
+    for (const auto& input_param : input_params)
     {
         addAttribute(input_param);
 
-        for (auto output_param : output_params)
+        for (const auto& output_param : output_params)
             attributeAffects(input_param, output_param);
     }
 
@@ -687,7 +685,7 @@ MStatus VDBVisualizerShape::initialize()
             s_point_size, s_point_jitter, s_point_skip, s_override_shader, s_shader_mode
     };
 
-    for (auto shader_param : display_params)
+    for (const auto& shader_param : display_params)
     {
         addAttribute(shader_param);
         attributeAffects(shader_param, s_update_trigger);
@@ -723,12 +721,9 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
         }
         else if (m_vdb_data.display_mode == DISPLAY_SLICES)
         {
-            std::string grid_name = MPlug(tmo, s_density_channel).asString().asChar();
-            if (m_vdb_data.density_grid_data.peek().grid_name != grid_name) {
-                m_vdb_data.density_grid_data.getDirtyRef().grid_name = grid_name;
-            }
+            m_vdb_data.sliced_display_channel = MPlug(tmo, s_density_channel).asString().asChar();
 
-            SliceShaderParams shader_params;
+            SliceShaderParams& shader_params = m_vdb_data.sliced_display_shader_params;
             shader_params.slice_size =          MPlug(tmo, s_slice_size).asFloat();
             shader_params.light_color =         plugAsFloatVector(MPlug(tmo, s_light_color)) * MPlug(tmo, s_light_intensity).asFloat();
             shader_params.light_direction =     plugAsFloatVector(MPlug(tmo, s_light_direction));
@@ -736,10 +731,9 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
             shader_params.absorption =          plugAsFloatVector(MPlug(tmo, s_absorption_color)) * MPlug(tmo, s_absorption_intensity).asFloat();
             shader_params.shadow_gain =         MPlug(tmo, s_shadow_gain).asFloat();
             shader_params.shadow_sample_count = MPlug(tmo, s_shadow_sample_count).asInt();
-            m_vdb_data.slice_shader_params.getDirtyRef() = shader_params;
         }
-
-        /*
+        else
+        {
             const short shader_mode = MPlug(tmo, s_shader_mode).asShort();
             if (shader_mode == SHADER_MODE_VOLUME_COLLECTOR)
             {
@@ -857,12 +851,9 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
                 m_vdb_data.attenuation_gradient.clear();
                 m_vdb_data.emission_gradient.clear();
             }
-        */
-
-        return &m_vdb_data;
+        }
     }
-    else
-        return 0;
+    return &m_vdb_data; // this data will be checked in the subscene override
 }
 
 bool VDBVisualizerShape::isBounded() const
@@ -876,32 +867,6 @@ MBoundingBox VDBVisualizerShape::boundingBox() const
     return m_vdb_data.bbox;
 }
 
-void VDBVisualizerShape::attribute_changed(MNodeMessage::AttributeMessage, MPlug& plug, MPlug&, void* client_data)
-{
-    MHWRender::MRenderer* renderer = MHWRender::MRenderer::theRenderer();
-    if (renderer != nullptr)
-    {
-        VDBVisualizerShape* shape = reinterpret_cast<VDBVisualizerShape*>(client_data);
-
-        if (s_shader_params.check_plug(plug) || s_simple_shader_params.check_plug(plug) ||
-            plug == s_vdb_path || plug == s_cache_time ||  plug == s_cache_playback_start ||
-            plug == s_cache_playback_end || plug == s_cache_playback_offset || plug == s_cache_before_mode ||
-            plug == s_cache_after_mode || plug == s_display_mode || plug == s_override_shader || plug == s_shader_mode ||
-            plug == s_point_size || plug == s_point_jitter || plug == s_point_skip)
-            renderer->setGeometryDrawDirty(shape->thisMObject(), true);
-    }
-}
-
-void VDBVisualizerShape::time_changed(MTime&, void* client_data)
-{
-    MHWRender::MRenderer* renderer = MHWRender::MRenderer::theRenderer();
-    if (renderer != nullptr)
-    {
-        VDBVisualizerShape* shape = reinterpret_cast<VDBVisualizerShape*>(client_data);
-        renderer->setGeometryDrawDirty(shape->thisMObject(), true);
-    }
-}
-
 void VDBVisualizerShape::postConstructor()
 {
     setRenderable(true);
@@ -909,13 +874,6 @@ void VDBVisualizerShape::postConstructor()
     s_shader_params.scattering_gradient.post_constructor(tmo);
     s_shader_params.attenuation_gradient.post_constructor(tmo);
     s_shader_params.emission_gradient.post_constructor(tmo);
-
-    if (MGlobal::mayaState() == MGlobal::kInteractive)
-    {
-        MNodeMessage::addAttributeChangedCallback(tmo, attribute_changed, this);
-        m_time_changed_id = MDGMessage::addTimeChangeCallback(time_changed, this);
-    }
-
 }
 
 VDBVisualizerShapeUI::VDBVisualizerShapeUI()

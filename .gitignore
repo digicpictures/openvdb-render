@@ -1,4 +1,5 @@
 .idea*
 *.nfs*
+.kdev_include_paths
 *.pyc
 *.off

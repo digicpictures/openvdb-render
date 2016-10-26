@@ -43,7 +43,7 @@ public:
 
     static const MTypeId typeId;
     static const MString typeName;
-    static const MString s_classification;
+    static const MString drawDbClassification;
 
     static MObject s_vdb_path;
     static MObject s_cache_time;
@@ -102,8 +102,6 @@ public:
 
     VDBVisualizerData* get_update();
 private:
-    static void attribute_changed(MNodeMessage::AttributeMessage msg, MPlug& plug, MPlug& other_plug, void* client_data);
-    static void time_changed(MTime& time, void* client_data);
 
     VDBVisualizerData m_vdb_data;
     MCallbackId m_time_changed_id;

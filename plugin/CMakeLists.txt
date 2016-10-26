@@ -92,7 +92,9 @@ file(GLOB HDR_hpp *.hpp)
 
 add_library(${PLUGIN_NAME} SHARED ${SRC} ${HDR_h} ${HDR_hpp} volume.cgfx)
 set_target_properties(${PLUGIN_NAME} PROPERTIES PREFIX "")
-set_target_properties(${PLUGIN_NAME} PROPERTIES SUFFIX ".mll")
+if (WIN32)
+    set_target_properties(${PLUGIN_NAME} PROPERTIES SUFFIX ".mll")
+endif ()
 target_link_libraries(${PLUGIN_NAME} ${MAYA_LIBS} GLEW GL OpenVDB)
 
 cotire(${PLUGIN_NAME})

@@ -13,7 +13,7 @@
 #include "util.h"
 #include "vdb_visualizer.h"
 
-#include "../util/maya_utils.hpp"
+#include "vdb_maya_utils.hpp"
 
 namespace {
     const char* file_short_flag = "f";
@@ -210,7 +210,7 @@ MStatus VDBQueryCmd::doIt(const MArgList& args)
         return MS::kFailure;
     }
 
-    for (auto vdb_path : vdb_paths)
+    for (const auto& vdb_path : vdb_paths)
     {
         openvdb::io::File* vdb_file = new openvdb::io::File(vdb_path);
         vdb_file->open(false);
@@ -244,7 +244,7 @@ MStatus VDBQueryCmd::doIt(const MArgList& args)
         }
     };
 
-    for (auto query : queries)
+    for (const auto& query : queries)
     {
         if (query == query_type_bbox)
         {
@@ -325,9 +325,9 @@ MStatus VDBQueryCmd::doIt(const MArgList& args)
                     }
                 }
             }
-            for (auto mn : mins)
+            for (const auto& mn : mins)
                 appendToResult(mn);
-            for (auto mx : maxs)
+            for (const auto& mx : maxs)
                 appendToResult(mx);
         }
     }

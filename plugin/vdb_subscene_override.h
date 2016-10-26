@@ -1,60 +1,55 @@
 #pragma once
 
-#include <memory>
 #include <maya/MPxSubSceneOverride.h>
-#include "util.h"
-#include "vdb_visualizer_data.h"
+#include <memory>
 
-class VDBSubSceneOverride : public MHWRender::MPxSubSceneOverride
-{
-public:
-    static MString s_registrant_id;
-    static MPxSubSceneOverride* creator(const MObject& obj)
-    {
-        return new VDBSubSceneOverride(obj);
-    }
+#include "vdb_visualizer.h"
+#include "vdb_subscene_utils.hpp"
 
-    virtual ~VDBSubSceneOverride() override;
+namespace MHWRender {
 
-    virtual MHWRender::DrawAPI supportedDrawAPIs() const override
-    {
-        return MHWRender::kOpenGL;
-    }
+    struct VDBSubSceneOverrideData;
+    class SlicedDisplay;
 
-    virtual bool requiresUpdate(
-        const MHWRender::MSubSceneContainer& container,
-        const MHWRender::MFrameContext& frameContext) const override;
+    class VDBSubSceneOverride : public MHWRender::MPxSubSceneOverride {
+    public:
+        static MPxSubSceneOverride* creator(const MObject& obj);
 
-    virtual void update(
-        MHWRender::MSubSceneContainer& container,
-        const MHWRender::MFrameContext& frameContext) override;
+        VDBSubSceneOverride(const MObject& obj);
+        virtual ~VDBSubSceneOverride();
 
-private:
-    VDBSubSceneOverride(const MObject& obj);
+        virtual MHWRender::DrawAPI supportedDrawAPIs() const;
+        virtual void update(MSubSceneContainer& container, const MFrameContext& frameContext);
+        virtual bool requiresUpdate(const MSubSceneContainer& container, const MFrameContext& frameContext) const;
 
-    bool initSliceRenderables(MHWRender::MSubSceneContainer& container);
-    bool initBBoxRenderable(MHWRender::MSubSceneContainer& container);
-    void updateShaderParams(const SliceShaderParams& shader_params);
-    void updateDensityVolume(const DensityGridSpec& grid_spec);
-    void updateBBoxGeometry(const openvdb::BBoxd& bbox);
+        static MString registrantId;
+    private:
 
-    MObject m_object;
+        MObject m_object;
+        VDBVisualizerShape* p_vdb_visualizer;
+        std::unique_ptr<VDBSubSceneOverrideData> p_data;
 
-    // Rendering resources.
-    ShaderPtr m_volume_shader;
-    TexturePtr m_volume_texture;
+        std::unique_ptr<MVertexBuffer> p_bbox_position;
+        std::unique_ptr<MIndexBuffer> p_bbox_indices;
 
-    struct Renderable {
-        MHWRender::MRenderItem* render_item;
-        MHWRender::MVertexBufferArray vertex_buffer_array;
-        std::unique_ptr<MHWRender::MVertexBuffer> position_buffer;
-        std::unique_ptr<MHWRender::MIndexBuffer> index_buffer;
+        std::unique_ptr<MVertexBuffer> p_position_buffer;
+        std::unique_ptr<MVertexBuffer> p_color_buffer;
+        std::unique_ptr<MIndexBuffer> p_index_buffer;
 
-        Renderable() : render_item(nullptr) {}
+        struct shader_instance_deleter {
+            void operator()(MShaderInstance* p);
+        };
+
+        std::unique_ptr<MShaderInstance, shader_instance_deleter> p_point_cloud_shader;
+        // max is not constexpr
+        static constexpr size_t sampler_mem_size = sizeof(FloatToRGBSampler) > sizeof(Vec3SToRGBSampler)
+                                                   ? sizeof(FloatToRGBSampler) : sizeof(Vec3SToRGBSampler);
+
+        typedef std::array<char, sampler_mem_size> sampler_mem_area;
+        sampler_mem_area m_scattering_sampler;
+        sampler_mem_area m_emission_sampler;
+        sampler_mem_area m_attenuation_sampler;
+
+        std::unique_ptr<SlicedDisplay> m_sliced_display;
     };
-
-    void updateGeometry(const Renderable& renderable, const MBoundingBox& bbox);
-
-    Renderable m_slices_renderable;
-    Renderable m_bbox_renderable;
-};
+}

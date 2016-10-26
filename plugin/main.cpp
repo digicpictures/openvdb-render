@@ -18,21 +18,6 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
     const bool is_interactive = MGlobal::mayaState() == MGlobal::kInteractive;
     MStatus status = MS::kFailure;
 
-    if (is_interactive)
-    {
-        /*if (glewInit() != GLEW_OK)
-        {
-            status.perror("[openvdb] Error initializing glew.");
-            return status;
-        }
-
-        if (!glewIsSupported("GL_EXT_direct_state_access"))
-        {
-            status.perror("[openvdb] Direct State Access is not available, update your drivers or use a newer GPU!");
-            return status;
-        }*/
-    }
-
     MFnPlugin plugin(obj, "Luma Pictures", "0.0.1", "Any");
 
     Paths::init(plugin.loadPath());
@@ -40,7 +25,7 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
     // Register VDBVisualizer shape node.
     status = plugin.registerShape(VDBVisualizerShape::typeName, VDBVisualizerShape::typeId,
                                   VDBVisualizerShape::creator, VDBVisualizerShape::initialize,
-                                  VDBVisualizerShapeUI::creator, &VDBVisualizerShape::s_classification);
+                                  VDBVisualizerShapeUI::creator, &VDBVisualizerShape::drawDbClassification);
     if (!status)
     {
         status.perror("[openvdb] Error registering the VDBVisualizer Node.");
@@ -76,13 +61,13 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
 
     // Register subscene override for shape node.
     status = MHWRender::MDrawRegistry::registerSubSceneOverrideCreator(
-            VDBVisualizerShape::s_classification,
-            VDBSubSceneOverride::s_registrant_id,
-            VDBSubSceneOverride::creator
+        VDBVisualizerShape::drawDbClassification,
+        MHWRender::VDBSubSceneOverride::registrantId,
+        MHWRender::VDBSubSceneOverride::creator
     );
     if (!status)
     {
-        status.perror("[openvdb] Error registering the VDBVisualizer SubScene Override.");
+        status.perror("[openvdb] Error registering the VDBVisualizer Sub Scene Override.");
         return status;
     }
 
@@ -143,12 +128,12 @@ PLUGIN_EXPORT MStatus uninitializePlugin(MObject obj)
 
     // Deregister subscene override
     status = MHWRender::MDrawRegistry::deregisterSubSceneOverrideCreator(
-            VDBVisualizerShape::s_classification,
-            VDBSubSceneOverride::s_registrant_id
+            VDBVisualizerShape::drawDbClassification,
+            MHWRender::VDBSubSceneOverride::registrantId
     );
     if (!status)
     {
-        status.perror("[openvdb] Error deregistering the VDBVisualizer SubScene Override.");
+        status.perror("[openvdb] Error deregistering the VDBVisualizer Sub Scene Override.");
         return status;
     }
 

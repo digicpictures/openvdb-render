@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <limits>
+#include <memory>
 #include <string>
 #include <sstream>
 #include <utility>
@@ -12,34 +13,6 @@
 #include <maya/MRenderTargetManager.h>
 #include <openvdb/Grid.h>
 #include <openvdb/Types.h>
-
-struct ShaderInstanceDeleter {
-    void operator()(MHWRender::MShaderInstance* ptr) const
-    {
-        if (ptr)
-            MHWRender::MRenderer::theRenderer()->getShaderManager()->releaseShader(ptr);
-    }
-};
-typedef std::unique_ptr<MHWRender::MShaderInstance, ShaderInstanceDeleter> ShaderPtr;
-
-struct TextureDeleter {
-    void operator()(MHWRender::MTexture* ptr) const
-    {
-        if (ptr)
-            MHWRender::MRenderer::theRenderer()->getTextureManager()->releaseTexture(ptr);
-    }
-};
-typedef std::unique_ptr<MHWRender::MTexture, TextureDeleter> TexturePtr;
-
-struct RenderTargetDeleter {
-    void operator()(MHWRender::MRenderTarget* ptr) const
-    {
-        if (ptr)
-            MHWRender::MRenderer::theRenderer()->getRenderTargetManager()->releaseRenderTarget(ptr);
-    }
-};
-typedef std::unique_ptr<MHWRender::MRenderTarget, RenderTargetDeleter> RenderTargetPtr;
-
 
 openvdb::CoordBBox inline
 getIndexSpaceBoundingBox(const openvdb::GridBase* grid)

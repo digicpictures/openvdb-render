@@ -24,21 +24,21 @@ struct SliceShaderParams {
     MFloatVector absorption;
     float shadow_gain;
     int shadow_sample_count;
-};
-
-struct DensityGridSpec {
-    openvdb::io::File* vdb_file;
-    std::string grid_name;
+    bool operator==(const SliceShaderParams& rhs) const {
+        return slice_size == rhs.slice_size &&
+            light_color == rhs.light_color &&
+            light_direction == rhs.light_direction &&
+            scattering == rhs.scattering &&
+            absorption == rhs.absorption &&
+            shadow_gain == rhs.shadow_gain &&
+            shadow_sample_count == rhs.shadow_sample_count; 
+    }
+    bool operator !=(const SliceShaderParams& rhs) const { return !(*this == rhs); }
 };
 
 struct VDBVisualizerData {
     MBoundingBox bbox;
 
-    // Sliced display shader params.
-    CachedData<DensityGridSpec> density_grid_data;
-    CachedData<SliceShaderParams> slice_shader_params;
-
-    // ===
     MFloatVector scattering_color;
     MFloatVector attenuation_color;
     MFloatVector emission_color;
@@ -60,6 +60,10 @@ struct VDBVisualizerData {
     int point_skip;
     int update_trigger;
     VDBDisplayMode display_mode;
+
+    // Sliced display params.
+    std::string sliced_display_channel;
+    SliceShaderParams sliced_display_shader_params;
 
     VDBVisualizerData();
     ~VDBVisualizerData();
