@@ -56,7 +56,7 @@ MObject VDBVisualizerShape::s_channel_stats;
 MObject VDBVisualizerShape::s_voxel_size;
 MObject VDBVisualizerShape::s_matte;
 
-// Sliced display params;
+// Sliced display params.
 MObject VDBVisualizerShape::s_density_channel;
 MObject VDBVisualizerShape::s_slice_size;
 MObject VDBVisualizerShape::s_light_color;
