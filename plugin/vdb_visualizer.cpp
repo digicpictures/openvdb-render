@@ -253,7 +253,7 @@ MStatus VDBVisualizerShape::compute(const MPlug& plug, MDataBlock& dataBlock)
     if (plug == s_out_vdb_path)
     {
         MayaPathSpec vdb_path_spec = dataBlock.inputValue(s_vdb_path).asString().asChar();
-        std::string vdb_path;
+        std::string vdb_path = vdb_path_spec.getPath();
 
         if (vdb_path_spec.hasFrameField())
         {
