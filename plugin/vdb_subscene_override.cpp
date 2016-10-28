@@ -828,7 +828,7 @@ float3 shadow_raymarch(float3 pos, float3 dir, float3 extinction)
     for (int i = 0; i < shadow_sample_count; ++i) {
         if (OOR(sample_texcoords.x) || OOR(sample_texcoords.y) || OOR(sample_texcoords.z)) break;
         float density = SampleVolume(sample_texcoords, lod);
-        transmittance *= exp(extinction * density * shadow_step_model / (1.0 + float(i) * shadow_step_model * shadow_gain));
+        transmittance *= exp(-extinction * density * shadow_step_model / (1.0 + float(i) * shadow_step_model * shadow_gain));
         sample_texcoords += step_texcoords;
     }
     return transmittance;
@@ -845,17 +845,17 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
 {
     FRAG_OUTPUT output;
 
-    float3 extinction = -scattering - absorption;
-    float3 albedo = light_color * scattering / (scattering + absorption);
+    float3 extinction = scattering + absorption;
+    float3 albedo = scattering / extinction;
 
     float3 light_dir_norm = normalize(light_dir);
     float3 shadow = shadow_raymarch(input.pos_model, -light_dir_norm, extinction);
-    float3 lumi = albedo * shadow;
+    float3 lumi = albedo * light_color * shadow;
 
     float3 tex_coord = (input.pos_model - volume_origin_model) / volume_size_model;
     float density = SampleVolume(tex_coord, 0);
     float slice_thickness = dot(input.slice_vector_world, input.slice_vector_world) / abs(dot(input.slice_vector_world, view_dir_world));
-    float3 transmittance = exp(extinction * density * slice_thickness);
+    float3 transmittance = exp(-extinction * density * slice_thickness);
 
     output.color = float4(lumi, 1 - dot(transmittance, float3(1, 1, 1)/3));
 
