@@ -75,7 +75,6 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
     openvdb::initialize();
 
     status = plugin.registerCommand("vdb_query", VDBQueryCmd::creator, VDBQueryCmd::create_syntax);
-
     if (!status)
     {
         status.perror("[openvdb] Error registering the VDBQuery Command.");
@@ -137,9 +136,7 @@ PLUGIN_EXPORT MStatus uninitializePlugin(MObject obj)
         return status;
     }
 
-
     status = plugin.deregisterCommand("vdb_query");
-
     if (!status)
     {
         status.perror("[openvdb] Error deregistering the VDBQuery Command.");
