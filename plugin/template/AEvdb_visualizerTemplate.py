@@ -69,7 +69,7 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.update_channel("smoke", param_name)
 
     def create_opacity_channel(self, param_name):
-            self.create_channel("Opacity Channel", "opacity", param_name)
+        self.create_channel("Opacity Channel", "opacity", param_name)
 
     def update_opacity_channel(self, param_name):
         self.update_channel("opacity", param_name)
