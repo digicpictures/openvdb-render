@@ -135,6 +135,8 @@ namespace MHWRender {
         Renderable m_slices_renderable;
         Renderable m_bbox_renderable;
         bool m_enabled;
+
+        static const std::string s_effect_code;
     };
 
     // === SubSceneOverride implementation =====================================
@@ -705,7 +707,9 @@ namespace MHWRender {
             return renderer->getShaderManager();
         }
 
-        const std::string sliced_display_technique = R"cgfx(
+    } // unnamed namespace
+
+    const std::string SlicedDisplay::s_effect_code = R"cgfx(
 float3 view_dir_world : ViewDirection < string Space = "World"; >;
 float4x4 world_mat : World < string UIWidget = "None"; >;
 float4x4 world_view_proj_mat : WorldViewProjection < string UIWidget = "None"; >;
@@ -879,7 +883,7 @@ technique Main < int isTransparent = 1; >
         assert(shader_manager);
 
         // Load volume shader from effect file.
-        m_volume_shader.reset(shader_manager->getEffectsBufferShader(sliced_display_technique.c_str(), sliced_display_technique.size(), "Main", 0, 0, false));
+        m_volume_shader.reset(shader_manager->getEffectsBufferShader(s_effect_code.c_str(), s_effect_code.size(), "Main", 0, 0, false));
         if (!m_volume_shader) {
             LOG_ERROR("Cannot compile cgfx.");
             return;
