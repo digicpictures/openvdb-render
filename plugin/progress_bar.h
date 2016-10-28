@@ -1,76 +1,35 @@
 #pragma once
 
+#include <mutex>
+
 #include <maya/MGlobal.h>
 #include <maya/MString.h>
 
-// Copied from the gpuCache plugin from the devkit.
+// Based on the gpuCache plugin from the devkit.
 
 class ProgressBar
 {
 public:
-    ProgressBar(const MString& msg, unsigned int max)
-    {
-        // Display a progress bar if Maya is running in UI mode
-        fShowProgress = (MGlobal::mayaState() == MGlobal::kInteractive);
-        reset(msg, max);
-    }
-    void reset(const MString& msg, unsigned int max)
-    {
-        MStatus status;
-        beginProgress(msg, max);
-    }
-    ~ProgressBar()
-    {
-        endProgress();
-    }
-    void stepProgress() const
-    {
-        if (fShowProgress) {
-            MGlobal::executeCommand("progressBar -e -s 1 $gMainProgressBar");
-        }
-    }
-    bool isCancelled() const
-    {
-        int isCancelled = 0;
-        if (fShowProgress) {
-            MGlobal::executeCommand("progressBar -q -ic $gMainProgressBar", isCancelled);
-        }
-        if (isCancelled) {
-            MStatus status;
-            const MString interruptMsg = "Interrupted by user";
-            MGlobal::displayInfo(interruptMsg);
-            return true;
-        }
-        return false;
-    }
-private:
-    // Forbidden and not implemented.
-    ProgressBar(const ProgressBar&);
-    const ProgressBar& operator=(const ProgressBar&);
-    void beginProgress(const MString& msg, unsigned int max) const
-    {
-        if (fShowProgress) {
-            MString maxValue, progressBarCmd;
-            // Progress from 0 to max
-            if (max <= 0) {
-                max = 1;
-            }
-            maxValue += max;
-            // Clear previous isCancelled flag
-            MGlobal::executeCommand("progressBar -e -bp -ii 1 $gMainProgressBar");
-            MGlobal::executeCommand("progressBar -e -ep $gMainProgressBar");
-            // Initialize the progress bar
-            progressBarCmd.format("progressBar -e -bp -ii 1 -st \"^1s\" -max ^2s $gMainProgressBar",
-                msg, maxValue);
-            MGlobal::executeCommand(progressBarCmd);
-        }
-    }
-    void endProgress() const
-    {
-        if (fShowProgress) {
-            MGlobal::executeCommand("progressBar -e -ep $gMainProgressBar");
-        }
-    }
-    bool fShowProgress;  // whether to show the progress bar
-};
+    ProgressBar(const MString& msg, const bool is_interruptable = false);
+    ~ProgressBar();
 
+    void reset(const MString& msg);
+
+    // The public methods below are thread-safe.
+    void stepOnePercent() const;
+    void setProgress(const int percent);
+    bool isCancelled() const;
+
+private:
+    ProgressBar(const ProgressBar&) = delete;
+    ProgressBar& operator=(const ProgressBar&) = delete;
+    ProgressBar(ProgressBar&&) = delete;
+    ProgressBar&& operator=(ProgressBar&&) = delete;
+
+    void beginProgress(const MString& msg) const;
+    void endProgress() const;
+
+    bool m_show_progress_bar;
+    bool m_is_interruptable;
+    mutable std::mutex m_mutex;
+};
