@@ -4,6 +4,7 @@
 #include <random>
 
 #include <maya/MHwGeometryUtilities.h>
+#include <maya/MDrawContext.h>
 
 #include <tbb/task_scheduler_init.h>
 #include <tbb/parallel_for.h>
@@ -136,6 +137,7 @@ namespace MHWRender {
         Renderable m_bbox_renderable;
         bool m_enabled;
 
+        static void preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& renderItemList, MHWRender::MShaderInstance* shaderInstance);
         static const std::string s_effect_code;
     };
 
@@ -712,6 +714,7 @@ namespace MHWRender {
     const std::string SlicedDisplay::s_effect_code = R"cgfx(
 float3 view_dir_world : ViewDirection < string Space = "World"; >;
 float4x4 world_mat : World < string UIWidget = "None"; >;
+float4x4 world_inverse_mat : WorldInverse < string UIWidget = "None"; >;
 float4x4 world_view_proj_mat : WorldViewProjection < string UIWidget = "None"; >;
 
 float3 volume_size_model < string UIWidget = "None"; >;   // Size of volume in model space.
@@ -726,8 +729,19 @@ uniform float slice_size_model;
 uniform float min_voxel_value = 0;
 uniform float max_voxel_value = 1;
 
-uniform float3 light_dir = float3(0.3, 0.3, 0);
-uniform float3 light_color = float3(0.7, 0.7, 0.7);
+// Lights.
+#define MAX_POINT_LIGHTS 8
+uniform int    point_light_count;
+uniform float3 point_light_positions[MAX_POINT_LIGHTS];
+uniform float3 point_light_colors[MAX_POINT_LIGHTS];
+uniform float  point_light_intensities[MAX_POINT_LIGHTS];
+
+#define MAX_DIRECTIONAL_LIGHTS 8
+uniform int    directional_light_count;
+uniform float3 directional_light_directions[MAX_DIRECTIONAL_LIGHTS];
+uniform float3 directional_light_colors[MAX_DIRECTIONAL_LIGHTS];
+uniform float  directional_light_intensities[MAX_DIRECTIONAL_LIGHTS];
+
 uniform float3 scattering = float3(1.5, 1.5, 1.5);
 uniform float3 absorption = float3(0.1, 0.1, 0.1);
 uniform float shadow_gain = 0.2;
@@ -848,9 +862,24 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     float3 extinction = scattering + absorption;
     float3 albedo = scattering / extinction;
 
-    float3 light_dir_norm = normalize(light_dir);
-    float3 shadow = shadow_raymarch(input.pos_model, -light_dir_norm, extinction);
-    float3 lumi = albedo * light_color * shadow;
+    float3 lumi = float3(0, 0, 0);
+
+    // Loop through directional lights.
+    for (int i = 0; i < directional_light_count; ++i) {
+        float3 light_dir_norm = normalize(mul(world_inverse_mat, float4(directional_light_directions[i], 0)).xyz);
+        float3 shadow = shadow_raymarch(input.pos_model, -light_dir_norm, extinction);
+        float3 light = directional_light_colors[i] * directional_light_intensities[i] * shadow;
+        lumi += light * albedo;
+    }
+
+    // Loop through point lights.
+    for (int i = 0; i < point_light_count; ++i) {
+        float3 light_pos_model = mul(world_inverse_mat, float4(point_light_positions[i], 1));
+        float3 light_dir_norm = normalize(input.pos_model - light_pos_model);
+        float3 shadow = shadow_raymarch(input.pos_model, -light_dir_norm, extinction);
+        float3 light = point_light_colors[i] * point_light_intensities[i] * shadow;
+        lumi += light * albedo;
+    }
 
     float3 tex_coord = (input.pos_model - volume_origin_model) / volume_size_model;
     float density = SampleVolume(tex_coord, 0);
@@ -875,6 +904,149 @@ technique Main < int isTransparent = 1; >
 }
 )cgfx";
 
+    void SlicedDisplay::preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& /*renderItemList*/, MHWRender::MShaderInstance* shaderInstance)
+    {
+        // Collect light data.
+
+        constexpr int MAX_POINT_LIGHTS = 8;
+        int point_light_count = 0;
+        std::array<float, 3*MAX_POINT_LIGHTS> point_light_positions;
+        std::array<float, 3*MAX_POINT_LIGHTS> point_light_colors;
+        std::array<float, MAX_POINT_LIGHTS>   point_light_intensities;
+
+        constexpr int MAX_DIRECTIONAL_LIGHTS = 8;
+        int directional_light_count = 0;
+        std::array<float, 3*MAX_DIRECTIONAL_LIGHTS> directional_light_directions;
+        std::array<float, 3*MAX_DIRECTIONAL_LIGHTS> directional_light_colors;
+        std::array<float, MAX_DIRECTIONAL_LIGHTS>   directional_light_intensities;
+
+        const auto light_count = context.numberOfActiveLights();
+        for (unsigned int i = 0; i < light_count; ++i)
+        {
+            MIntArray int_array;
+            MFloatArray float_array;
+
+            const auto light_params = context.getLightParameterInformation(i);
+
+            // Continue if light is not enabled.
+            const auto status = light_params->getParameter(MLightParameterInformation::kLightEnabled, float_array);
+            if (status != MS::kSuccess || float_array[0] != 1)
+                continue;
+
+            // Get additional info based on light type and save light data.
+            const auto light_type = light_params->lightType();
+            if (light_type == "pointLight")
+            {
+                if (point_light_count == MAX_POINT_LIGHTS)
+                    continue;
+
+                // Position.
+                light_params->getParameter(MLightParameterInformation::kWorldPosition, float_array);
+                memcpy(point_light_positions.data() + 3 * point_light_count, &float_array[0], 3 * sizeof(float));
+
+                // Color.
+                light_params->getParameter(MLightParameterInformation::kColor, float_array);
+                memcpy(point_light_colors.data() + 3 * point_light_count, &float_array[0], 3 * sizeof(float));
+
+                // Intensity.
+                light_params->getParameter(MLightParameterInformation::kIntensity, float_array);
+                point_light_intensities[point_light_count] = float_array[0];
+
+                ++point_light_count;
+            }
+            else if (light_type == "directionalLight")
+            {
+                if (directional_light_count == MAX_DIRECTIONAL_LIGHTS)
+                    continue;
+
+                // Direction.
+                light_params->getParameter(MLightParameterInformation::kWorldDirection, float_array);
+                memcpy(directional_light_directions.data() + 3 * directional_light_count, &float_array[0], 3 * sizeof(float));
+                std::cout << " " << float_array[0] << " " << float_array[1] << " " << float_array[2] << std::endl;
+
+                // Color.
+                light_params->getParameter(MLightParameterInformation::kColor, float_array);
+                memcpy(directional_light_colors.data() + 3 * directional_light_count, &float_array[0], 3 * sizeof(float));
+
+                // Intensity.
+                light_params->getParameter(MLightParameterInformation::kIntensity, float_array);
+                directional_light_intensities[directional_light_count] = float_array[0];
+
+                ++directional_light_count;
+            }
+            else
+            {
+                std::stringstream ss;
+                ss << "unsupported light type: " << light_type;
+                LOG_ERROR(ss.str());
+                continue;
+            }
+        }
+
+        // Set shader params.
+
+        CHECK_MSTATUS(shaderInstance->setParameter("point_light_count", point_light_count));
+        CHECK_MSTATUS(shaderInstance->setArrayParameter("point_light_positions", point_light_positions.data(), point_light_count));
+        CHECK_MSTATUS(shaderInstance->setArrayParameter("point_light_colors", point_light_colors.data(), point_light_count));
+        CHECK_MSTATUS(shaderInstance->setArrayParameter("point_light_intensities", point_light_intensities.data(), point_light_count));
+
+        CHECK_MSTATUS(shaderInstance->setParameter("directional_light_count", directional_light_count));
+        CHECK_MSTATUS(shaderInstance->setArrayParameter("directional_light_directions", directional_light_directions.data(), directional_light_count));
+        CHECK_MSTATUS(shaderInstance->setArrayParameter("directional_light_colors", directional_light_colors.data(), directional_light_count));
+        CHECK_MSTATUS(shaderInstance->setArrayParameter("directional_light_intensities", directional_light_intensities.data(), directional_light_count));
+
+        for (int i = 0; i < 3; ++i)
+            std::cout << " " << directional_light_directions[i];
+        std::cout << std::endl;
+
+        return;
+
+        static int aoeu = 0;
+        std::cout << "=== " << aoeu++ << " ===" << std::endl;
+        std::cout << "volumeShaderPreDrawCb" << std::endl;
+        std::cout << "  volume shader pre-draw cb in pass " << context.getPassContext().passIdentifier().asChar() << std::endl;
+        auto semantics = context.getPassContext().passSemantics();
+        for (int i = 0; i < semantics.length(); ++i)
+        {
+            std::cout << "    " << semantics[i].asChar() << std::endl;
+        }
+
+        // Print light info.
+        std::cout << "  light count: " << light_count << "; light limit: " << context.getLightLimit() << std::endl;
+        for (int i = 0; i < light_count; ++i)
+        {
+            auto light = context.getLightParameterInformation(i);
+            MStringArray a;
+            light->parameterList(a);
+            std::cout << "    light " << std::endl;
+            for (int j = 0; j < a.length(); ++j)
+            {
+                auto param_name = a[j];
+                auto sem = light->parameterSemantic(param_name);
+                auto type = light->parameterType(param_name);
+                std::cout << "      " << param_name.asChar() << " " << sem << " " << type << std::endl;
+                if (type == MHWRender::MLightParameterInformation::kFloat ||
+                    type == MHWRender::MLightParameterInformation::kFloat2 ||
+                    type == MHWRender::MLightParameterInformation::kFloat3 ||
+                    type == MHWRender::MLightParameterInformation::kFloat4)
+                {
+                    MFloatArray value;
+                    CHECK_MSTATUS(light->getParameter(param_name, value));
+                    std::cout << "        value:";
+                    for (int k = 0; k < value.length(); ++k)
+                        std::cout << " " << value[k];
+                    std::cout << std::endl;
+                }
+                else if (type == MHWRender::MLightParameterInformation::kBoolean ||
+                         type == MHWRender::MLightParameterInformation::kInteger)
+                {
+                    MIntArray value;
+                    CHECK_MSTATUS(light->getParameter(param_name, value));
+                    std::cout << "        value: " << value[0] << std::endl;
+                }
+            }
+        }
+    }
 
     SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent) : m_parent(parent), m_enabled(false)
     {
@@ -882,7 +1054,7 @@ technique Main < int isTransparent = 1; >
         assert(shader_manager);
 
         // Load volume shader from effect file.
-        m_volume_shader.reset(shader_manager->getEffectsBufferShader(s_effect_code.c_str(), s_effect_code.size(), "Main", 0, 0, false));
+        m_volume_shader.reset(shader_manager->getEffectsBufferShader(s_effect_code.c_str(), s_effect_code.size(), "Main", 0, 0, false, preDrawCallback));
         if (!m_volume_shader) {
             LOG_ERROR("Cannot compile cgfx.");
             return;
@@ -1037,8 +1209,6 @@ technique Main < int isTransparent = 1; >
     void SlicedDisplay::updateShaderParams(const SliceShaderParams& params)
     {
         // Shading parameters.
-        CHECK_MSTATUS(m_volume_shader->setParameter("light_dir", params.light_direction));
-        CHECK_MSTATUS(m_volume_shader->setParameter("light_color", params.light_color));
         CHECK_MSTATUS(m_volume_shader->setParameter("scattering", params.scattering));
         CHECK_MSTATUS(m_volume_shader->setParameter("absorption", params.absorption));
         CHECK_MSTATUS(m_volume_shader->setParameter("shadow_gain", params.shadow_gain));

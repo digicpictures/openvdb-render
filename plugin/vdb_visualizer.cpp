@@ -59,9 +59,6 @@ MObject VDBVisualizerShape::s_matte;
 // Sliced display params.
 MObject VDBVisualizerShape::s_density_channel;
 MObject VDBVisualizerShape::s_slice_size;
-MObject VDBVisualizerShape::s_light_color;
-MObject VDBVisualizerShape::s_light_intensity;
-MObject VDBVisualizerShape::s_light_direction;
 MObject VDBVisualizerShape::s_scattering_color;
 MObject VDBVisualizerShape::s_scattering_intensity;
 MObject VDBVisualizerShape::s_absorption_color;
@@ -560,23 +557,6 @@ MStatus VDBVisualizerShape::initialize()
     addAttribute(s_density_channel);
     attributeAffects(s_density_channel, s_update_trigger);
 
-    s_light_color = nAttr.createColor("lightColor", "light_color");
-    nAttr.setDefault(0.7, 0.7, 0.7);
-    addAttribute(s_light_color);
-    attributeAffects(s_light_color, s_update_trigger);
-
-    s_light_intensity = nAttr.create("lightIntensity", "light_intensity", MFnNumericData::kFloat);
-    nAttr.setDefault(5.0);
-    nAttr.setMin(0.0);
-    nAttr.setSoftMax(20.0);
-    addAttribute(s_light_intensity);
-    attributeAffects(s_light_intensity, s_update_trigger);
-
-    s_light_direction = nAttr.createPoint("lightDirection", "light_direction");
-    nAttr.setDefault(0.3, 0.3, 0.0);
-    addAttribute(s_light_direction);
-    attributeAffects(s_light_direction, s_update_trigger);
-
     s_scattering_color = nAttr.createColor("scatteringColor", "scattering_color");
     nAttr.setDefault(1.0, 1.0, 1.0);
     addAttribute(s_scattering_color);
@@ -725,8 +705,6 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
 
             SliceShaderParams& shader_params = m_vdb_data.sliced_display_shader_params;
             shader_params.slice_size =          MPlug(tmo, s_slice_size).asFloat();
-            shader_params.light_color =         plugAsFloatVector(MPlug(tmo, s_light_color)) * MPlug(tmo, s_light_intensity).asFloat();
-            shader_params.light_direction =     plugAsFloatVector(MPlug(tmo, s_light_direction));
             shader_params.scattering =          plugAsFloatVector(MPlug(tmo, s_scattering_color)) * MPlug(tmo, s_scattering_intensity).asFloat();
             shader_params.absorption =          plugAsFloatVector(MPlug(tmo, s_absorption_color)) * MPlug(tmo, s_absorption_intensity).asFloat();
             shader_params.shadow_gain =         MPlug(tmo, s_shadow_gain).asFloat();

@@ -66,9 +66,6 @@ public:
     // sliced display parameters
     static MObject s_density_channel;
     static MObject s_slice_size;
-    static MObject s_light_color;
-    static MObject s_light_intensity;
-    static MObject s_light_direction;
     static MObject s_scattering_color;
     static MObject s_scattering_intensity;
     static MObject s_absorption_color;
