@@ -118,6 +118,7 @@ VolumeTexture VolumeSampler::sampleVolume(const openvdb::Coord& extents, Samplin
         const auto progress_step = PROGRESS_FREQUENCY * uint64_t(local_extents.x()) * uint64_t(local_extents.y());
         int step = 0;
 
+        // Loop through local bbox.
         PerThreadRange::reference this_thread_range = per_thread_ranges.local();
         for (auto z = bbox.min().z(); z <= bbox.max().z(); ++z) {
             for (auto y = bbox.min().y(); y <= bbox.max().y(); ++y) {
@@ -135,6 +136,7 @@ VolumeTexture VolumeSampler::sampleVolume(const openvdb::Coord& extents, Samplin
                 progress_bar->setProgress(static_cast<int>(100LL * done.fetch_add(progress_step) / total));
         }
     });
+    // Merge per-thread value ranges.
     FloatRange value_range;
     for (const FloatRange& per_thread_range : per_thread_ranges) {
         value_range.update(per_thread_range);
