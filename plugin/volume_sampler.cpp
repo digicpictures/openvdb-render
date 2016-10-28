@@ -105,7 +105,7 @@ VolumeTexture VolumeSampler::sampleVolume(const openvdb::Coord& extents, Samplin
     const uint64_t total = m_buffer.size();
 
     // Sample on a lattice.
-    typedef tbb::enumerable_thread_specific<FloatRange> PerThreadRange ;
+    typedef tbb::enumerable_thread_specific<FloatRange> PerThreadRange;
     PerThreadRange per_thread_ranges;
     const auto stride = openvdb::Vec3i(1, extents.x(), extents.x() * extents.y());
     tbb::parallel_for(domain, [&sampling_func, &stride,
