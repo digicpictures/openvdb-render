@@ -875,7 +875,6 @@ technique Main < int isTransparent = 1; >
 }
 )cgfx";
 
-    } // unnamed namespace
 
     SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent) : m_parent(parent), m_enabled(false)
     {
