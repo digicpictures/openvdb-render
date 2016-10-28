@@ -18,6 +18,7 @@
 
 #include <tbb/parallel_for.h>
 
+#include "progress_bar.h"
 #include "util.h"
 
 using namespace MHWRender;
@@ -53,7 +54,7 @@ namespace {
 
 } // unnamed namespace
 
-VolumeTexture VolumeSampler::sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents)
+VolumeTexture VolumeSampler::sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, ProgressBar *progress_bar)
 {
     const auto sampler = openvdb::tools::GridSampler<openvdb::FloatGrid, openvdb::tools::BoxSampler>(grid);
     const auto world_bbox = grid.transform().indexToWorld(getIndexSpaceBoundingBox(&grid));
@@ -62,10 +63,10 @@ VolumeTexture VolumeSampler::sampleGridWithBoxFilter(const openvdb::FloatGrid& g
         const auto sample_pos_ws = (domain_index + 0.5) / domain_extents * world_bbox.extents() + world_bbox.min();
         return sampler.wsSample(sample_pos_ws);
     };
-    return sampleVolume(texture_extents, sampling_func);
+    return sampleVolume(texture_extents, sampling_func, progress_bar);
 }
 
-VolumeTexture VolumeSampler::sampleGridWithMipmapFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents)
+VolumeTexture VolumeSampler::sampleGridWithMipmapFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, ProgressBar *progress_bar)
 {
     // Calculate LOD level.
     const auto index_bbox = getIndexSpaceBoundingBox(&grid);
@@ -77,7 +78,7 @@ VolumeTexture VolumeSampler::sampleGridWithMipmapFilter(const openvdb::FloatGrid
 
     if (num_levels == 1) {
         // No need for mult res grid.
-        return sampleGridWithBoxFilter(grid, texture_extents);
+        return sampleGridWithBoxFilter(grid, texture_extents, progress_bar);
     }
 
     // Create and sample multi res grid.
@@ -90,20 +91,33 @@ VolumeTexture VolumeSampler::sampleGridWithMipmapFilter(const openvdb::FloatGrid
         const auto sample_pos_is = multires.transform().worldToIndex(sample_pos_ws);
         return multires.sampleValue<1>(sample_pos_is, lod_level);
     };
-    return sampleVolume(texture_extents, sampling_func);
+    return sampleVolume(texture_extents, sampling_func, progress_bar);
 }
 
 template <typename SamplingFunc>
-VolumeTexture VolumeSampler::sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func)
+VolumeTexture VolumeSampler::sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func, ProgressBar *progress_bar)
 {
     const auto domain = openvdb::CoordBBox(openvdb::Coord(), extents - openvdb::Coord(1, 1, 1));
     m_buffer.resize(domain.volume());
+
+    // Data for progress calculation.
+    std::atomic<uint64_t> done = 0;
+    const uint64_t total = m_buffer.size();
 
     // Sample on a lattice.
     typedef tbb::enumerable_thread_specific<FloatRange> PerThreadRange ;
     PerThreadRange per_thread_ranges;
     const auto stride = openvdb::Vec3i(1, extents.x(), extents.x() * extents.y());
-    tbb::parallel_for(domain, [&sampling_func, &stride, &per_thread_ranges, output = m_buffer.data()](const CoordBBox& bbox) {
+    tbb::parallel_for(domain, [&sampling_func, &stride,
+                               &done, total, progress_bar,
+                               &per_thread_ranges, output = m_buffer.data()](const CoordBBox& bbox) {
+
+        // Progress bar management.
+        constexpr int PROGRESS_FREQUENCY = 16;
+        const auto local_extents = bbox.extents();
+        const auto progress_step = PROGRESS_FREQUENCY * uint64_t(local_extents.x()) * uint64_t(local_extents.y());
+        int step = 0;
+
         PerThreadRange::reference this_thread_range = per_thread_ranges.local();
         for (auto z = bbox.min().z(); z <= bbox.max().z(); ++z) {
             for (auto y = bbox.min().y(); y <= bbox.max().y(); ++y) {
@@ -115,6 +129,10 @@ VolumeTexture VolumeSampler::sampleVolume(const openvdb::Coord& extents, Samplin
                     this_thread_range.update(sample_value);
                 }
             }
+
+            // Report progress.
+            if (progress_bar && (++step % PROGRESS_FREQUENCY == 0))
+                progress_bar->setProgress(static_cast<int>(100LL * done.fetch_add(progress_step) / total));
         }
     });
     FloatRange value_range;
@@ -130,6 +148,9 @@ VolumeTexture VolumeSampler::sampleVolume(const openvdb::Coord& extents, Samplin
             buffer[i] = unlerp(value_range.min, value_range.max, buffer[i]);
         }
     });
+
+    if (progress_bar)
+        progress_bar->setProgress(100);
 
     return { extents, m_buffer.data(), value_range };
 }

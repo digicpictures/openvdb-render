@@ -8,6 +8,7 @@
 #include <tbb/task_scheduler_init.h>
 #include <tbb/parallel_for.h>
 
+#include "progress_bar.h"
 #include "volume_sampler.h"
 #include "vdb_maya_utils.hpp"
 
@@ -1093,9 +1094,10 @@ technique Main < int isTransparent = 1; >
         updateBBoxGeometry(bbox_ws);
 
         // Sample the multi resolution grid at regular intervals.
+        ProgressBar pb("vdb_visualizer: sampling density grid");
         VolumeSampler volume_sampler;
         const auto texture_extents = openvdb::Coord(MAX_SLICE_COUNT, MAX_SLICE_COUNT, MAX_SLICE_COUNT);
-        auto volume = volume_sampler.sampleGridWithMipmapFilter(*grid_ptr, texture_extents);
+        auto volume = volume_sampler.sampleGridWithMipmapFilter(*grid_ptr, texture_extents, &pb);
         m_volume_texture.reset(volume.texture);
 
         // Set shader params.

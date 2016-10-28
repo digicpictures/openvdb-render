@@ -7,6 +7,7 @@
 
 #include "util.h"
 
+class ProgressBar;
 namespace MHWRender {
     class MTexture;
 }
@@ -34,12 +35,12 @@ class VolumeSampler
 public:
     // Generic sampling function.
     template <typename SamplingFunc>
-    VolumeTexture sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func);
+    VolumeTexture sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func, ProgressBar *progress_bar = nullptr);
 
     // Sample a single grid using simple box filter.
-    VolumeTexture sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents);
+    VolumeTexture sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, ProgressBar *progress_bar = nullptr);
     // Create a MultiResGrid and sample it. Filtering is done by the built-in sampling mechanism of MultiResGrid.
-    VolumeTexture sampleGridWithMipmapFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents);
+    VolumeTexture sampleGridWithMipmapFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, ProgressBar *progress_bar = nullptr);
 
 private:
     std::vector<float> m_buffer;
