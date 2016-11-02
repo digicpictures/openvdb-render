@@ -1,9 +1,7 @@
 #include "volume_sampler.h"
 
 #include <algorithm>
-#include <atomic>
 #include <random>
-#include <thread>
 
 #include <maya/MHWGeometry.h>
 #include <maya/MShaderManager.h>
@@ -100,23 +98,18 @@ VolumeTexture VolumeSampler::sampleVolume(const openvdb::Coord& extents, Samplin
     const auto domain = openvdb::CoordBBox(openvdb::Coord(), extents - openvdb::Coord(1, 1, 1));
     m_buffer.resize(domain.volume());
 
-    // Data for progress calculation.
-    std::atomic<uint64_t> done = 0;
-    const uint64_t total = m_buffer.size();
+    // Initialize progress bar.
+    if (progress_bar)
+        progress_bar->setMaxProgress(m_buffer.size());
 
     // Sample on a lattice.
     typedef tbb::enumerable_thread_specific<FloatRange> PerThreadRange;
     PerThreadRange per_thread_ranges;
     const auto stride = openvdb::Vec3i(1, extents.x(), extents.x() * extents.y());
-    tbb::parallel_for(domain, [&sampling_func, &stride,
-                               &done, total, progress_bar,
+    tbb::parallel_for(domain, [&sampling_func, &stride, progress_bar,
                                &per_thread_ranges, output = m_buffer.data()](const CoordBBox& bbox) {
-
-        // Progress bar management.
-        constexpr int PROGRESS_FREQUENCY = 16;
         const auto local_extents = bbox.extents();
-        const auto progress_step = PROGRESS_FREQUENCY * uint64_t(local_extents.x()) * uint64_t(local_extents.y());
-        int step = 0;
+        const auto progress_step = local_extents.x() * local_extents.y();
 
         // Loop through local bbox.
         PerThreadRange::reference this_thread_range = per_thread_ranges.local();
@@ -132,8 +125,8 @@ VolumeTexture VolumeSampler::sampleVolume(const openvdb::Coord& extents, Samplin
             }
 
             // Report progress.
-            if (progress_bar && (++step % PROGRESS_FREQUENCY == 0))
-                progress_bar->setProgress(static_cast<int>(100LL * done.fetch_add(progress_step) / total));
+            if (progress_bar)
+                progress_bar->addProgress(progress_step);
         }
     });
     // Merge per-thread value ranges.

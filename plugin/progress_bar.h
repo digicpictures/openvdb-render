@@ -1,6 +1,9 @@
 #pragma once
 
-#include <mutex>
+#include <cstdint>
+
+#include <tbb/atomic.h>
+#include <tbb/mutex.h>
 
 #include <maya/MGlobal.h>
 #include <maya/MString.h>
@@ -10,14 +13,15 @@
 class ProgressBar
 {
 public:
-    ProgressBar(const MString& msg, const bool is_interruptable = false);
+    ProgressBar(const MString& msg, const uint32_t max_progress=100, const bool is_interruptable = false);
     ~ProgressBar();
 
-    void reset(const MString& msg);
+    void setMaxProgress(const uint32_t max_progress) { m_max_progress = max_progress; }
+    void reset(const MString& msg, const uint32_t max_progress);
+    void setProgress(const int percent);
 
     // The public methods below are thread-safe.
-    void stepOnePercent() const;
-    void setProgress(const int percent);
+    void addProgress(uint32_t progress_to_add);
     bool isCancelled() const;
 
 private:
@@ -31,5 +35,8 @@ private:
 
     bool m_show_progress_bar;
     bool m_is_interruptable;
-    mutable std::mutex m_mutex;
+    uint32_t m_max_progress;
+    tbb::atomic<uint32_t> m_progress;
+
+    mutable tbb::mutex m_mutex;
 };
