@@ -5,12 +5,24 @@
 #include <openvdb/openvdb.h>
 #include <openvdb/tools/MultiResGrid.h>
 
-#include "util.h"
+#include "vdb_subscene_utils.hpp"
 
 class ProgressBar;
 namespace MHWRender {
     class MTexture;
 }
+
+template <typename T>
+struct ValueRange
+{
+    T min, max;
+    ValueRange() noexcept : min(std::numeric_limits<T>::max()), max(std::numeric_limits<T>::min()) {}
+    ValueRange(T min_ , T max_) noexcept : min(min_), max(max_) {}
+    void update(T value) { min = std::min(min, value); max = std::max(max, value); }
+    void update(const ValueRange<T>& value_range) { min = std::min(min, value_range.min); max = std::max(max, value_range.max); }
+    ValueRange merge(const ValueRange<T>& value_range) { return { std::min(min, value_range.min), std::max(max, value_range.max) }; }
+};
+typedef ValueRange<float> FloatRange;
 
 struct VolumeTexture
 {

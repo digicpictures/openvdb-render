@@ -4,7 +4,6 @@
 #include <maya/MFloatVector.h>
 #include <openvdb/io/File.h>
 #include "gradient.hpp"
-#include "util.h"
 
 enum VDBDisplayMode {
     DISPLAY_AXIS_ALIGNED_BBOX = 0,

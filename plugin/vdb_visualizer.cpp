@@ -32,7 +32,6 @@
 #include <maya/MGlobal.h>
 #include <maya/MNodeMessage.h>
 
-#include "util.h"
 #include "vdb_maya_utils.hpp"
 
 const MTypeId VDBVisualizerShape::typeId(ID_VDB_VISUALIZER);

@@ -10,7 +10,6 @@
 #include <maya/MTime.h>
 #include <maya/MAnimControl.h>
 
-#include "util.h"
 #include "vdb_visualizer.h"
 
 #include "vdb_maya_utils.hpp"

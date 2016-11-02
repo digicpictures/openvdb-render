@@ -17,7 +17,7 @@
 #include <tbb/parallel_for.h>
 
 #include "progress_bar.h"
-#include "util.h"
+#include "vdb_maya_utils.hpp"
 
 using namespace MHWRender;
 using namespace openvdb;
