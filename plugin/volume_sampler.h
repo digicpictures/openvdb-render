@@ -20,6 +20,8 @@ struct VolumeTexture
     VolumeTexture() : texture(nullptr) {}
     VolumeTexture(const openvdb::Coord& extents, const float* data_norm, const FloatRange& value_range_)
         : texture(acquireVolumeTexture(extents, data_norm)), value_range(value_range_) {}
+    VolumeTexture(const VolumeTexture&) = delete;
+    VolumeTexture& operator=(const VolumeTexture&) = delete;
     VolumeTexture(VolumeTexture&&) = default;
     VolumeTexture& operator=(VolumeTexture&&) = default;
 
