@@ -131,7 +131,7 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         pm.text("OpenVDBChannelStats", label=pm.getAttr(param_name), align="left")
 
     def update_channel_stats(self, param_name):
-         pm.text("OpenVDBChannelStats", edit=True, label=pm.getAttr(param_name))
+        pm.text("OpenVDBChannelStats", edit=True, label=pm.getAttr(param_name))
 
     @staticmethod
     def add_additional_channel(param_name, group, grid_name):
