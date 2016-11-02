@@ -973,7 +973,6 @@ technique Main < int isTransparent = 1; >
                 // Direction.
                 light_params->getParameter(MLightParameterInformation::kWorldDirection, float_array);
                 memcpy(directional_light_directions.data() + 3 * directional_light_count, &float_array[0], 3 * sizeof(float));
-                std::cout << " " << float_array[0] << " " << float_array[1] << " " << float_array[2] << std::endl;
 
                 // Color.
                 light_params->getParameter(MLightParameterInformation::kColor, float_array);
@@ -1005,58 +1004,6 @@ technique Main < int isTransparent = 1; >
         CHECK_MSTATUS(shaderInstance->setArrayParameter("directional_light_directions", directional_light_directions.data(), directional_light_count));
         CHECK_MSTATUS(shaderInstance->setArrayParameter("directional_light_colors", directional_light_colors.data(), directional_light_count));
         CHECK_MSTATUS(shaderInstance->setArrayParameter("directional_light_intensities", directional_light_intensities.data(), directional_light_count));
-
-        for (int i = 0; i < 3; ++i)
-            std::cout << " " << directional_light_directions[i];
-        std::cout << std::endl;
-
-        return;
-
-        static int aoeu = 0;
-        std::cout << "=== " << aoeu++ << " ===" << std::endl;
-        std::cout << "volumeShaderPreDrawCb" << std::endl;
-        std::cout << "  volume shader pre-draw cb in pass " << context.getPassContext().passIdentifier().asChar() << std::endl;
-        auto semantics = context.getPassContext().passSemantics();
-        for (int i = 0; i < semantics.length(); ++i)
-        {
-            std::cout << "    " << semantics[i].asChar() << std::endl;
-        }
-
-        // Print light info.
-        std::cout << "  light count: " << light_count << "; light limit: " << context.getLightLimit() << std::endl;
-        for (int i = 0; i < light_count; ++i)
-        {
-            auto light = context.getLightParameterInformation(i);
-            MStringArray a;
-            light->parameterList(a);
-            std::cout << "    light " << std::endl;
-            for (int j = 0; j < a.length(); ++j)
-            {
-                auto param_name = a[j];
-                auto sem = light->parameterSemantic(param_name);
-                auto type = light->parameterType(param_name);
-                std::cout << "      " << param_name.asChar() << " " << sem << " " << type << std::endl;
-                if (type == MHWRender::MLightParameterInformation::kFloat ||
-                    type == MHWRender::MLightParameterInformation::kFloat2 ||
-                    type == MHWRender::MLightParameterInformation::kFloat3 ||
-                    type == MHWRender::MLightParameterInformation::kFloat4)
-                {
-                    MFloatArray value;
-                    CHECK_MSTATUS(light->getParameter(param_name, value));
-                    std::cout << "        value:";
-                    for (int k = 0; k < value.length(); ++k)
-                        std::cout << " " << value[k];
-                    std::cout << std::endl;
-                }
-                else if (type == MHWRender::MLightParameterInformation::kBoolean ||
-                         type == MHWRender::MLightParameterInformation::kInteger)
-                {
-                    MIntArray value;
-                    CHECK_MSTATUS(light->getParameter(param_name, value));
-                    std::cout << "        value: " << value[0] << std::endl;
-                }
-            }
-        }
     }
 
     SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent) : m_parent(parent), m_enabled(false)
