@@ -196,13 +196,15 @@ namespace MHWRender {
         VDBDisplayMode display_mode;
 
         std::string sliced_display_channel;
+        int max_slice_count;
         SliceShaderParams sliced_display_shader_params;
 
         enum class ChangeSet : unsigned int {
             NO_CHANGES = 0,
             GENERIC_ATTRIBUTE = 1,
             VDB_FILE = 2,
-            SLICED_DISPLAY_GRID = 4
+            SLICED_DISPLAY_GRID = 4,
+            MAX_SLICE_COUNT = 8
         };
         ChangeSet change_set;
 
@@ -297,6 +299,7 @@ namespace MHWRender {
         if (display_mode == VDBDisplayMode::DISPLAY_SLICES) {
             change_set |= setup_parameter(sliced_display_shader_params, data->sliced_display_shader_params, ChangeSet::GENERIC_ATTRIBUTE);
             change_set |= setup_parameter(sliced_display_channel, data->sliced_display_channel, ChangeSet::SLICED_DISPLAY_GRID);
+            change_set |= setup_parameter(max_slice_count, data->max_slice_count, ChangeSet::MAX_SLICE_COUNT);
         }
 
         point_size = data->point_size;
@@ -701,8 +704,6 @@ namespace MHWRender {
 
     // === Sliced display mode implementation ===================================
 
-    constexpr unsigned int MAX_SLICE_COUNT = 64;
-
     namespace {
 
         MFloatVector inline mayavecFromVec3f(const openvdb::Vec3f& vec)
@@ -1065,8 +1066,6 @@ technique Main < int isTransparent = 1; >
                 return false;
             }
             m_slices_renderable.render_item = render_item;
-
-            updateSliceGeo(MAX_SLICE_COUNT);
         }
 
         if (!container.find(SELECTION_BBOX_RENDER_ITEM_NAME))
@@ -1298,9 +1297,15 @@ technique Main < int isTransparent = 1; >
         updateShaderParams(data.sliced_display_shader_params);
 
         typedef VDBSubSceneOverrideData::ChangeSet ChangeSet;
-        const auto rebuild_volume_change_mask = ChangeSet::VDB_FILE | ChangeSet::SLICED_DISPLAY_GRID;
+
+        // Update geometry of slices if max slice count has changed.
+        if ((data.change_set & ChangeSet::MAX_SLICE_COUNT) != ChangeSet::NO_CHANGES)
+            updateSliceGeo(data.max_slice_count);
+
+        // Update volume texture and bbox if VDB file or grid name has changed.
+        const auto rebuild_volume_change_mask = ChangeSet::VDB_FILE | ChangeSet::SLICED_DISPLAY_GRID | ChangeSet::MAX_SLICE_COUNT;
         if ((data.change_set & rebuild_volume_change_mask) != ChangeSet::NO_CHANGES)
-            updateVolumeTexture(GridSpec(data.vdb_file, data.sliced_display_channel), MAX_SLICE_COUNT);
+            updateVolumeTexture(GridSpec(data.vdb_file, data.sliced_display_channel), data.max_slice_count);
 
         return true;
     }

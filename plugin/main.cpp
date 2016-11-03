@@ -81,6 +81,15 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
         return status;
     }
 
+    status = plugin.registerCommand("vdb_visualizer_update_max_slice_count",
+                                    VDBVisualizerUpdateMaxSliceCountCmd::creator,
+                                    VDBVisualizerUpdateMaxSliceCountCmd::create_syntax);
+    if (!status)
+    {
+        status.perror("[openvdb] Error registering the VDBVisualizerUpdateMaxSliceCountCmd Command.");
+        return status;
+    }
+
     if (is_interactive)
         MGlobal::executePythonCommand("import AEvdb_visualizerTemplate; import AEvdb_samplerTemplate; import AEvdb_shaderTemplate");
 
@@ -140,6 +149,13 @@ PLUGIN_EXPORT MStatus uninitializePlugin(MObject obj)
     if (!status)
     {
         status.perror("[openvdb] Error deregistering the VDBQuery Command.");
+        return status;
+    }
+
+    status = plugin.deregisterCommand("vdb_visualizer_update_max_slice_count");
+    if (!status)
+    {
+        status.perror("[openvdb] Error deregistering the VDBVisualizerUpdateMaxSliceCountCmd Command.");
         return status;
     }
 

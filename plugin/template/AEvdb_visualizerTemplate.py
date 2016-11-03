@@ -127,6 +127,21 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         pm.textFieldButtonGrp("OpenVDBPathGrp", edit=True, text="" if vdb_path is None else vdb_path,
                               changeCommand=lambda val: pm.setAttr(param_name, val), buttonCommand=lambda: AEvdb_visualizerTemplate.press_vdb_path(param_name))
 
+    def create_max_slice_count(self, param_name):
+        pm.floatSliderButtonGrp("OpenVDBMaxSliceCount", label="Max slice count", buttonLabel="Update", 
+                                field=True, columnWidth4=(144,70,0,20), columnAttach=(1,'right',5),
+                                minValue=4, maxValue=256, precision=0, step=1)
+        self.update_max_slice_count(param_name)
+
+    def update_max_slice_count(self, param_name):
+        max_slice_count = pm.getAttr(param_name)
+        node_name = param_name.split(".")[0]
+        update_command_mel = 'vdb_visualizer_update_max_slice_count -n "%s";' % node_name
+        pm.floatSliderButtonGrp("OpenVDBMaxSliceCount", edit=True, value=max_slice_count,
+                                changeCommand=lambda val: pm.setAttr(param_name, val),
+                                buttonCommand=lambda: pm.mel.eval(update_command_mel))
+
+
     def create_channel_stats(self, param_name):
         pm.text("OpenVDBChannelStats", label=pm.getAttr(param_name), align="left")
 
@@ -261,7 +276,8 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
 
         self.addSeparator()
         self.addControl("densityChannel",      label="Density Channel")
-        self.addControl("slice_size",          label="Slice Size")
+        self.addControl("sliceSize",           label="Slice Size")
+        self.callCustom(self.create_max_slice_count, self.update_max_slice_count, "maxSliceCount")
         self.addControl("lightColor",          label="Light Color")
         self.addControl("lightIntensity",      label="Light Intensity")
         self.addControl("lightDirection",      label="Light Direction")

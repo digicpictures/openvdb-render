@@ -14,6 +14,7 @@
 
 #include "../util/node_ids.h"
 
+#include <maya/MArgDatabase.h>
 #include <maya/MFnNumericAttribute.h>
 #include <maya/MFnTypedAttribute.h>
 #include <maya/MFnEnumAttribute.h>
@@ -58,6 +59,8 @@ MObject VDBVisualizerShape::s_matte;
 // Sliced display params.
 MObject VDBVisualizerShape::s_density_channel;
 MObject VDBVisualizerShape::s_slice_size;
+MObject VDBVisualizerShape::s_max_slice_count;
+MObject VDBVisualizerShape::s_apply_max_slice_count;
 MObject VDBVisualizerShape::s_scattering_color;
 MObject VDBVisualizerShape::s_scattering_intensity;
 MObject VDBVisualizerShape::s_absorption_color;
@@ -200,12 +203,14 @@ namespace {
             }
         }
     };
+
+    constexpr int DEFAULT_MAX_SLICE_COUNT = 64;
 }
 
 VDBVisualizerData::VDBVisualizerData() : bbox(MPoint(-1.0, -1.0, -1.0), MPoint(1.0, 1.0, 1.0)), scattering_color(1.0f, 1.0f, 1.0f),
                                          attenuation_color(1.0f, 1.0f, 1.0f), emission_color(1.0f, 1.0f, 1.0f),
                                          vdb_file(nullptr), point_size(2.0f), point_jitter(0.15f),
-                                         point_skip(1), update_trigger(0)
+                                         point_skip(1), max_slice_count(DEFAULT_MAX_SLICE_COUNT), update_trigger(0)
 {
 }
 
@@ -296,6 +301,8 @@ MStatus VDBVisualizerShape::compute(const MPlug& plug, MDataBlock& dataBlock)
 
         if (vdb_path != m_vdb_data.vdb_path)
         {
+            m_vdb_data.max_slice_count = dataBlock.inputValue(s_max_slice_count).asInt();
+
             m_vdb_data.clear();
             m_vdb_data.vdb_path = vdb_path;
             if (m_vdb_data.vdb_file != nullptr)
@@ -551,6 +558,24 @@ MStatus VDBVisualizerShape::initialize()
 
     // Sliced display attributes.
 
+    s_slice_size = nAttr.create("sliceSize", "slice_size", MFnNumericData::kFloat);
+    nAttr.setDefault(0.2);
+    nAttr.setMin(0.0);
+    nAttr.setSoftMax(2.0);
+    addAttribute(s_slice_size);
+    attributeAffects(s_slice_size, s_update_trigger);
+
+    s_max_slice_count = nAttr.create("maxSliceCount", "max_slice_count", MFnNumericData::kInt);
+    nAttr.setDefault(DEFAULT_MAX_SLICE_COUNT);
+    nAttr.setMin(4);
+    nAttr.setSoftMax(128);
+    addAttribute(s_max_slice_count);
+
+    s_apply_max_slice_count = nAttr.create("applyMaxSliceCount", "apply_max_slice_count", MFnNumericData::kBoolean);
+    nAttr.setDefault(false);
+    addAttribute(s_apply_max_slice_count);
+    attributeAffects(s_apply_max_slice_count, s_update_trigger);
+
     s_density_channel = tAttr.create("densityChannel", "density_channel", MFnData::kString);
     tAttr.setDefault(MFnStringData().create("density"));
     addAttribute(s_density_channel);
@@ -593,13 +618,6 @@ MStatus VDBVisualizerShape::initialize()
     nAttr.setSoftMax(16);
     addAttribute(s_shadow_sample_count);
     attributeAffects(s_shadow_sample_count, s_update_trigger);
-
-    s_slice_size = nAttr.create("sliceSize", "slice_size", MFnNumericData::kFloat);
-    nAttr.setDefault(0.2);
-    nAttr.setMin(0.0);
-    nAttr.setSoftMax(2.0);
-    addAttribute(s_slice_size);
-    attributeAffects(s_slice_size, s_update_trigger);
 
     //
 
@@ -985,4 +1003,60 @@ bool VDBVisualizerShapeUI::select(MSelectInfo& selectInfo, MSelectionList& selec
 bool VDBVisualizerShapeUI::canDrawUV() const
 {
     return false;
+}
+
+namespace {
+    const char *resample_cmd_node_flag_short = "n";
+    const char *resample_cmd_node_flag_long = "node";
+} // unnamed namespace
+
+MSyntax VDBVisualizerUpdateMaxSliceCountCmd::create_syntax()
+{
+    MSyntax syntax;
+    syntax.addFlag(resample_cmd_node_flag_short, resample_cmd_node_flag_long, MSyntax::kSelectionItem);
+    return syntax;
+}
+
+MStatus VDBVisualizerUpdateMaxSliceCountCmd::doIt(const MArgList& args)
+{
+    MArgDatabase arg_data(syntax(), args);
+
+    if (!arg_data.isFlagSet(resample_cmd_node_flag_short))
+    {
+        MGlobal::displayError("[openvdb] No node was passed to the command, use the -node(n) flag.");
+        return MS::kFailure;
+    }
+
+    MStatus status;
+    MSelectionList slist;
+    status = arg_data.getFlagArgument(resample_cmd_node_flag_short, 0, slist);
+    if (!status)
+        return status;
+    MObject node;
+    status = slist.getDependNode(0, node);
+    if (!status)
+        return status;
+    MFnDependencyNode dnode(node, &status);
+    if (!status)
+        return status;
+
+    if (dnode.typeName() != VDBVisualizerShape::typeName)
+    {
+        MGlobal::displayError("[openvdb] Wrong node was passed to the command : " + dnode.name());
+        return MS::kFailure;
+    }
+    auto vdb_visualizer_shape = dynamic_cast<VDBVisualizerShape*>(dnode.userNode());
+    if (!vdb_visualizer_shape)
+        return MS::kFailure;
+
+    vdb_visualizer_shape->updateMaxSliceCount();
+
+    return MS::kSuccess;
+}
+
+void VDBVisualizerShape::updateMaxSliceCount()
+{
+    m_vdb_data.max_slice_count = MPlug(thisMObject(), s_max_slice_count).asInt();
+    // Trigger an update.
+    MPlug(thisMObject(), s_apply_max_slice_count).setBool(true);
 }

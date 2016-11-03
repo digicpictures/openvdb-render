@@ -58,6 +58,7 @@ struct VDBVisualizerData {
 
     // Sliced display params.
     std::string sliced_display_channel;
+    int max_slice_count;
     SliceShaderParams sliced_display_shader_params;
 
     VDBVisualizerData();

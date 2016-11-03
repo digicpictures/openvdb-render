@@ -2,6 +2,8 @@
 
 #include <maya/MPxSurfaceShape.h>
 #include <maya/MPxSurfaceShapeUI.h>
+#include <maya/MPxCommand.h>
+#include <maya/MSyntax.h>
 
 #include <openvdb/openvdb.h>
 #include <maya/MNodeMessage.h>
@@ -41,6 +43,8 @@ public:
     static MStatus initialize();
     void postConstructor();
 
+    void updateMaxSliceCount();
+
     static const MTypeId typeId;
     static const MString typeName;
     static const MString drawDbClassification;
@@ -66,6 +70,8 @@ public:
     // sliced display parameters
     static MObject s_density_channel;
     static MObject s_slice_size;
+    static MObject s_max_slice_count;
+    static MObject s_apply_max_slice_count;
     static MObject s_scattering_color;
     static MObject s_scattering_intensity;
     static MObject s_absorption_color;
@@ -102,4 +108,15 @@ private:
 
     VDBVisualizerData m_vdb_data;
     MCallbackId m_time_changed_id;
+};
+
+class VDBVisualizerUpdateMaxSliceCountCmd : public MPxCommand {
+public:
+    VDBVisualizerUpdateMaxSliceCountCmd() {}
+    ~VDBVisualizerUpdateMaxSliceCountCmd() {}
+
+    static void* creator() { return new VDBVisualizerUpdateMaxSliceCountCmd(); }
+    static MSyntax create_syntax();
+
+    MStatus doIt(const MArgList& args);
 };
