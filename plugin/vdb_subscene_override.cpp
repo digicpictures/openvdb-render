@@ -135,15 +135,16 @@ namespace MHWRender {
         void enable(bool enable);
 
     private:
-        bool initSliceRenderables(MHWRender::MSubSceneContainer& container);
-        bool initBBoxRenderable(MHWRender::MSubSceneContainer& container);
+        bool initRenderables(MHWRender::MSubSceneContainer& container);
+
+        void updateBBox(const openvdb::BBoxd& bbox);
+        void updateSliceGeo(const int slice_count);
+        void updateVolumeTexture(const GridSpec& grid_spec, const int texture_size);
         void updateShaderParams(const SliceShaderParams& shader_params);
-        void updateDensityVolume(const GridSpec& grid_spec);
-        void updateBBoxGeometry(const openvdb::BBoxd& bbox);
 
         MHWRender::MPxSubSceneOverride& m_parent;
         ShaderPtr m_volume_shader;
-        TexturePtr m_volume_texture;
+        VolumeTexture m_volume_texture;
         Renderable m_slices_renderable;
         Renderable m_bbox_renderable;
         bool m_enabled;
@@ -737,8 +738,7 @@ sampler3D volume_sampler = sampler_state {
 
 uniform int max_slice_count; // How many slices does the vertex buffer has vertices for.
 uniform float slice_size_model;
-uniform float min_voxel_value = 0;
-uniform float max_voxel_value = 1;
+uniform float2 value_range = float2(0, 1);
 
 // Lights.
 #define MAX_POINT_LIGHTS 8
@@ -760,7 +760,7 @@ uniform int shadow_sample_count = 4;
 
 float SampleVolume(float3 tex_coords, float lod)
 {
-    return lerp(min_voxel_value, max_voxel_value, tex3Dlod(volume_sampler, float4(tex_coords, lod)).r);
+    return lerp(value_range.x, value_range.y, tex3Dlod(volume_sampler, float4(tex_coords, lod)).r);
 }
 
 // ======== VERTEX SHADER ========
@@ -1012,7 +1012,7 @@ technique Main < int isTransparent = 1; >
         assert(shader_manager);
 
         // Load volume shader from effect file.
-        m_volume_shader.reset(shader_manager->getEffectsBufferShader(s_effect_code.c_str(), s_effect_code.size(), "Main", 0, 0, false, preDrawCallback));
+        m_volume_shader.reset(shader_manager->getEffectsBufferShader(s_effect_code.c_str(), unsigned(s_effect_code.size()), "Main", 0, 0, false, preDrawCallback));
         if (!m_volume_shader) {
             LOG_ERROR("Cannot compile cgfx.");
             return;
@@ -1030,37 +1030,105 @@ technique Main < int isTransparent = 1; >
             m_bbox_renderable.render_item->enable(enable);
     }
 
-    bool SlicedDisplay::initSliceRenderables(MHWRender::MSubSceneContainer& container)
+    namespace {
+        const char *SLICES_RENDER_ITEM_NAME = "vdb_volume_slices";
+        const char *SELECTION_BBOX_RENDER_ITEM_NAME = "vdb_volume_slices_bbox";
+    } // unnamed namespace
+
+    bool SlicedDisplay::initRenderables(MHWRender::MSubSceneContainer& container)
     {
-        if (m_slices_renderable.render_item != nullptr) {
-            // Already initialized.
-            return true;
+        if (!container.find(SLICES_RENDER_ITEM_NAME))
+        {
+            // Slices.
+
+            auto render_item = MHWRender::MRenderItem::Create(
+                    SLICES_RENDER_ITEM_NAME,
+                    MHWRender::MRenderItem::RenderItemType::MaterialSceneItem,
+                    MHWRender::MGeometry::kTriangles);
+            render_item->setDrawMode(MHWRender::MGeometry::kAll);
+            render_item->castsShadows(false);
+            render_item->receivesShadows(false);
+            if (!render_item->setShader(m_volume_shader.get())) {
+                LOG_ERROR("Could not set shader for volume render item.");
+                return false;
+            }
+
+            // Create geo buffers.
+            // Note: descriptor name (first ctor arg) MUST be "", or setGeometryForRenderItem will return kFailure.
+            const MHWRender::MVertexBufferDescriptor pos_desc("", MHWRender::MGeometry::kPosition, MHWRender::MGeometry::kFloat, 3);
+            m_slices_renderable.position_buffer.reset(new MHWRender::MVertexBuffer(pos_desc));
+            m_slices_renderable.index_buffer.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
+
+            // Add render item to subscene container.
+            if (!container.add(render_item)) {
+                LOG_ERROR("Could not add m_slices_renderable render item.");
+                return false;
+            }
+            m_slices_renderable.render_item = render_item;
+
+            updateSliceGeo(MAX_SLICE_COUNT);
         }
 
-        if (!m_volume_shader) {
-            // Couldn't load the shader.
-            return false;
+        if (!container.find(SELECTION_BBOX_RENDER_ITEM_NAME))
+        {
+            // Selection bbox.
+
+            const MHWRender::MShaderManager* shader_manager = getShaderManager();
+            if (!shader_manager)
+                return false;
+            static auto shader = shader_manager->getStockShader(MHWRender::MShaderManager::k3dSolidShader);
+            if (!shader) {
+                LOG_ERROR("Couldn't get stock shader: k3dSolidShader.");
+                return false;
+            }
+
+            auto render_item = MHWRender::MRenderItem::Create(
+                    SELECTION_BBOX_RENDER_ITEM_NAME,
+                    MHWRender::MRenderItem::RenderItemType::DecorationItem,
+                    MHWRender::MGeometry::kLines);
+            if (!render_item) {
+                LOG_ERROR("Failed to create bbox render item.");
+                return false;
+            }
+            render_item->setDrawMode(MHWRender::MGeometry::kAll);
+            render_item->depthPriority(MHWRender::MRenderItem::sActiveWireDepthPriority);
+            if (!render_item->setShader(shader)) {
+                LOG_ERROR("Failed to set shader for bbox render item.");
+                return false;
+            }
+
+            // Create geo buffers.
+            // Note: descriptor name (first ctor arg) MUST be "", or setGeometryForRenderItem will return kFailure.
+            const MHWRender::MVertexBufferDescriptor pos_desc("", MHWRender::MGeometry::kPosition, MHWRender::MGeometry::kFloat, 3);
+            m_bbox_renderable.position_buffer.reset(new MHWRender::MVertexBuffer(pos_desc));
+            m_bbox_renderable.vertex_buffer_array.clear();
+            CHECK_MSTATUS(m_bbox_renderable.vertex_buffer_array.addBuffer("pos_model", m_bbox_renderable.position_buffer.get()));
+
+            m_bbox_renderable.index_buffer.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
+            constexpr auto index_count = 2 * 12;
+            static const uint32_t BOX_WIREFRAME_INDICES[] = { 0, 1, 1, 3, 3, 2, 2, 0, 4, 5, 5, 7, 7, 6, 6, 4, 0, 4, 1, 5, 3, 7, 2, 6 };
+            CHECK_MSTATUS(m_bbox_renderable.index_buffer->update(BOX_WIREFRAME_INDICES, 0, index_count, true));
+
+            // Add render item to subscene container.
+            if (!container.add(render_item)) {
+                LOG_ERROR("Could not add bbox render item.");
+                m_bbox_renderable.position_buffer.reset();
+                m_bbox_renderable.index_buffer.reset();
+                m_bbox_renderable.vertex_buffer_array.clear();
+                return false;
+            }
+            m_bbox_renderable.render_item = render_item;
         }
 
-        m_slices_renderable.render_item = MHWRender::MRenderItem::Create("vdb_volume_slices", MHWRender::MRenderItem::RenderItemType::MaterialSceneItem, MHWRender::MGeometry::kTriangles);
-        m_slices_renderable.render_item->setDrawMode(MHWRender::MGeometry::kAll);
-        m_slices_renderable.render_item->castsShadows(false);
-        m_slices_renderable.render_item->receivesShadows(false);
-        if (!m_slices_renderable.render_item->setShader(m_volume_shader.get())) {
-            LOG_ERROR("Could not set shader for volume render item.");
-            return false;
-        }
+        return true;
+    }
 
-        // Build geometry.
-        const unsigned int slice_count = MAX_SLICE_COUNT;
-
+    void SlicedDisplay::updateSliceGeo(const int slice_count)
+    {
         // - Vertices
-        // Note: descriptor name (first ctor arg) MUST be "", or setGeometryForRenderItem will return kFailure.
-        const MHWRender::MVertexBufferDescriptor pos_desc("", MHWRender::MGeometry::kPosition, MHWRender::MGeometry::kFloat, 3);
-        m_slices_renderable.position_buffer.reset(new MHWRender::MVertexBuffer(pos_desc));
         const auto vertex_count = slice_count * 4;
         MFloatVector* positions = reinterpret_cast<MFloatVector*>(m_slices_renderable.position_buffer->acquire(vertex_count, true));
-        for (unsigned int i = 0; i < slice_count; ++i) {
+        for (int i = 0; i < slice_count; ++i) {
             const float z = i * 1.0f / (slice_count - 1.0f);
             positions[4 * i + 0] = MFloatVector(0.0, 0.0, z);
             positions[4 * i + 1] = MFloatVector(1.0, 0.0, z);
@@ -1070,10 +1138,9 @@ technique Main < int isTransparent = 1; >
         m_slices_renderable.position_buffer->commit(positions);
 
         // - Indices
-        m_slices_renderable.index_buffer.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
         const auto index_count = slice_count * 6;
         unsigned int* indices = reinterpret_cast<unsigned int*>(m_slices_renderable.index_buffer->acquire(index_count, true));
-        for (unsigned int i = 0; i < slice_count; ++i) {
+        for (int i = 0; i < slice_count; ++i) {
             indices[6 * i + 0] = 4 * i + 0;
             indices[6 * i + 1] = 4 * i + 1;
             indices[6 * i + 2] = 4 * i + 3;
@@ -1085,74 +1152,9 @@ technique Main < int isTransparent = 1; >
 
         m_slices_renderable.vertex_buffer_array.clear();
         CHECK_MSTATUS(m_slices_renderable.vertex_buffer_array.addBuffer("pos_model", m_slices_renderable.position_buffer.get()));
-
-        if (!container.add(m_slices_renderable.render_item)) {
-            LOG_ERROR("Could not add m_slices_renderable render item.");
-            return false;
-        }
-
-        return true;
     }
 
-    bool SlicedDisplay::initBBoxRenderable(MHWRender::MSubSceneContainer& container)
-    {
-        if (m_bbox_renderable.render_item) {
-            // Already initialized.
-            return true;
-        }
-
-        const MHWRender::MShaderManager* shader_manager = getShaderManager();
-        if (!shader_manager) {
-            return false;
-        }
-
-        static auto shader = shader_manager->getStockShader(MHWRender::MShaderManager::k3dSolidShader);
-        if (!shader) {
-            LOG_ERROR("Couldn't get stock shader: k3dSolidShader.");
-            return false;
-        }
-
-        auto render_item = MHWRender::MRenderItem::Create(
-                "sliced_display_bounding_box",
-                MHWRender::MRenderItem::RenderItemType::DecorationItem,
-                MHWRender::MGeometry::kLines);
-        if (!render_item) {
-            LOG_ERROR("Failed to create bbox render item.");
-            return false;
-        }
-
-        if (!render_item->setShader(shader)) {
-            LOG_ERROR("Failed to set shader for bbox render item.");
-            return false;
-        }
-
-        render_item->setDrawMode(MHWRender::MGeometry::kAll);
-        render_item->depthPriority(MHWRender::MRenderItem::sActiveWireDepthPriority);
-
-        // Note: descriptor name (first ctor arg) MUST be "", or setGeometryForRenderItem will return kFailure.
-        const MHWRender::MVertexBufferDescriptor pos_desc("", MHWRender::MGeometry::kPosition, MHWRender::MGeometry::kFloat, 3);
-        m_bbox_renderable.position_buffer.reset(new MHWRender::MVertexBuffer(pos_desc));
-        m_bbox_renderable.vertex_buffer_array.clear();
-        CHECK_MSTATUS(m_bbox_renderable.vertex_buffer_array.addBuffer("pos_model", m_bbox_renderable.position_buffer.get()));
-
-        m_bbox_renderable.index_buffer.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
-        constexpr auto index_count = 2 * 12;
-        static const uint32_t BOX_WIREFRAME_INDICES[] = { 0, 1, 1, 3, 3, 2, 2, 0, 4, 5, 5, 7, 7, 6, 6, 4, 0, 4, 1, 5, 3, 7, 2, 6 };
-        CHECK_MSTATUS(m_bbox_renderable.index_buffer->update(BOX_WIREFRAME_INDICES, 0, index_count, true));
-
-        if (!container.add(render_item)) {
-            LOG_ERROR("Could not add bbox render item.");
-            m_bbox_renderable.position_buffer.reset();
-            m_bbox_renderable.index_buffer.reset();
-            m_bbox_renderable.vertex_buffer_array.clear();
-            return false;
-        }
-        m_bbox_renderable.render_item = render_item;
-
-        return true;
-    }
-
-    void SlicedDisplay::updateBBoxGeometry(const openvdb::BBoxd& bbox)
+    void SlicedDisplay::updateBBox(const openvdb::BBoxd& bbox)
     {
         constexpr auto vertex_count = 8;
         MFloatVector* positions = static_cast<MFloatVector*>(m_bbox_renderable.position_buffer->acquire(vertex_count, true));
@@ -1161,7 +1163,9 @@ technique Main < int isTransparent = 1; >
         }
         m_bbox_renderable.position_buffer->commit(positions);
 
-        m_bbox_renderable.update(m_parent, mayabboxFromBBoxd(bbox));
+        const auto maya_bbox = mayabboxFromBBoxd(bbox);
+        m_bbox_renderable.update(m_parent, maya_bbox);
+        m_slices_renderable.update(m_parent, maya_bbox);
     }
 
     void SlicedDisplay::updateShaderParams(const SliceShaderParams& params)
@@ -1202,42 +1206,51 @@ technique Main < int isTransparent = 1; >
             return grid_ptr;
         }
 
+        inline MHWRender::MTextureAssignment makeTextureAssignment(MHWRender::MTexture* texture)
+        {
+            MHWRender::MTextureAssignment res;
+            res.texture = texture;
+            return res;
+        }
+
     } // unnamed namespace
 
-    void SlicedDisplay::updateDensityVolume(const GridSpec& grid_spec)
+    void SlicedDisplay::updateVolumeTexture(const GridSpec& grid_spec, const int texture_size)
     {
         auto grid_ptr = loadDensityGrid(grid_spec);
         if (!grid_ptr) {
-            m_volume_texture.reset();
-            MHWRender::MTextureAssignment volume_texture_resource;
-            volume_texture_resource.texture = nullptr;
-            CHECK_MSTATUS(m_volume_shader->setParameter("volume_texture", volume_texture_resource));
+            m_volume_texture.texture.reset();
+            auto texture_assignment = makeTextureAssignment(nullptr);
+            CHECK_MSTATUS(m_volume_shader->setParameter("volume_texture", texture_assignment));
             return;
         }
 
+        // Sample the multi resolution grid at regular intervals.
+        {
+            VolumeSampler volume_sampler;
+            const auto texture_extents = openvdb::Coord(texture_size, texture_size, texture_size);
+            ProgressBar pb("vdb_visualizer: sampling density grid");
+            auto volume = volume_sampler.sampleGridWithMipmapFilter(*grid_ptr, texture_extents, &pb);
+            if (volume.texture == nullptr)
+            {
+                LOG_ERROR("unable to acquire volume texture.");
+                return;
+            }
+            m_volume_texture = std::move(volume);
+        }
+
+        // Update bbox.
         const auto bbox_is = getIndexSpaceBoundingBox(grid_ptr.get());
         const auto bbox_ws = grid_ptr->transform().indexToWorld(bbox_is);
+        updateBBox(bbox_ws);
+
+        // Update volume-related shader params.
         CHECK_MSTATUS(m_volume_shader->setParameter("volume_size_model", mayavecFromVec3f(bbox_ws.extents())));
         CHECK_MSTATUS(m_volume_shader->setParameter("volume_origin_model", mayavecFromVec3f(bbox_ws.min())));
-
-        // Set bbox for render items.
-        m_slices_renderable.update(m_parent, mayabboxFromBBoxd(bbox_ws));
-        updateBBoxGeometry(bbox_ws);
-
-        // Sample the multi resolution grid at regular intervals.
-        ProgressBar pb("vdb_visualizer: sampling density grid");
-        VolumeSampler volume_sampler;
-        const auto texture_extents = openvdb::Coord(MAX_SLICE_COUNT, MAX_SLICE_COUNT, MAX_SLICE_COUNT);
-        auto volume = volume_sampler.sampleGridWithMipmapFilter(*grid_ptr, texture_extents, &pb);
-        m_volume_texture.reset(volume.texture);
-
-        // Set shader params.
-        CHECK_MSTATUS(m_volume_shader->setParameter("min_voxel_value", volume.value_range.min));
-        CHECK_MSTATUS(m_volume_shader->setParameter("max_voxel_value", volume.value_range.max));
-
-        MHWRender::MTextureAssignment volume_texture_resource;
-        volume_texture_resource.texture = m_volume_texture.get();
-        m_volume_shader->setParameter("volume_texture", volume_texture_resource);
+        CHECK_MSTATUS(m_volume_shader->setParameter("max_slice_count", texture_size));
+        CHECK_MSTATUS(m_volume_shader->setParameter("value_range", MFloatVector(m_volume_texture.value_range.min, m_volume_texture.value_range.max)));
+        auto texture_assignment = makeTextureAssignment(m_volume_texture.texture.get());
+        CHECK_MSTATUS(m_volume_shader->setParameter("volume_texture", texture_assignment));
 
         MHWRender::MSamplerStateDesc volume_sampler_state_desc;
         volume_sampler_state_desc.filter = MHWRender::MSamplerState::kMinMagMipLinear;
@@ -1266,17 +1279,7 @@ technique Main < int isTransparent = 1; >
 
     bool SlicedDisplay::update(MHWRender::MSubSceneContainer& container, const VDBSubSceneOverrideData& data)
     {
-        if (m_slices_renderable.render_item == nullptr) {
-            if (!initSliceRenderables(container)) {
-                return false;
-            }
-        }
-
-        if (m_bbox_renderable.render_item == nullptr) {
-            if (!initBBoxRenderable(container)) {
-                return false;
-            }
-        }
+        initRenderables(container);
 
         // Handle selection.
         m_bbox_renderable.render_item->enable(data.is_selected && m_enabled);
@@ -1296,7 +1299,7 @@ technique Main < int isTransparent = 1; >
         typedef VDBSubSceneOverrideData::ChangeSet ChangeSet;
         const auto rebuild_volume_change_mask = ChangeSet::VDB_FILE | ChangeSet::SLICED_DISPLAY_GRID;
         if ((data.change_set & rebuild_volume_change_mask) != ChangeSet::NO_CHANGES)
-            updateDensityVolume(GridSpec(data.vdb_file, data.sliced_display_channel));
+            updateVolumeTexture(GridSpec(data.vdb_file, data.sliced_display_channel), MAX_SLICE_COUNT);
 
         return true;
     }

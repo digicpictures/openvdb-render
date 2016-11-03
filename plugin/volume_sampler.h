@@ -26,7 +26,7 @@ typedef ValueRange<float> FloatRange;
 
 struct VolumeTexture
 {
-    MHWRender::MTexture* texture;
+    TexturePtr texture;
     FloatRange value_range;
 
     VolumeTexture() : texture(nullptr) {}
