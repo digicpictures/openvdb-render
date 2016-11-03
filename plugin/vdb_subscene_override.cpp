@@ -840,22 +840,23 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
 #define OOR(x) ((x) < 0.0f || (x) > 1.0f)
 #define MAXV(v) max(max(v.x, v.y), v.z)
 
-float3 shadow_raymarch(float3 pos, float3 dir, float3 extinction)
+float3 RayTransmittance(float3 from, float3 to, float3 extinction)
 {
-    float shadow_step_model = MAXV(volume_size_model) / float(shadow_sample_count);
-    int3 volume_size_voxels = tex3Dsize(volume_sampler, 0);
-    float3 step_voxels = volume_size_voxels / float(shadow_sample_count);
-    float step_voxels_max = MAXV(step_voxels);
-    float lod = log(step_voxels_max) / log(2.f);
+    float3 step_model = (to - from) / float(shadow_sample_count + 1);
+    float3 step_texcoords = step_model / volume_size_model;
 
-    float3 step_texcoords = dir / float(shadow_sample_count);
+    float step_size_model = length(step_model);
+
+    float3 volume_size_voxels = tex3Dsize(volume_sampler, 0);
+    float3 step_voxels = step_texcoords * volume_size_voxels;
+    float lod = log(MAXV(step_voxels)) / log(2.f);
 
     float3 transmittance = float3(1, 1, 1);
-    float3 sample_texcoords = (pos - volume_origin_model) / volume_size_model;
+    float3 sample_texcoords = (from - volume_origin_model) / volume_size_model;
+    sample_texcoords += 0.5f * step_texcoords;
     for (int i = 0; i < shadow_sample_count; ++i) {
-        if (OOR(sample_texcoords.x) || OOR(sample_texcoords.y) || OOR(sample_texcoords.z)) break;
         float density = SampleVolume(sample_texcoords, lod);
-        transmittance *= exp(-extinction * density * shadow_step_model / (1.0 + float(i) * shadow_step_model * shadow_gain));
+        transmittance *= exp(-extinction * density * step_size_model / (1.0 + float(i) * step_size_model * shadow_gain));
         sample_texcoords += step_texcoords;
     }
     return transmittance;
@@ -879,19 +880,20 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
 
     // Loop through directional lights.
     for (int i = 0; i < directional_light_count; ++i) {
-        float3 light_dir_norm = normalize(mul(world_inverse_mat, float4(directional_light_directions[i], 0)).xyz);
-        float3 shadow = shadow_raymarch(input.pos_model, -light_dir_norm, extinction);
-        float3 light = directional_light_colors[i] * directional_light_intensities[i] * shadow;
-        lumi += light * albedo;
+        float3 light_vector_norm = -normalize(mul(world_inverse_mat, float4(directional_light_directions[i], 0)).xyz);
+        float3 corner = volume_origin_model + (0.5f + 0.5f * sign(light_vector_norm)) * volume_size_model;
+        float3 light_pos = input.pos_model + 1.1f * length(corner - input.pos_model) * light_vector_norm;
+        float3 shadow = RayTransmittance(input.pos_model, light_pos, extinction);
+        float3 light_color = directional_light_colors[i] * directional_light_intensities[i];
+        lumi += albedo * light_color * shadow;
     }
 
     // Loop through point lights.
     for (int i = 0; i < point_light_count; ++i) {
         float3 light_pos_model = mul(world_inverse_mat, float4(point_light_positions[i], 1));
-        float3 light_dir_norm = normalize(input.pos_model - light_pos_model);
-        float3 shadow = shadow_raymarch(input.pos_model, -light_dir_norm, extinction);
-        float3 light = point_light_colors[i] * point_light_intensities[i] * shadow;
-        lumi += light * albedo;
+        float3 shadow = RayTransmittance(input.pos_model, light_pos_model, extinction);
+        float3 light_color = point_light_colors[i] * point_light_intensities[i];
+        lumi += albedo * light_color * shadow;
     }
 
     float3 tex_coord = (input.pos_model - volume_origin_model) / volume_size_model;
