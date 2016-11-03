@@ -148,6 +148,7 @@ namespace MHWRender {
         Renderable m_slices_renderable;
         Renderable m_bbox_renderable;
         bool m_enabled;
+        bool m_selected;
 
         static void preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& renderItemList, MHWRender::MShaderInstance* shaderInstance);
         static const std::string s_effect_code;
@@ -1006,7 +1007,7 @@ technique Main < int isTransparent = 1; >
         CHECK_MSTATUS(shaderInstance->setArrayParameter("directional_light_intensities", directional_light_intensities.data(), directional_light_count));
     }
 
-    SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent) : m_parent(parent), m_enabled(false)
+    SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent) : m_parent(parent), m_enabled(false), m_selected(false)
     {
         const MHWRender::MShaderManager* shader_manager = getShaderManager();
         assert(shader_manager);
@@ -1018,16 +1019,15 @@ technique Main < int isTransparent = 1; >
             return;
         }
         m_volume_shader->setIsTransparent(true);
-        m_volume_shader->setParameter("max_slice_count", int(MAX_SLICE_COUNT));
     }
 
     void SlicedDisplay::enable(bool enable)
     {
         m_enabled = enable;
-        if (m_slices_renderable.render_item)
-            m_slices_renderable.render_item->enable(enable);
         if (m_bbox_renderable.render_item)
-            m_bbox_renderable.render_item->enable(enable);
+            m_bbox_renderable.render_item->enable(m_enabled && m_selected);
+        if (m_slices_renderable.render_item)
+            m_slices_renderable.render_item->enable(m_enabled);
     }
 
     namespace {
@@ -1282,7 +1282,8 @@ technique Main < int isTransparent = 1; >
         initRenderables(container);
 
         // Handle selection.
-        m_bbox_renderable.render_item->enable(data.is_selected && m_enabled);
+        m_selected = data.is_selected;
+        m_bbox_renderable.render_item->enable(m_enabled && m_selected);
         m_slices_renderable.render_item->enable(m_enabled);
 
         // Set wireframe color.
