@@ -108,6 +108,36 @@ getIndexSpaceBoundingBox(const openvdb::GridBase* grid)
     return { file_bbox_min, file_bbox_max };
 }
 
+template <typename T>
+inline MString toMString(const T& value)
+{
+    MString res;
+    res.set(value);
+    return res;
+}
+
+template <>
+inline MString toMString<std::string>(const std::string& value)
+{
+    MString res;
+    res.set(value.c_str());
+    return res;
+}
+
+template <>
+inline MString toMString<MString>(const MString& value)
+{
+    return value;
+}
+
+template <typename... Args>
+inline MString format(const MString& format, Args&&... args)
+{
+    MString res;
+    res.format(format, toMString(std::forward<Args>(args))...);
+    return res;
+}
+
 class MayaPathSpec
 {
 public:
