@@ -24,27 +24,6 @@ using namespace openvdb;
 
 namespace {
 
-    template <typename T>
-    struct identity { typedef T type; };
-
-    template <typename T>
-    T unlerp(typename identity<T>::type a, typename identity<T>::type b, T x)
-    {
-        return (x - a) / (b - a);
-    }
-
-    template <typename T>
-    T clamp(T val, typename identity<T>::type floor, typename identity<T>::type ceil)
-    {
-        return std::min(ceil, std::max(floor, val));
-    }
-
-    template <typename VecT>
-    typename VecT::value_type maxComponentValue(const VecT& v)
-    {
-        return std::max(std::max(v.x(), v.y()), v.z());
-    }
-
     MHWRender::MTextureManager* getTextureManager()
     {
         return MHWRender::MRenderer::theRenderer()->getTextureManager();
@@ -64,25 +43,16 @@ VolumeTexture VolumeSampler::sampleGridWithBoxFilter(const openvdb::FloatGrid& g
     return sampleVolume(texture_extents, sampling_func, progress_bar);
 }
 
-VolumeTexture VolumeSampler::sampleGridWithMipmapFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, ProgressBar *progress_bar)
+VolumeTexture VolumeSampler::sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents, ProgressBar *progress_bar)
 {
     // Calculate LOD level.
-    const auto index_bbox = getIndexSpaceBoundingBox(&grid);
+    const auto index_bbox = getIndexSpaceBoundingBox(multires.grid(0).get());
     const auto grid_extents = index_bbox.extents().asVec3d();
     const auto coarse_voxel_size = grid_extents / texture_extents.asVec3d();
     const auto max_levels = openvdb::math::Ceil(std::log2(maxComponentValue(grid_extents)));
     const auto lod_level = clamp(std::log2(maxComponentValue(coarse_voxel_size)), 0, max_levels);
-    const auto num_levels = size_t(openvdb::math::Ceil(lod_level)) + 1;
 
-    if (num_levels == 1) {
-        // No need for mult res grid.
-        return sampleGridWithBoxFilter(grid, texture_extents, progress_bar);
-    }
-
-    // Create and sample multi res grid.
-    openvdb::tools::MultiResGrid<openvdb::FloatTree> multires(num_levels, grid);
-
-    const auto world_bbox = grid.transform().indexToWorld(index_bbox);
+    const auto world_bbox = multires.grid(0)->transform().indexToWorld(index_bbox);
     const auto domain_extents = texture_extents.asVec3d();
     auto sampling_func = [&multires, lod_level, &world_bbox, &domain_extents](const openvdb::Vec3d& domain_index) {
         const auto sample_pos_ws = (domain_index + 0.5) / domain_extents * world_bbox.extents() + world_bbox.min();

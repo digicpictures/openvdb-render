@@ -58,7 +58,6 @@ MObject VDBVisualizerShape::s_matte;
 
 // Sliced display params.
 MObject VDBVisualizerShape::s_density_channel;
-MObject VDBVisualizerShape::s_slice_size;
 MObject VDBVisualizerShape::s_max_slice_count;
 MObject VDBVisualizerShape::s_apply_max_slice_count;
 MObject VDBVisualizerShape::s_scattering_color;
@@ -558,13 +557,6 @@ MStatus VDBVisualizerShape::initialize()
 
     // Sliced display attributes.
 
-    s_slice_size = nAttr.create("sliceSize", "slice_size", MFnNumericData::kFloat);
-    nAttr.setDefault(0.2);
-    nAttr.setMin(0.0);
-    nAttr.setSoftMax(2.0);
-    addAttribute(s_slice_size);
-    attributeAffects(s_slice_size, s_update_trigger);
-
     s_max_slice_count = nAttr.create("maxSliceCount", "max_slice_count", MFnNumericData::kInt);
     nAttr.setDefault(DEFAULT_MAX_SLICE_COUNT);
     nAttr.setMin(4);
@@ -721,13 +713,13 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
             m_vdb_data.sliced_display_channel = MPlug(tmo, s_density_channel).asString().asChar();
 
             SliceShaderParams& shader_params = m_vdb_data.sliced_display_shader_params;
-            shader_params.slice_size =          MPlug(tmo, s_slice_size).asFloat();
             shader_params.scattering =          plugAsFloatVector(MPlug(tmo, s_scattering_color)) * MPlug(tmo, s_scattering_intensity).asFloat();
             shader_params.absorption =          plugAsFloatVector(MPlug(tmo, s_absorption_color)) * MPlug(tmo, s_absorption_intensity).asFloat();
             shader_params.shadow_gain =         MPlug(tmo, s_shadow_gain).asFloat();
             shader_params.shadow_sample_count = MPlug(tmo, s_shadow_sample_count).asInt();
         }
-        else
+
+        if (m_vdb_data.display_mode >= DISPLAY_POINT_CLOUD)
         {
             const short shader_mode = MPlug(tmo, s_shader_mode).asShort();
             if (shader_mode == SHADER_MODE_VOLUME_COLLECTOR)

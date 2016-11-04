@@ -16,13 +16,12 @@ enum VDBDisplayMode {
 };
 
 struct SliceShaderParams {
-    float slice_size;
     MFloatVector scattering;
     MFloatVector absorption;
     float shadow_gain;
     int shadow_sample_count;
     bool operator==(const SliceShaderParams& rhs) const {
-        return slice_size == rhs.slice_size &&
+        return
             scattering == rhs.scattering &&
             absorption == rhs.absorption &&
             shadow_gain == rhs.shadow_gain &&

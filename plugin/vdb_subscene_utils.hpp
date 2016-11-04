@@ -36,6 +36,27 @@ struct RenderTargetDeleter {
 };
 typedef std::unique_ptr<MHWRender::MRenderTarget, RenderTargetDeleter> RenderTargetPtr;
 
+template <typename T>
+struct identity { typedef T type; };
+
+template <typename T>
+T unlerp(typename identity<T>::type a, typename identity<T>::type b, T x)
+{
+    return (x - a) / (b - a);
+}
+
+template <typename T>
+T clamp(T val, typename identity<T>::type floor, typename identity<T>::type ceil)
+{
+    return std::min(ceil, std::max(floor, val));
+}
+
+template <typename VecT>
+typename VecT::value_type maxComponentValue(const VecT& v)
+{
+    return std::max(std::max(v.x(), v.y()), v.z());
+}
+
 class RGBSampler {
     MFloatVector default_color;
 public:

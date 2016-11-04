@@ -37,8 +37,11 @@ struct VolumeTexture
     VolumeTexture(VolumeTexture&&) = default;
     VolumeTexture& operator=(VolumeTexture&&) = default;
 
+    void clear() { texture.reset(); }
+    operator bool() const { return texture.get() != nullptr; }
+
 private:
-    MHWRender::MTexture* acquireVolumeTexture(const openvdb::Coord& texture_extents, const float* pixel_data);
+    static MHWRender::MTexture* acquireVolumeTexture(const openvdb::Coord& texture_extents, const float* pixel_data);
 };
 
 
@@ -53,8 +56,8 @@ public:
 
     // Sample a single grid using simple box filter.
     VolumeTexture sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, ProgressBar *progress_bar = nullptr);
-    // Create a MultiResGrid and sample it. Filtering is done by the built-in sampling mechanism of MultiResGrid.
-    VolumeTexture sampleGridWithMipmapFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, ProgressBar *progress_bar = nullptr);
+    // Sample a MultiResGrid. Filtering is done by the built-in sampling mechanism of MultiResGrid.
+    VolumeTexture sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents, ProgressBar *progress_bar = nullptr);
 
 private:
     std::vector<float> m_buffer;

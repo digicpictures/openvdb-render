@@ -69,7 +69,6 @@ public:
 
     // sliced display parameters
     static MObject s_density_channel;
-    static MObject s_slice_size;
     static MObject s_max_slice_count;
     static MObject s_apply_max_slice_count;
     static MObject s_scattering_color;
