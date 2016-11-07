@@ -57,13 +57,8 @@ MObject VDBVisualizerShape::s_voxel_size;
 MObject VDBVisualizerShape::s_matte;
 
 // Sliced display params.
-MObject VDBVisualizerShape::s_density_channel;
 MObject VDBVisualizerShape::s_max_slice_count;
 MObject VDBVisualizerShape::s_apply_max_slice_count;
-MObject VDBVisualizerShape::s_scattering_color;
-MObject VDBVisualizerShape::s_scattering_intensity;
-MObject VDBVisualizerShape::s_absorption_color;
-MObject VDBVisualizerShape::s_absorption_intensity;
 MObject VDBVisualizerShape::s_shadow_gain;
 MObject VDBVisualizerShape::s_shadow_sample_count;
 
@@ -568,35 +563,6 @@ MStatus VDBVisualizerShape::initialize()
     addAttribute(s_apply_max_slice_count);
     attributeAffects(s_apply_max_slice_count, s_update_trigger);
 
-    s_density_channel = tAttr.create("densityChannel", "density_channel", MFnData::kString);
-    tAttr.setDefault(MFnStringData().create("density"));
-    addAttribute(s_density_channel);
-    attributeAffects(s_density_channel, s_update_trigger);
-
-    s_scattering_color = nAttr.createColor("scatteringColor", "scattering_color");
-    nAttr.setDefault(1.0, 1.0, 1.0);
-    addAttribute(s_scattering_color);
-    attributeAffects(s_scattering_color, s_update_trigger);
-
-    s_scattering_intensity = nAttr.create("scatteringIntensity", "scattering_intensity", MFnNumericData::kFloat);
-    nAttr.setDefault(1.5);
-    nAttr.setMin(0.0);
-    nAttr.setSoftMax(20.0);
-    addAttribute(s_scattering_intensity);
-    attributeAffects(s_scattering_intensity, s_update_trigger);
-
-    s_absorption_color = nAttr.createColor("absorptionColor", "absorption_color");
-    nAttr.setDefault(1.0, 1.0, 1.0);
-    addAttribute(s_absorption_color);
-    attributeAffects(s_absorption_color, s_update_trigger);
-
-    s_absorption_intensity = nAttr.create("absorptionIntensity", "absorption_intensity", MFnNumericData::kFloat);
-    nAttr.setDefault(0.1);
-    nAttr.setMin(0.0);
-    nAttr.setSoftMax(20.0);
-    addAttribute(s_absorption_intensity);
-    attributeAffects(s_absorption_intensity, s_update_trigger);
-
     s_shadow_gain = nAttr.create("shadowGain", "shadow_gain", MFnNumericData::kFloat);
     nAttr.setDefault(0.2);
     nAttr.setMin(0.0);
@@ -710,11 +676,7 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
         }
         else if (m_vdb_data.display_mode == DISPLAY_SLICES)
         {
-            m_vdb_data.sliced_display_channel = MPlug(tmo, s_density_channel).asString().asChar();
-
             SliceShaderParams& shader_params = m_vdb_data.sliced_display_shader_params;
-            shader_params.scattering =          plugAsFloatVector(MPlug(tmo, s_scattering_color)) * MPlug(tmo, s_scattering_intensity).asFloat();
-            shader_params.absorption =          plugAsFloatVector(MPlug(tmo, s_absorption_color)) * MPlug(tmo, s_absorption_intensity).asFloat();
             shader_params.shadow_gain =         MPlug(tmo, s_shadow_gain).asFloat();
             shader_params.shadow_sample_count = MPlug(tmo, s_shadow_sample_count).asInt();
         }

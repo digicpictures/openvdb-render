@@ -68,11 +68,8 @@ public:
     static MObject s_matte;
 
     // sliced display parameters
-    static MObject s_density_channel;
     static MObject s_max_slice_count;
     static MObject s_apply_max_slice_count;
-    static MObject s_scattering_color;
-    static MObject s_scattering_intensity;
     static MObject s_absorption_color;
     static MObject s_absorption_intensity;
     static MObject s_shadow_gain;

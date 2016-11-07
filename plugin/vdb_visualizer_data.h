@@ -16,15 +16,11 @@ enum VDBDisplayMode {
 };
 
 struct SliceShaderParams {
-    MFloatVector scattering;
-    MFloatVector absorption;
     float shadow_gain;
     int shadow_sample_count;
     bool operator==(const SliceShaderParams& rhs) const {
         return
-            scattering == rhs.scattering &&
-            absorption == rhs.absorption &&
-            shadow_gain == rhs.shadow_gain &&
+            shadow_gain == rhs.shadow_gain &
             shadow_sample_count == rhs.shadow_sample_count; 
     }
     bool operator !=(const SliceShaderParams& rhs) const { return !(*this == rhs); }
@@ -58,7 +54,6 @@ struct VDBVisualizerData {
     VDBDisplayMode display_mode;
 
     // Sliced display params.
-    std::string sliced_display_channel;
     int max_slice_count;
     SliceShaderParams sliced_display_shader_params;
 
