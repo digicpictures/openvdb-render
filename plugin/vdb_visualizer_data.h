@@ -46,6 +46,8 @@ struct VDBVisualizerData {
     Gradient attenuation_gradient;
     Gradient emission_gradient;
 
+    float anisotropy;
+
     openvdb::io::File* vdb_file;
 
     float point_size;

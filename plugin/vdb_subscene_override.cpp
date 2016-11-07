@@ -200,6 +200,8 @@ namespace MHWRender {
         Gradient attenuation_gradient;
         Gradient emission_gradient;
 
+        float anisotropy;
+
         std::string vdb_path;
         openvdb::io::File* vdb_file;
         openvdb::GridBase::ConstPtr scattering_grid;
@@ -316,6 +318,7 @@ namespace MHWRender {
         change_set |= setup_parameter(attenuation_gradient, data->attenuation_gradient, ChangeSet::GENERIC_ATTRIBUTE);
         change_set |= setup_parameter(emission_gradient, data->emission_gradient, ChangeSet::GENERIC_ATTRIBUTE);
         change_set |= setup_parameter(point_skip, data->point_skip, ChangeSet::GENERIC_ATTRIBUTE);
+        change_set |= setup_parameter(anisotropy, data->anisotropy, ChangeSet::GENERIC_ATTRIBUTE);
 
         change_set |= setup_parameter(vdb_path, data->vdb_path, ChangeSet::VDB_FILE);
         vdb_file = data->vdb_file;
@@ -947,6 +950,14 @@ float CalcLOD(float distance_model, float3 size_model)
     return log(MAXV(distance_voxels)) / log(2.f);
 }
 
+#define ONE_OVER_4PI 0.07957747f
+float HGPhase(float costheta)
+{
+    float g = scattering_anisotropy;
+    float g_squared = g * g;
+    return ONE_OVER_4PI * (1 - g_squared) / pow(1 + g_squared - 2*g*costheta, 1.5f);
+}
+
 float3 RayTransmittance(float3 from_model, float3 to_model)
 {
     float3 step_model = (to_model - from_model) / float(shadow_sample_count + 1);
@@ -983,29 +994,35 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     float3 extinction = scattering + absorption;
     float3 albedo = scattering / extinction;
 
+    float3 view_dir_model = normalize(mul(world_inverse_mat, float4(view_dir_world, 0)).xyz);
+    float3 dom = DominantAxis(view_dir_model/volume_size, float3(0, 0, 1));
+    float slice_thickness = dot(volume_size / float(max_slice_count), float3(1,1,1)/3);
+
     float3 lumi = float3(0, 0, 0);
 
     // Loop through directional lights.
     for (int i = 0; i < directional_light_count; ++i) {
-        float3 light_vector_norm = -normalize(mul(world_inverse_mat, float4(directional_light_directions[i], 0)).xyz);
-        float3 corner = volume_origin + (0.5f + 0.5f * sign(light_vector_norm)) * volume_size;
-        float3 light_pos = input.pos_model + 1.1f * length(corner - input.pos_model) * light_vector_norm;
+        float3 light_dir_world = directional_light_directions[i];
+        float3 light_dir_model = -normalize(mul(world_inverse_mat, float4(light_dir_world, 0)).xyz);
+        float3 corner = volume_origin + (0.5f + 0.5f * sign(light_dir_model)) * volume_size;
+        float3 light_pos = input.pos_model + 1.1f * length(corner - input.pos_model) * light_dir_model;
         float3 shadow = RayTransmittance(input.pos_model, light_pos);
-        float3 light_color = directional_light_colors[i] * directional_light_intensities[i];
-        lumi += albedo * light_color * shadow;
+        float3 light_radiance = directional_light_colors[i] * directional_light_intensities[i];
+        float3 incident_radiance = light_radiance * shadow;
+        float phase = HGPhase(dot(-view_dir_world, light_dir_world));
+        lumi += scattering * phase * incident_radiance * slice_thickness;
     }
 
     // Loop through point lights.
     for (int i = 0; i < point_light_count; ++i) {
         float3 light_pos_model = mul(world_inverse_mat, float4(point_light_positions[i], 1)).xyz;
         float3 shadow = RayTransmittance(input.pos_model, light_pos_model);
-        float3 light_color = point_light_colors[i] * point_light_intensities[i];
-        lumi += albedo * light_color * shadow;
+        float3 light_radiance = point_light_colors[i] * point_light_intensities[i];
+        float3 incident_radiance = light_radiance * shadow;
+        float3 light_dir_model = normalize(light_pos_model - input.pos_model);
+        float phase = HGPhase(dot(-view_dir_model, light_dir_model));
+        lumi += scattering * phase * incident_radiance * slice_thickness;
     }
-
-    float3 view_dir_model = normalize(mul(world_inverse_mat, float4(view_dir_world, 0)).xyz);
-    float3 dom = DominantAxis(view_dir_model/volume_size, float3(0, 0, 1));
-    float slice_thickness = dot(dom, volume_size / float(max_slice_count)) / abs(dot(dom, view_dir_model));
 
     float3 transmittance = exp(-extinction * slice_thickness);
 
@@ -1341,6 +1358,7 @@ technique Main < int isTransparent = 1; >
 
         // Update shader params.
         CHECK_MSTATUS(m_volume_shader->setParameter("scattering_color", data.scattering_color));
+        CHECK_MSTATUS(m_volume_shader->setParameter("scattering_anisotropy", data.anisotropy));
         CHECK_MSTATUS(m_volume_shader->setParameter("absorption_color", data.attenuation_color));
         CHECK_MSTATUS(m_volume_shader->setParameter("emission_color", data.emission_color));
         CHECK_MSTATUS(m_volume_shader->setParameter("shadow_gain", data.sliced_display_shader_params.shadow_gain));

@@ -795,6 +795,8 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
                 m_vdb_data.scattering_gradient.update(s_shader_params.scattering_gradient, tmo);
                 m_vdb_data.attenuation_gradient.update(s_shader_params.attenuation_gradient, tmo);
                 m_vdb_data.emission_gradient.update(s_shader_params.emission_gradient, tmo);
+
+                m_vdb_data.anisotropy = MPlug(tmo, s_shader_params.anisotropy).asFloat();
             }
             else if (shader_mode == SHADER_MODE_SIMPLE)
             {
@@ -837,6 +839,8 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
                 m_vdb_data.scattering_gradient.clear();
                 m_vdb_data.attenuation_gradient.clear();
                 m_vdb_data.emission_gradient.clear();
+
+                m_vdb_data.anisotropy = MPlug(tmo, s_shader_params.anisotropy).asFloat();
             }
         }
     }
