@@ -20,7 +20,7 @@ struct SliceShaderParams {
     int shadow_sample_count;
     bool operator==(const SliceShaderParams& rhs) const {
         return
-            shadow_gain == rhs.shadow_gain &
+            shadow_gain == rhs.shadow_gain &&
             shadow_sample_count == rhs.shadow_sample_count; 
     }
     bool operator !=(const SliceShaderParams& rhs) const { return !(*this == rhs); }
