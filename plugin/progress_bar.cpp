@@ -40,7 +40,7 @@ void ProgressBar::addProgress(uint32_t progress_to_add)
     const auto new_percents = uint8_t((old_progress + progress_to_add) * 100 / m_max_progress);
     if (new_percents > old_percents) {
         tbb::mutex::scoped_lock lock(m_mutex);
-        MGlobal::executeCommand(format("progressBar -e -pr ^1s $gMainProgressBar", new_percents));
+        m_computation.setProgress(new_percents);
     }
 }
 
@@ -49,34 +49,26 @@ void ProgressBar::setProgress(const int percent)
     if (!m_show_progress_bar)
         return;
 
-    MGlobal::executeCommand(format("progressBar -e -pr ^1s $gMainProgressBar; refresh", percent));
+    m_computation.setProgress(percent);
 }
 
-bool ProgressBar::isCancelled() const
+bool ProgressBar::isCancelled()
 {
     if (!m_show_progress_bar || !m_is_interruptable)
         return false;
 
     tbb::mutex::scoped_lock lock(m_mutex);
 
-    int is_cancelled = 0;
-    MGlobal::executeCommand("progressBar -q -ic $gMainProgressBar", is_cancelled);
-    if (is_cancelled)
-        MGlobal::displayInfo("Interrupted by user");
-
-    return is_cancelled != 0;
+    return m_computation.isInterruptRequested();
 }
 
-void ProgressBar::beginProgress(const MString& msg) const
+void ProgressBar::beginProgress(const MString& msg)
 {
-    // Clear previous isCancelled flag.
-    MGlobal::executeCommand("progressBar -e -bp -ii 1 $gMainProgressBar");
-    MGlobal::executeCommand("progressBar -e -ep $gMainProgressBar");
-    // Initialize the progress bar.
-    MGlobal::executeCommand(format("progressBar -e -bp -ii ^1s -st \"^2s\" -max 100 $gMainProgressBar", m_is_interruptable, msg));
+    m_computation.beginComputation(true, false);
+    m_computation.setProgressStatus(msg);
 }
 
-void ProgressBar::endProgress() const
+void ProgressBar::endProgress()
 {
-    MGlobal::executeCommand("progressBar -e -ep $gMainProgressBar");
+    m_computation.endComputation();
 }

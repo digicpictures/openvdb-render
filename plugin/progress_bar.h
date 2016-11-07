@@ -5,7 +5,7 @@
 #include <tbb/atomic.h>
 #include <tbb/mutex.h>
 
-#include <maya/MGlobal.h>
+#include <maya/MComputation.h>
 #include <maya/MString.h>
 
 // Based on the gpuCache plugin from the devkit.
@@ -22,7 +22,7 @@ public:
 
     // The public methods below are thread-safe.
     void addProgress(uint32_t progress_to_add);
-    bool isCancelled() const;
+    bool isCancelled();
 
 private:
     ProgressBar(const ProgressBar&) = delete;
@@ -30,9 +30,10 @@ private:
     ProgressBar(ProgressBar&&) = delete;
     ProgressBar&& operator=(ProgressBar&&) = delete;
 
-    void beginProgress(const MString& msg) const;
-    void endProgress() const;
+    void beginProgress(const MString& msg);
+    void endProgress();
 
+    MComputation m_computation;
     bool m_show_progress_bar;
     bool m_is_interruptable;
     uint32_t m_max_progress;
