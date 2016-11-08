@@ -10,6 +10,8 @@
 #include <tbb/task_scheduler_init.h>
 #include <tbb/parallel_for.h>
 
+#include <Cg/cg.h>
+
 #include "progress_bar.h"
 #include "volume_sampler.h"
 #include "vdb_maya_utils.hpp"
@@ -1147,6 +1149,16 @@ technique Main < int isTransparent = 1; >
         m_volume_shader.reset(shader_manager->getEffectsBufferShader(s_effect_code.c_str(), unsigned(s_effect_code.size()), "Main", 0, 0, false, preDrawCallback));
         if (!m_volume_shader) {
             LOG_ERROR("Cannot compile cgfx.");
+            CGcontext context = cgCreateContext();
+            cgSetContextBehavior(context, CG_BEHAVIOR_3100);
+            for (auto shader_spec : { std::make_pair("VolumeVertexShader", "gp5vp"), std::make_pair("VolumeFragmentShader", "gp5fp") })
+            {
+                if (!cgCreateProgram(context, CG_SOURCE, s_effect_code.c_str(), cgGetProfile(shader_spec.second), shader_spec.first, nullptr))
+                {
+                    const char *compiler_output = cgGetLastListing(context);
+                    LOG_ERROR(format("^1s: compilation errors:\n^2s", shader_spec.first, compiler_output).asChar());
+                }
+            }
             return;
         }
         m_volume_shader->setIsTransparent(true);
