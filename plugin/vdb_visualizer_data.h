@@ -1,5 +1,7 @@
 #pragma once
 
+#include <utility>
+
 #include <maya/MBoundingBox.h>
 #include <maya/MFloatVector.h>
 #include <openvdb/io/File.h>
@@ -15,47 +17,58 @@ enum VDBDisplayMode {
     DISPLAY_SLICES
 };
 
-struct SliceShaderParams {
-    float shadow_gain;
-    int shadow_sample_count;
-    bool operator==(const SliceShaderParams& rhs) const {
-        return
-            shadow_gain == rhs.shadow_gain &&
-            shadow_sample_count == rhs.shadow_sample_count; 
+enum class EmissionMode {
+    UNIFORM = 0,
+    DENSITY = 1,
+    CHANNEL = 2,
+    BLACKBODY = 3,
+    DENSITY_AND_BLACKBODY = 4
+};
+
+template <typename T>
+struct ChannelParams
+{
+    T value;
+    std::string name;
+    Gradient gradient;
+    template <typename... Args>
+    ChannelParams(Args&&... args) : value(std::forward<Args>(args)...) {}
+    ChannelParams(const ChannelParams<T>&) = default;
+    ChannelParams<T>& operator=(const ChannelParams<T>&) = default;
+    bool operator==(const ChannelParams<T>& rhs) const
+    {
+        return value == rhs.value && name == rhs.name && !gradient.is_different(rhs.gradient);
     }
-    bool operator !=(const SliceShaderParams& rhs) const { return !(*this == rhs); }
+    bool operator!=(const ChannelParams<T>& rhs) const { return !(*this == rhs); }
 };
 
 struct VDBVisualizerData {
     MBoundingBox bbox;
 
-    MFloatVector scattering_color;
-    MFloatVector attenuation_color;
-    MFloatVector emission_color;
-
     std::string vdb_path;
-    std::string attenuation_channel;
-    std::string scattering_channel;
-    std::string emission_channel;
-
-    Gradient scattering_gradient;
-    Gradient attenuation_gradient;
-    Gradient emission_gradient;
-
-    float anisotropy;
-
     openvdb::io::File* vdb_file;
 
-    float point_size;
-    float point_jitter;
+    ChannelParams<float>        density_channel;
+    ChannelParams<MFloatVector> scattering_channel;
+    ChannelParams<MFloatVector> attenuation_channel;
+    ChannelParams<MFloatVector> emission_channel;
+    ChannelParams<MFloatVector> transparency_channel;
+    ChannelParams<float>        temperature_channel;
+    float anisotropy;
+    EmissionMode emission_mode;
 
-    int point_skip;
     int update_trigger;
     VDBDisplayMode display_mode;
 
+    // Point cloud params.
+    float point_size;
+    float point_jitter;
+    int point_skip;
+
     // Sliced display params.
     int max_slice_count;
-    SliceShaderParams sliced_display_shader_params;
+    float shadow_gain;
+    int shadow_sample_count;
 
     VDBVisualizerData();
     ~VDBVisualizerData();

@@ -8,7 +8,7 @@ class channelController:
 
         self.addControl('%sInputMin' % channel, label='Input Min')
         self.addControl('%sInputMax' % channel, label='Input Max')
-        pm.mel.eval('source AEaddRampControl.mel; AEaddRampControl("%s.%sFloatRamp")' % (node_name, channel))
+        self.create_float_ramp(node_name, channel)
         self.addControl('%sContrast' % channel, label='Contrast')
         self.addControl('%sContrastPivot' % channel, label='Contrast Pivot')
         self.addControl('%sBias' % channel, label='Bias')
@@ -21,7 +21,7 @@ class channelController:
         self.addSeparator()
         self.addControl('%sInputMin' % channel, label='Input Min')
         self.addControl('%sInputMax' % channel, label='Input Max')
-        pm.mel.eval('source AEaddRampControl.mel; AEaddRampControl("%s.%sRgbRamp")' % (node_name, channel))
+        self.create_rgb_ramp(node_name, channel)
         self.addControl('%sGamma' % channel, label='Gamma')
         self.addControl('%sHueShift' % channel, label='Hue Shift')
         self.addControl('%sSaturation' % channel, label='Saturation')
@@ -32,3 +32,9 @@ class channelController:
         self.addControl('%sAdd' % channel, label='Add')
 
         self.endLayout()
+
+    def create_float_ramp(self, channel, node_name):
+        pm.mel.eval('source AEaddRampControl.mel; AEaddRampControl("%s.%sFloatRamp")' % (node_name, channel))
+
+    def create_rgb_ramp(self, channel, node_name):
+        pm.mel.eval('source AEaddRampControl.mel; AEaddRampControl("%s.%sRgbRamp")' % (node_name, channel))

@@ -26,22 +26,17 @@ typedef ValueRange<float> FloatRange;
 
 struct VolumeTexture
 {
-    TexturePtr texture;
+    TexturePtr texture_ptr;
     FloatRange value_range;
 
-    VolumeTexture() : texture(nullptr) {}
-    VolumeTexture(const openvdb::Coord& extents, const float* data_norm, const FloatRange& value_range_)
-        : texture(acquireVolumeTexture(extents, data_norm)), value_range(value_range_) {}
+    VolumeTexture() : texture_ptr(nullptr) {}
     VolumeTexture(const VolumeTexture&) = delete;
     VolumeTexture& operator=(const VolumeTexture&) = delete;
     VolumeTexture(VolumeTexture&&) = default;
     VolumeTexture& operator=(VolumeTexture&&) = default;
 
-    void clear() { texture.reset(); }
-    operator bool() const { return texture.get() != nullptr; }
-
-private:
-    static MHWRender::MTexture* acquireVolumeTexture(const openvdb::Coord& texture_extents, const float* pixel_data);
+    void clear() { texture_ptr.reset(); }
+    operator bool() const { return texture_ptr.get() != nullptr; }
 };
 
 
@@ -50,15 +45,20 @@ private:
 class VolumeSampler
 {
 public:
+    VolumeSampler() : m_texture(nullptr) {}
+    void attachTexture(VolumeTexture *texture) { m_texture = texture; }
+
     // Generic sampling function.
     template <typename SamplingFunc>
-    VolumeTexture sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func, ProgressBar *progress_bar = nullptr);
+    void sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func, ProgressBar *progress_bar = nullptr);
 
     // Sample a single grid using simple box filter.
-    VolumeTexture sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, ProgressBar *progress_bar = nullptr);
+    void sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, ProgressBar *progress_bar = nullptr);
     // Sample a MultiResGrid. Filtering is done by the built-in sampling mechanism of MultiResGrid.
-    VolumeTexture sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents, ProgressBar *progress_bar = nullptr);
+    void sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents, ProgressBar *progress_bar = nullptr);
 
 private:
+    static MHWRender::MTexture* acquireVolumeTexture(const openvdb::Coord& texture_extents, const float* pixel_data);
     std::vector<float> m_buffer;
+    VolumeTexture *m_texture;
 };

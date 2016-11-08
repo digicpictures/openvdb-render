@@ -15,6 +15,7 @@
 #include "progress_bar.h"
 #include "volume_sampler.h"
 #include "vdb_maya_utils.hpp"
+#include "vdb_visualizer_data.h"
 
 
 namespace {
@@ -135,11 +136,18 @@ namespace MHWRender {
         VolumeTexture volume_texture;
 
         VolumeChannel() {}
-        VolumeChannel(openvdb::io::File* vdb_file, const std::string& channel_name);
         VolumeChannel(VolumeChannel&&) = default;
         VolumeChannel& operator=(VolumeChannel&&) = default;
         bool isValid() const { return grid.get() != nullptr; }
+        void loadGrid(openvdb::io::File* vdb_file, const std::string& channel_name);
         void sample(VolumeSampler& volume_sampler, int slice_count);
+    };
+
+    struct ChannelAssignment
+    {
+        const char *param_prefix;
+        VolumeChannel::Ptr channel_ptr;
+        ChannelAssignment(const char *param_prefix_) : param_prefix(param_prefix_) {}
     };
 
     class SlicedDisplay
@@ -159,9 +167,11 @@ namespace MHWRender {
         ShaderPtr m_volume_shader;
 
         std::unordered_map<std::string, std::weak_ptr<VolumeChannel>> m_channel_cache;
-        VolumeChannel::Ptr m_scattering_channel;
-        VolumeChannel::Ptr m_absorption_channel;
-        VolumeChannel::Ptr m_emission_channel;
+        ChannelAssignment m_density_channel;
+        ChannelAssignment m_scattering_channel;
+        ChannelAssignment m_emission_channel;
+        ChannelAssignment m_transparency_channel;
+        ChannelAssignment m_temperature_channel;
         VolumeSampler m_volume_sampler;
 
         Renderable m_slices_renderable;
@@ -174,62 +184,31 @@ namespace MHWRender {
         static const std::string s_effect_code;
     };
 
-    // === VDBSubSceneOverrideData implementation =====================================
+    // === VDBSubSceneOverrideData ====================================================
 
-    void VDBSubSceneOverride::shader_instance_deleter::operator()(MShaderInstance* p)
-    {
-        auto shmgr = get_shader_manager();
-        if (shmgr != nullptr)
-            shmgr->releaseShader(p);
-    }
+    enum class ChangeSet : unsigned int {
+        NO_CHANGES = 0,
+        GENERIC_ATTRIBUTE =    1<<0,
+        GRADIENT =             1<<1,
+        VDB_FILE =             1<<2,
+        MAX_SLICE_COUNT =      1<<3,
+        SCATTERING_CHANNEL =   1<<4,
+        ATTENUATION_CHANNEL =  1<<5,
+        EMISSION_CHANNEL =     1<<6,
+        DENSITY_CHANNEL =      1<<7,
+        TRANSPARENCY_CHANNEL = 1<<8,
+        TEMPERATURE_CHANNEL =  1<<9,
+    };
 
-    struct VDBSubSceneOverrideData {
-        MBoundingBox bbox;
-
+    struct VDBSubSceneOverrideData : public VDBVisualizerData {
         MMatrix world_matrix;
         bool is_selected;
         MColor wireframe_color;
 
-        MFloatVector scattering_color;
-        MFloatVector attenuation_color;
-        MFloatVector emission_color;
-
-        std::string attenuation_channel;
-        std::string scattering_channel;
-        std::string emission_channel;
-
-        Gradient scattering_gradient;
-        Gradient attenuation_gradient;
-        Gradient emission_gradient;
-
-        float anisotropy;
-
-        std::string vdb_path;
-        openvdb::io::File* vdb_file;
         openvdb::GridBase::ConstPtr scattering_grid;
         openvdb::GridBase::ConstPtr attenuation_grid;
         openvdb::GridBase::ConstPtr emission_grid;
 
-        float point_size;
-        float point_jitter;
-
-        int point_skip;
-        int update_trigger;
-        VDBDisplayMode display_mode;
-
-        std::string sliced_display_channel;
-        int max_slice_count;
-        SliceShaderParams sliced_display_shader_params;
-
-        enum class ChangeSet : unsigned int {
-            NO_CHANGES = 0,
-            GENERIC_ATTRIBUTE = 1<<0,
-            VDB_FILE =          1<<1,
-            MAX_SLICE_COUNT =   1<<2,
-            SCATTERING_GRID =   1<<3,
-            ATTENUATION_GRID =  1<<4,
-            EMISSION_GRID =     1<<5
-        };
         ChangeSet change_set;
 
         VDBSubSceneOverrideData();
@@ -238,37 +217,30 @@ namespace MHWRender {
         bool update(const VDBVisualizerData* data, const MObject& obj);
     };
 
-    inline VDBSubSceneOverrideData::ChangeSet& operator|=(VDBSubSceneOverrideData::ChangeSet& lhs, VDBSubSceneOverrideData::ChangeSet rhs)
+    inline ChangeSet& operator|=(ChangeSet& lhs, ChangeSet rhs)
     {
-        return lhs = VDBSubSceneOverrideData::ChangeSet(unsigned(lhs) | unsigned(rhs));
+        return lhs = ChangeSet(unsigned(lhs) | unsigned(rhs));
     }
-    inline VDBSubSceneOverrideData::ChangeSet operator|(VDBSubSceneOverrideData::ChangeSet lhs, VDBSubSceneOverrideData::ChangeSet rhs)
+    inline ChangeSet operator|(ChangeSet lhs, ChangeSet rhs)
     {
         lhs |= rhs;
         return lhs;
     }
-    inline VDBSubSceneOverrideData::ChangeSet& operator&=(VDBSubSceneOverrideData::ChangeSet& lhs, VDBSubSceneOverrideData::ChangeSet rhs)
+    inline ChangeSet& operator&=(ChangeSet& lhs, ChangeSet rhs)
     {
-        return lhs = VDBSubSceneOverrideData::ChangeSet(unsigned(lhs) & unsigned(rhs));
+        return lhs = ChangeSet(unsigned(lhs) & unsigned(rhs));
     }
-    inline VDBSubSceneOverrideData::ChangeSet operator&(VDBSubSceneOverrideData::ChangeSet lhs, VDBSubSceneOverrideData::ChangeSet rhs)
+    inline ChangeSet operator&(ChangeSet lhs, ChangeSet rhs)
     {
         lhs &= rhs;
         return lhs;
     }
-    inline bool hasChange(VDBSubSceneOverrideData::ChangeSet change_set, VDBSubSceneOverrideData::ChangeSet mask)
+    inline bool hasChange(ChangeSet change_set, ChangeSet mask)
     {
-        return (change_set & mask) != VDBSubSceneOverrideData::ChangeSet::NO_CHANGES;
+        return (change_set & mask) != ChangeSet::NO_CHANGES;
     }
 
-    VDBSubSceneOverrideData::VDBSubSceneOverrideData() : point_size(std::numeric_limits<float>::infinity()),
-        is_selected(false),
-        point_jitter(std::numeric_limits<float>::infinity()),
-        point_skip(-1),
-        update_trigger(-1),
-        max_slice_count(-1),
-        display_mode(DISPLAY_AXIS_ALIGNED_BBOX),
-        change_set(ChangeSet::NO_CHANGES)
+    VDBSubSceneOverrideData::VDBSubSceneOverrideData() : is_selected(false), change_set(ChangeSet::NO_CHANGES)
     {
         for (unsigned int x = 0; x < 4; ++x)
         {
@@ -290,6 +262,27 @@ namespace MHWRender {
         vdb_file = nullptr;
     }
 
+    namespace {
+        template <typename T>
+        ChangeSet setup_channel(ChannelParams<T>& target, const ChannelParams<T>& source, ChangeSet channel_mask)
+        {
+            if (target.name != source.name)
+            {
+                target = source;
+                return channel_mask;
+            }
+            else if (target != source)
+            {
+                target = source;
+                return ChangeSet::GENERIC_ATTRIBUTE;
+            }
+            else
+            {
+                return ChangeSet::NO_CHANGES;
+            }
+        }
+    } // unnamed namespace
+
     bool VDBSubSceneOverrideData::update(const VDBVisualizerData* data, const MObject& obj)
     {
         // TODO: we can limit some of the comparisons to the display mode
@@ -310,17 +303,16 @@ namespace MHWRender {
 
         change_set |= setup_parameter(display_mode, data->display_mode, ChangeSet::GENERIC_ATTRIBUTE);
         change_set |= setup_parameter(bbox, data->bbox, ChangeSet::GENERIC_ATTRIBUTE);
-        change_set |= setup_parameter(scattering_color, data->scattering_color, ChangeSet::GENERIC_ATTRIBUTE);
-        change_set |= setup_parameter(attenuation_color, data->attenuation_color, ChangeSet::GENERIC_ATTRIBUTE);
-        change_set |= setup_parameter(emission_color, data->emission_color, ChangeSet::GENERIC_ATTRIBUTE);
-        change_set |= setup_parameter(attenuation_channel, data->attenuation_channel, ChangeSet::ATTENUATION_GRID);
-        change_set |= setup_parameter(scattering_channel, data->scattering_channel, ChangeSet::SCATTERING_GRID);
-        change_set |= setup_parameter(emission_channel, data->emission_channel, ChangeSet::EMISSION_GRID);
-        change_set |= setup_parameter(scattering_gradient, data->scattering_gradient, ChangeSet::GENERIC_ATTRIBUTE);
-        change_set |= setup_parameter(attenuation_gradient, data->attenuation_gradient, ChangeSet::GENERIC_ATTRIBUTE);
-        change_set |= setup_parameter(emission_gradient, data->emission_gradient, ChangeSet::GENERIC_ATTRIBUTE);
         change_set |= setup_parameter(point_skip, data->point_skip, ChangeSet::GENERIC_ATTRIBUTE);
+
+        change_set |= setup_channel(density_channel, data->density_channel, ChangeSet::DENSITY_CHANNEL);
+        change_set |= setup_channel(scattering_channel, data->scattering_channel, ChangeSet::SCATTERING_CHANNEL);
+        change_set |= setup_channel(attenuation_channel, data->attenuation_channel, ChangeSet::ATTENUATION_CHANNEL);
+        change_set |= setup_channel(emission_channel, data->emission_channel, ChangeSet::EMISSION_CHANNEL);
+        change_set |= setup_channel(transparency_channel, data->transparency_channel, ChangeSet::TRANSPARENCY_CHANNEL);
+        change_set |= setup_channel(temperature_channel, data->temperature_channel, ChangeSet::TEMPERATURE_CHANNEL);
         change_set |= setup_parameter(anisotropy, data->anisotropy, ChangeSet::GENERIC_ATTRIBUTE);
+        change_set |= setup_parameter(emission_mode, data->emission_mode, ChangeSet::GENERIC_ATTRIBUTE);
 
         change_set |= setup_parameter(vdb_path, data->vdb_path, ChangeSet::VDB_FILE);
         vdb_file = data->vdb_file;
@@ -328,8 +320,9 @@ namespace MHWRender {
             clear();
 
         if (display_mode == VDBDisplayMode::DISPLAY_SLICES) {
-            change_set |= setup_parameter(sliced_display_shader_params, data->sliced_display_shader_params, ChangeSet::GENERIC_ATTRIBUTE);
             change_set |= setup_parameter(max_slice_count, data->max_slice_count, ChangeSet::MAX_SLICE_COUNT);
+            change_set |= setup_parameter(shadow_sample_count, data->shadow_sample_count, ChangeSet::GENERIC_ATTRIBUTE);
+            change_set |= setup_parameter(shadow_gain, data->shadow_gain, ChangeSet::GENERIC_ATTRIBUTE);
         }
 
         point_size = data->point_size;
@@ -339,6 +332,13 @@ namespace MHWRender {
     }
 
     // === VDBSubSceneOverride implementation ==================================
+
+    void VDBSubSceneOverride::shader_instance_deleter::operator()(MShaderInstance* p)
+    {
+        auto shmgr = get_shader_manager();
+        if (shmgr != nullptr)
+            shmgr->releaseShader(p);
+    }
 
     MString VDBSubSceneOverride::registrantId("VDBVisualizerSubSceneOverride");
 
@@ -444,7 +444,7 @@ namespace MHWRender {
         bounding_box->setMatrix(&data->world_matrix);
         point_cloud->setMatrix(&data->world_matrix);
 
-        if (data->change_set == VDBSubSceneOverrideData::ChangeSet::NO_CHANGES)
+        if (data->change_set == ChangeSet::NO_CHANGES)
             return;
 
         const bool file_exists = data->vdb_file != nullptr;
@@ -532,8 +532,8 @@ namespace MHWRender {
                 try {
                     if (!data->vdb_file->isOpen())
                         data->vdb_file->open(false);
-                    if (data->attenuation_grid == nullptr || data->attenuation_grid->getName() != data->attenuation_channel)
-                        data->attenuation_grid = data->vdb_file->readGrid(data->attenuation_channel);
+                    if (data->attenuation_grid == nullptr || data->attenuation_grid->getName() != data->attenuation_channel.name)
+                        data->attenuation_grid = data->vdb_file->readGrid(data->attenuation_channel.name);
                 }
                 catch (...) {
                     data->attenuation_grid = nullptr;
@@ -625,8 +625,8 @@ namespace MHWRender {
                 // setting up color buffers
 
                 try {
-                    if (data->scattering_grid == nullptr || data->scattering_grid->getName() != data->scattering_channel)
-                        data->scattering_grid = data->vdb_file->readGrid(data->scattering_channel);
+                    if (data->scattering_grid == nullptr || data->scattering_grid->getName() != data->scattering_channel.name)
+                        data->scattering_grid = data->vdb_file->readGrid(data->scattering_channel.name);
                 }
                 catch (...) {
                     data->scattering_grid = nullptr;
@@ -647,8 +647,8 @@ namespace MHWRender {
                 }
 
                 try {
-                    if (data->emission_grid == nullptr || data->emission_grid->getName() != data->emission_channel)
-                        data->emission_grid = data->vdb_file->readGrid(data->emission_channel);
+                    if (data->emission_grid == nullptr || data->emission_grid->getName() != data->emission_channel.name)
+                        data->emission_grid = data->vdb_file->readGrid(data->emission_channel.name);
                 }
                 catch (...) {
                     data->emission_grid = nullptr;
@@ -685,15 +685,15 @@ namespace MHWRender {
                         const MFloatVector& v = vertices[i];
                         const openvdb::Vec3d pos(v.x, v.y, v.z);
                         MColor& color = colors[i];
-                        const MFloatVector scattering_color = data->scattering_gradient.evaluate(scattering_sampler->get_rgb(pos));
-                        const MFloatVector emission_color = data->emission_gradient.evaluate(emission_sampler->get_rgb(pos));
-                        const MFloatVector attenuation_color = data->attenuation_gradient.evaluate(attenuation_sampler->get_rgb(pos));
-                        color.r = scattering_color.x * data->scattering_color.x + emission_color.x * data->emission_color.x;
-                        color.g = scattering_color.y * data->scattering_color.y + emission_color.y * data->emission_color.y;
-                        color.b = scattering_color.z * data->scattering_color.z + emission_color.z * data->emission_color.z;
-                        color.a = (attenuation_color.x * data->attenuation_color.x +
-                            attenuation_color.y * data->attenuation_color.y +
-                            attenuation_color.z * data->attenuation_color.z) / 3.0f;
+                        const MFloatVector scattering_color = data->scattering_channel.gradient.evaluate(scattering_sampler->get_rgb(pos));
+                        const MFloatVector emission_color = data->emission_channel.gradient.evaluate(emission_sampler->get_rgb(pos));
+                        const MFloatVector attenuation_color = data->attenuation_channel.gradient.evaluate(attenuation_sampler->get_rgb(pos));
+                        color.r = scattering_color.x * data->scattering_channel.value.x + emission_color.x * data->emission_channel.value.x;
+                        color.g = scattering_color.y * data->scattering_channel.value.y + emission_color.y * data->emission_channel.value.y;
+                        color.b = scattering_color.z * data->scattering_channel.value.z + emission_color.z * data->emission_channel.value.z;
+                        color.a = (attenuation_color.x * data->attenuation_channel.value.x +
+                            attenuation_color.y * data->attenuation_channel.value.y +
+                            attenuation_color.z * data->attenuation_channel.value.z) / 3.0f;
                     }
                 });
                 p_color_buffer->commit(colors);
@@ -724,7 +724,7 @@ namespace MHWRender {
             }
         }
 
-        data->change_set = VDBSubSceneOverrideData::ChangeSet::NO_CHANGES;
+        data->change_set = ChangeSet::NO_CHANGES;
     }
 
     bool VDBSubSceneOverride::requiresUpdate(const MSubSceneContainer& /*container*/, const MFrameContext& /*frameContext*/) const
@@ -764,7 +764,7 @@ namespace MHWRender {
 
     } // unnamed namespace
 
-    VolumeChannel::VolumeChannel(openvdb::io::File* vdb_file, const std::string& channel_name)
+    void VolumeChannel::loadGrid(openvdb::io::File* vdb_file, const std::string& channel_name)
     {
         // Load grid.
         grid = loadFloatGrid(vdb_file, channel_name);
@@ -781,7 +781,8 @@ namespace MHWRender {
     {
         ProgressBar pb("vdb_visualizer: sampling grid");
         const auto extents = openvdb::Coord(slice_count, slice_count, slice_count);
-        volume_texture = volume_sampler.sampleMultiResGrid(*multires, extents, &pb);
+        volume_sampler.attachTexture(&volume_texture);
+        volume_sampler.sampleMultiResGrid(*multires, extents, &pb);
     }
 
 
@@ -822,6 +823,16 @@ float4x4 world_view_proj_mat : WorldViewProjection < string UIWidget = "None"; >
 float3 volume_size < string UIWidget = "None"; >;
 float3 volume_origin < string UIWidget = "None"; >;
 
+float     density = 1.0f;
+bool      use_density_texture = true;
+float2    density_value_range = float2(0, 1);
+float3    density_volume_size;
+float3    density_volume_origin;
+texture   density_texture < string TextureType = "3D"; >;
+sampler3D density_sampler = sampler_state {
+    Texture = <density_texture>;
+};
+
 float3    scattering_color = float3(1, 1, 1);
 float     scattering_anisotropy = 0;
 bool      use_scattering_texture = true;
@@ -833,18 +844,24 @@ sampler3D scattering_sampler = sampler_state {
     Texture = <scattering_texture>;
 };
 
-float3    absorption_color = float3(1, 1, 1);
-bool      use_absorption_texture = true;
-float2    absorption_value_range = float2(0, 1);
-float3    absorption_volume_size;
-float3    absorption_volume_origin;
-texture   absorption_texture < string TextureType = "3D"; >;
-sampler3D absorption_sampler = sampler_state {
-    Texture = <absorption_texture>;
+float3    transparency = float3(1, 1, 1);
+bool      use_transparency_texture = true;
+float2    transparency_value_range = float2(0, 1);
+float3    transparency_volume_size;
+float3    transparency_volume_origin;
+texture   transparency_texture < string TextureType = "3D"; >;
+sampler3D transparency_sampler = sampler_state {
+    Texture = <transparency_texture>;
 };
 
+#define EMISSION_MODE_UNIFORM               0
+#define EMISSION_MODE_DENSITY               1
+#define EMISSION_MODE_CHANNEL               2
+#define EMISSION_MODE_BLACKBODY             3
+#define EMISSION_MODE_DENSITY_AND_BLACKBODY 4
+int       emission_mode = 0;
+bool      use_emission_texture = false;
 float3    emission_color = float3(1, 1, 1);
-bool      use_emission_texture = true;
 float2    emission_value_range = float2(0, 1);
 float3    emission_volume_size;
 float3    emission_volume_origin;
@@ -853,7 +870,15 @@ sampler3D emission_sampler = sampler_state {
     Texture = <emission_texture>;
 };
 
-uniform int max_slice_count; // How many slices does the vertex buffer has vertices for.
+float     temperature = 5000.0f;
+bool      use_temperature_texture = false;
+float2    temperature_value_range = float2(0, 1);
+float3    temperature_volume_size;
+float3    temperature_volume_origin;
+texture   temperature_texture < string TextureType = "3D"; >;
+sampler3D temperature_sampler = sampler_state {
+    Texture = <temperature_texture>;
+};
 
 // Lights.
 #define MAX_POINT_LIGHTS 8
@@ -870,6 +895,16 @@ uniform float  directional_light_intensities[MAX_DIRECTIONAL_LIGHTS];
 
 uniform float shadow_gain = 0.2;
 uniform int shadow_sample_count = 4;
+uniform int max_slice_count;
+
+float SampleDensityTexture(float3 pos_model, float lod)
+{
+    float3 tex_coords = (pos_model - density_volume_origin) / density_volume_size;
+    if (use_density_texture)
+        return density * lerp(density_value_range.x, density_value_range.y, tex3Dlod(density_sampler, float4(tex_coords, lod)).r);
+    else
+        return density;
+}
 
 float3 SampleScatteringTexture(float3 pos_model, float lod)
 {
@@ -880,22 +915,37 @@ float3 SampleScatteringTexture(float3 pos_model, float lod)
         return scattering_color;
 }
 
-float3 SampleAbsorptionTexture(float3 pos_model, float lod)
+float3 SampleTransparencyTexture(float3 pos_model, float lod)
 {
-    float3 tex_coords = (pos_model - absorption_volume_origin) / absorption_volume_size;
-    if (use_absorption_texture)
-        return absorption_color * lerp(absorption_value_range.x, absorption_value_range.y, tex3Dlod(absorption_sampler, float4(tex_coords, lod)).r);
+    float3 tex_coords = (pos_model - transparency_volume_origin) / transparency_volume_size;
+    if (use_transparency_texture)
+        return transparency * lerp(transparency_value_range.x, transparency_value_range.y, tex3Dlod(transparency_sampler, float4(tex_coords, lod)).r);
     else
-        return absorption_color;
+        return transparency;
+}
+
+float3 SampleAbsorption(float3 pos_model, float lod)
+{
+    float3 transparency = SampleTransparencyTexture(pos_model, lod);
+    return -log(transparency);
 }
 
 float3 SampleEmissionTexture(float3 pos_model, float lod)
 {
     float3 tex_coords = (pos_model - emission_volume_origin) / emission_volume_size;
-    if (use_emission_texture)
-        return emission_color * lerp(emission_value_range.x, emission_value_range.y, tex3Dlod(emission_sampler, float4(tex_coords, lod)).r);
-    else
+    if (emission_mode == EMISSION_MODE_UNIFORM)
         return emission_color;
+    else if (emission_mode == EMISSION_MODE_CHANNEL)
+        return emission_color * lerp(emission_value_range.x, emission_value_range.y, tex3Dlod(emission_sampler, float4(tex_coords, lod)).r);
+}
+
+float SampleTemperatureTexture(float3 pos_model, float lod)
+{
+    float3 tex_coords = (pos_model - temperature_volume_origin) / temperature_volume_size;
+    if (use_temperature_texture)
+        return temperature * lerp(temperature_value_range.x, temperature_value_range.y, tex3Dlod(temperature_sampler, float4(tex_coords, lod)).r);
+    else
+        return temperature_color;
 }
 
 float3 DominantAxis(float3 dir, float3 v)
@@ -966,13 +1016,13 @@ float3 RayTransmittance(float3 from_model, float3 to_model)
     float step_size_model = length(step_model);
 
     float scattering_lod = CalcLOD(step_size_model, scattering_volume_size);
-    float absorption_lod = CalcLOD(step_size_model, absorption_volume_size);
+    float transparency_lod = CalcLOD(step_size_model, transparency_volume_size);
 
     float3 transmittance = float3(1, 1, 1);
     float3 pos_model = from_model + 0.5f * step_model;
     for (int i = 0; i < shadow_sample_count; ++i) {
         float3 scattering = SampleScatteringTexture(pos_model, scattering_lod);
-        float3 absorption = SampleAbsorptionTexture(pos_model, absorption_lod);
+        float3 absorption = SampleAbsorption(pos_model, transparency_lod);
         float3 extinction = scattering + absorption;
         transmittance *= exp(-extinction * step_size_model / (1.0 + float(i) * step_size_model * shadow_gain));
         pos_model += step_model;
@@ -992,7 +1042,7 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     FRAG_OUTPUT output;
 
     float3 scattering = SampleScatteringTexture(input.pos_model, 0);
-    float3 absorption = SampleAbsorptionTexture(input.pos_model, 0);
+    float3 absorption = SampleAbsorption(input.pos_model, 0);
     float3 extinction = scattering + absorption;
     float3 albedo = scattering / extinction;
 
@@ -1012,7 +1062,8 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
         float3 light_radiance = directional_light_colors[i] * directional_light_intensities[i];
         float3 incident_radiance = light_radiance * shadow;
         float phase = HGPhase(dot(-view_dir_world, light_dir_world));
-        lumi += scattering * phase * incident_radiance * slice_thickness;
+        // Divide by extinction coef (factored into albedo) because integral(exp(at)dt) = 1/a exp(at).
+        lumi += albedo * phase * incident_radiance * slice_thickness;
     }
 
     // Loop through point lights.
@@ -1023,13 +1074,15 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
         float3 incident_radiance = light_radiance * shadow;
         float3 light_dir_model = normalize(light_pos_model - input.pos_model);
         float phase = HGPhase(dot(-view_dir_model, light_dir_model));
-        lumi += scattering * phase * incident_radiance * slice_thickness;
+        // Divide by extinction coef (factored into albedo) because integral(exp(at)dt) = 1/a exp(at).
+        lumi += albedo * phase * incident_radiance * slice_thickness;
     }
 
     float3 transmittance = exp(-extinction * slice_thickness);
 
     float3 emission = SampleEmissionTexture(input.pos_model, 0);
-    lumi += emission;
+    // Divide by extinction coef because integral(exp(at)dt) = 1/a exp(at).
+    lumi += emission/extinction;
 
     output.color = float4(lumi, 1 - dot(transmittance, float3(1, 1, 1)/3));
 
@@ -1140,7 +1193,9 @@ technique Main < int isTransparent = 1; >
         CHECK_MSTATUS(shaderInstance->setArrayParameter("directional_light_intensities", directional_light_intensities.data(), directional_light_count));
     }
 
-    SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent) : m_parent(parent), m_enabled(false), m_selected(false), m_volume_sampler_state(nullptr)
+    SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
+        : m_parent(parent), m_enabled(false), m_selected(false), m_volume_sampler_state(nullptr),
+        m_density_channel("density"), m_scattering_channel("scattering"), m_transparency_channel("transparency"), m_emission_channel("emission"), m_temperature_channel("temperature")
     {
         const MHWRender::MShaderManager* shader_manager = getShaderManager();
         assert(shader_manager);
@@ -1150,7 +1205,6 @@ technique Main < int isTransparent = 1; >
         if (!m_volume_shader) {
             LOG_ERROR("Cannot compile cgfx.");
             CGcontext context = cgCreateContext();
-            cgSetContextBehavior(context, CG_BEHAVIOR_3100);
             for (auto shader_spec : { std::make_pair("VolumeVertexShader", "gp5vp"), std::make_pair("VolumeFragmentShader", "gp5fp") })
             {
                 if (!cgCreateProgram(context, CG_SOURCE, s_effect_code.c_str(), cgGetProfile(shader_spec.second), shader_spec.first, nullptr))
@@ -1170,9 +1224,11 @@ technique Main < int isTransparent = 1; >
         volume_sampler_state_desc.addressV = MHWRender::MSamplerState::kTexBorder;
         volume_sampler_state_desc.addressW = MHWRender::MSamplerState::kTexBorder;
         m_volume_sampler_state = MHWRender::MStateManager::acquireSamplerState(volume_sampler_state_desc);
+        CHECK_MSTATUS(m_volume_shader->setParameter("density_sampler", *m_volume_sampler_state));
         CHECK_MSTATUS(m_volume_shader->setParameter("scattering_sampler", *m_volume_sampler_state));
-        CHECK_MSTATUS(m_volume_shader->setParameter("absorption_sampler", *m_volume_sampler_state));
+        CHECK_MSTATUS(m_volume_shader->setParameter("transparency_sampler", *m_volume_sampler_state));
         CHECK_MSTATUS(m_volume_shader->setParameter("emission_sampler",  *m_volume_sampler_state));
+        CHECK_MSTATUS(m_volume_shader->setParameter("temperature_sampler", *m_volume_sampler_state));
     }
 
     void SlicedDisplay::enable(bool enable)
@@ -1369,26 +1425,31 @@ technique Main < int isTransparent = 1; >
         m_bbox_renderable.render_item->setMatrix(&data.world_matrix);
 
         // Update shader params.
-        CHECK_MSTATUS(m_volume_shader->setParameter("scattering_color", data.scattering_color));
+        CHECK_MSTATUS(m_volume_shader->setParameter("density", data.density_channel.value));
+        CHECK_MSTATUS(m_volume_shader->setParameter("scattering_color", data.scattering_channel.value));
         CHECK_MSTATUS(m_volume_shader->setParameter("scattering_anisotropy", data.anisotropy));
-        CHECK_MSTATUS(m_volume_shader->setParameter("absorption_color", data.attenuation_color));
-        CHECK_MSTATUS(m_volume_shader->setParameter("emission_color", data.emission_color));
-        CHECK_MSTATUS(m_volume_shader->setParameter("shadow_gain", data.sliced_display_shader_params.shadow_gain));
-        CHECK_MSTATUS(m_volume_shader->setParameter("shadow_sample_count", data.sliced_display_shader_params.shadow_sample_count));
+        CHECK_MSTATUS(m_volume_shader->setParameter("transparency", data.transparency_channel.value));
+        CHECK_MSTATUS(m_volume_shader->setParameter("emission_color", data.emission_channel.value));
+        CHECK_MSTATUS(m_volume_shader->setParameter("emission_mode", int(data.emission_mode)));
+        CHECK_MSTATUS(m_volume_shader->setParameter("temperature", data.temperature_channel.value));
+        CHECK_MSTATUS(m_volume_shader->setParameter("shadow_gain", data.shadow_gain));
+        CHECK_MSTATUS(m_volume_shader->setParameter("shadow_sample_count", data.shadow_sample_count));
 
         // === Update channels. ===
 
-        typedef VDBSubSceneOverrideData::ChangeSet ChangeSet;
+        // Bail if nothing has changed which would affect the volume textures or the gradient ramps.
+        if (data.change_set <= ChangeSet::GENERIC_ATTRIBUTE)
+            return true;
+
+        // Handle ramps.
+        // TODO
 
         // Bail if nothing has changed which would affect the volume textures.
-        if (data.change_set <= ChangeSet::GENERIC_ATTRIBUTE)
+        if (data.change_set <= ChangeSet::GRADIENT)
             return true;
 
         const bool vdb_file_changed        = hasChange(data.change_set, ChangeSet::VDB_FILE);
         const bool max_slice_count_changed = hasChange(data.change_set, ChangeSet::MAX_SLICE_COUNT);
-        const bool scattering_grid_changed = hasChange(data.change_set, ChangeSet::SCATTERING_GRID);
-        const bool absorption_grid_changed = hasChange(data.change_set, ChangeSet::ATTENUATION_GRID);
-        const bool emission_grid_changed   = hasChange(data.change_set, ChangeSet::EMISSION_GRID);
 
         // Needs to come before updateBBox: updateBBox updates the slices renderable too,
         // but at first run updateSliceGeo populates geo buffers.
@@ -1410,78 +1471,72 @@ technique Main < int isTransparent = 1; >
 
         // Update channels.
 
-        auto handle_channel_change = [&](const std::string& param_group, const std::string& channel_name, VolumeChannel::Ptr& channel) {
-            if (channel_name.empty())
+        auto handle_channel_change = [&](const std::string& grid_name, ChannelAssignment& channel_assignment) {
+            auto& channel = channel_assignment.channel_ptr;
+            if (grid_name.empty())
             {
                 channel.reset();
-                return;
-            }
-
-            auto it = m_channel_cache.find(channel_name);
-            if (it == m_channel_cache.end())
-            {
-                // Create and cache channel.
-                channel.reset(new VolumeChannel(data.vdb_file, channel_name));
-                if (!channel->isValid())
-                    return;
-                channel->sample(m_volume_sampler, data.max_slice_count);
-                m_channel_cache.insert({ channel_name, channel });
             }
             else
             {
-                // Use cached channel.
-                channel = it->second.lock();
+                auto it = m_channel_cache.find(grid_name);
+                if (it == m_channel_cache.end())
+                {
+                    // Create new channel if we don't have an exclusively owned one already.
+                    if (channel.use_count() != 1)
+                        channel.reset(new VolumeChannel());
+                    // Load VDB grid, bail on error.
+                    channel->loadGrid(data.vdb_file, grid_name);
+                    if (!channel->isValid())
+                        return;
+                    // Sample VDB grid.
+                    channel->sample(m_volume_sampler, data.max_slice_count);
+                    // Insert channel into cache.
+                    m_channel_cache.insert({ grid_name, channel });
+                }
+                else
+                {
+                    // Use cached channel.
+                    channel = it->second.lock();
+                }
             }
+
+            const bool use_texture = channel && channel->isValid();
+            CHECK_MSTATUS(m_volume_shader->setParameter(format("use_^1s_texture", channel_assignment.param_prefix), use_texture));
+            if (!use_texture)
+                return;
+
+            MTextureAssignment texture_assignment;
+            texture_assignment.texture = channel->volume_texture.texture_ptr.get();
+            CHECK_MSTATUS(m_volume_shader->setParameter(format("^1s_texture", channel_assignment.param_prefix), texture_assignment));
+            CHECK_MSTATUS(m_volume_shader->setParameter(format("^1s_value_range", channel_assignment.param_prefix),
+                                                        mayavecFromFloatRange(channel->volume_texture.value_range)));
 
             const auto grid_bbox_is = getIndexSpaceBoundingBox(channel->grid.get());
             const auto grid_bbox_ws = channel->grid->transform().indexToWorld(grid_bbox_is);
-            CHECK_MSTATUS(m_volume_shader->setParameter(format("^1s_volume_size", param_group), mayavecFromVec3f(grid_bbox_ws.extents())));
-            CHECK_MSTATUS(m_volume_shader->setParameter(format("^1s_volume_origin", param_group), mayavecFromVec3f(grid_bbox_ws.min())));
+            CHECK_MSTATUS(m_volume_shader->setParameter(format("^1s_volume_size", channel_assignment.param_prefix), mayavecFromVec3f(grid_bbox_ws.extents())));
+            CHECK_MSTATUS(m_volume_shader->setParameter(format("^1s_volume_origin", channel_assignment.param_prefix), mayavecFromVec3f(grid_bbox_ws.min())));
         };
 
-        if (vdb_file_changed || scattering_grid_changed)
-            handle_channel_change("scattering", data.scattering_channel, m_scattering_channel);
+        if (vdb_file_changed || hasChange(data.change_set, ChangeSet::DENSITY_CHANNEL))
+            handle_channel_change(data.density_channel.name, m_density_channel);
 
-        if (vdb_file_changed || absorption_grid_changed)
-            handle_channel_change("absorption", data.attenuation_channel, m_absorption_channel);
+        if (vdb_file_changed || hasChange(data.change_set, ChangeSet::SCATTERING_CHANNEL))
+            handle_channel_change(data.scattering_channel.name, m_scattering_channel);
 
-        if (vdb_file_changed || emission_grid_changed)
-            handle_channel_change("emission", data.emission_channel, m_emission_channel);
+        if (vdb_file_changed || hasChange(data.change_set, ChangeSet::TRANSPARENCY_CHANNEL))
+            handle_channel_change(data.transparency_channel.name, m_transparency_channel);
+
+        if (vdb_file_changed || hasChange(data.change_set, ChangeSet::EMISSION_CHANNEL))
+            handle_channel_change(data.emission_channel.name, m_emission_channel);
+
+        if (vdb_file_changed || hasChange(data.change_set, ChangeSet::TEMPERATURE_CHANNEL))
+            handle_channel_change(data.temperature_channel.name, m_temperature_channel);
 
         // Clean-up channel cache.
         for (auto it = m_channel_cache.cbegin(); it != m_channel_cache.cend(); ++it)
             if (it->second.expired())
                 it = m_channel_cache.erase(it);
-
-        // Set channel params.
-        MHWRender::MTextureAssignment texture_assignment;
-
-        const bool has_scattering_texture = m_scattering_channel && m_scattering_channel->isValid();
-        CHECK_MSTATUS(m_volume_shader->setParameter("use_scattering_texture", has_scattering_texture));
-        if (has_scattering_texture)
-        {
-            texture_assignment.texture = m_scattering_channel->volume_texture.texture.get();
-            CHECK_MSTATUS(m_volume_shader->setParameter("scattering_texture", texture_assignment));
-            CHECK_MSTATUS(m_volume_shader->setParameter("scattering_value_range", mayavecFromFloatRange(m_scattering_channel->volume_texture.value_range)));
-        }
-
-        const bool has_absorption_texture = m_absorption_channel && m_absorption_channel->isValid();
-        CHECK_MSTATUS(m_volume_shader->setParameter("use_absorption_texture", has_absorption_texture));
-        if (has_absorption_texture)
-        {
-            texture_assignment.texture = m_absorption_channel->volume_texture.texture.get();
-            CHECK_MSTATUS(m_volume_shader->setParameter("absorption_texture", texture_assignment));
-            CHECK_MSTATUS(m_volume_shader->setParameter("absorption_value_range", mayavecFromFloatRange(m_absorption_channel->volume_texture.value_range)));
-        }
-
-        const bool has_emission_texture = m_emission_channel && m_emission_channel->isValid();
-        CHECK_MSTATUS(m_volume_shader->setParameter("use_emission_texture", has_emission_texture));
-        if (has_emission_texture)
-        {
-            texture_assignment.texture = m_emission_channel->volume_texture.texture.get();
-            CHECK_MSTATUS(m_volume_shader->setParameter("emission_texture", texture_assignment));
-            CHECK_MSTATUS(m_volume_shader->setParameter("emission_value_range", mayavecFromFloatRange(m_emission_channel->volume_texture.value_range)));
-        }
 
         return true;
     }

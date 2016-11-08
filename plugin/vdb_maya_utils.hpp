@@ -175,4 +175,3 @@ private:
 
     static constexpr char FIELD_CHAR = '#';
 };
-

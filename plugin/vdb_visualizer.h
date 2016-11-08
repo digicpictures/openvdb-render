@@ -13,6 +13,7 @@
 #include "vdb_sampler.h"
 #include "vdb_shader.h"
 #include "vdb_simple_shader.h"
+#include "vdb_std_shader.h"
 
 class VDBVisualizerShapeUI : public MPxSurfaceShapeUI {
 public:
@@ -70,8 +71,8 @@ public:
     // sliced display parameters
     static MObject s_max_slice_count;
     static MObject s_apply_max_slice_count;
-    static MObject s_absorption_color;
-    static MObject s_absorption_intensity;
+    static MObject s_attenuation_color;
+    static MObject s_attenuation_intensity;
     static MObject s_shadow_gain;
     static MObject s_shadow_sample_count;
 
@@ -98,8 +99,12 @@ public:
     static MObject s_shader_mode;
     static VDBShaderParams s_shader_params;
     static VDBSimpleShaderParams s_simple_shader_params;
+    static VDBVolumeStandardShaderParams s_volume_standard_params;
 
     VDBVisualizerData* get_update();
+    void setFloatChannel(const MObject& channel_name, const MObject& channel_value, const VDBGradientParams& gradient, ChannelParams<float>& output);
+    void setColorChannel(const MObject& channel_name, const MObject& color, const MObject& intensity, const VDBGradientParams& gradient, ChannelParams<MFloatVector>& output);
+
 private:
 
     VDBVisualizerData m_vdb_data;

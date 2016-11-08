@@ -44,6 +44,12 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         pm.popupMenu(parent=grp, postMenuCommand=lambda popup, popup_parent: AEvdb_visualizerTemplate.setup_popup_menu_elems(popup, popup_parent, param_name))
 
     # TODO : maybe use something like templates in c++?
+    def create_density_channel(self, param_name):
+        self.create_channel("Density Channel", "density", param_name)
+
+    def update_density_channel(self, param_name):
+        self.update_channel("density", param_name)
+
     def create_scattering_channel(self, param_name):
         self.create_channel("Scattering Channel", "scattering", param_name)
 
@@ -79,6 +85,18 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
 
     def update_fire_channel(self, param_name):
         self.update_channel("fire", param_name)
+
+    def create_transparency_channel(self, param_name):
+        self.create_channel("Transparency Channel", "transparency", param_name)
+
+    def update_transparency_channel(self, param_name):
+        self.update_channel("transparency", param_name)
+
+    def create_temperature_channel(self, param_name):
+        self.create_channel("Temperature Channel", "temperature", param_name)
+
+    def update_temperature_channel(self, param_name):
+        self.update_channel("temperature", param_name)
 
     @staticmethod
     def press_vdb_path(param_name):
@@ -302,6 +320,46 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.addControl("velocityShutterEnd", label="Shutter End")
         self.endLayout()
 
+        # Volume Standard Shader
+        self.beginLayout("Volume Standard Shader", collapse=False)
+
+        self.beginLayout("Density", collapse=False)
+        self.callCustom(self.create_density_channel, self.update_density_channel, "density_channel")
+        self.addControl("density", label="Density")
+        self.create_float_ramp("density", node_name)
+        self.endLayout()
+
+        self.beginLayout("Scattering", collapse=False)
+        self.callCustom(self.create_scattering_channel, self.update_scattering_channel, "scattering_channel")
+        self.addControl("scattering_color", label="Color")
+        self.addControl("scattering_intensity", label="Intensity")
+        self.addControl("anisotropy")
+        self.create_rgb_ramp("scattering", node_name)
+        self.endLayout()
+
+        self.beginLayout("Transparency", collapse=False)
+        self.callCustom(self.create_transparency_channel, self.update_transparency_channel, "transparency_channel")
+        self.addControl("transparency", label="Color")
+        self.create_rgb_ramp("transparency", node_name)
+        self.endLayout()
+
+        self.beginLayout("Emission", collapse=False)
+        self.addControl("emission_mode", label="Emission Mode")
+        self.callCustom(self.create_emission_channel, self.update_emission_channel, "emission_channel")
+        self.addControl("emission_color", label="Color")
+        self.addControl("emission_intensity", label="Intensity")
+        self.create_rgb_ramp("emission", node_name)
+        self.endLayout()
+
+        self.beginLayout("Temperature", collapse=False)
+        self.callCustom(self.create_temperature_channel, self.update_temperature_channel, "temperature_channel")
+        self.addControl("temperature", label="Temperature")
+        self.create_float_ramp("temperature", node_name)
+        self.endLayout()
+
+        self.endLayout()
+
+        # Simple Shader
         self.beginLayout("Simple Shader", collapse=True)
         self.beginLayout("Color", collapse=False)
         self.addControl("smoke", label="Color")
@@ -322,6 +380,7 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.addControl("fireIntensity", label="Intensity")
         self.endLayout()
 
+        # Arnold Shader
         self.beginLayout("Arnold Shader", collapse=True)
 
         self.beginLayout("Scattering", collapse=False)

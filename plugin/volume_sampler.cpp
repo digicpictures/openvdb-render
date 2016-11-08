@@ -31,8 +31,11 @@ namespace {
 
 } // unnamed namespace
 
-VolumeTexture VolumeSampler::sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, ProgressBar *progress_bar)
+void VolumeSampler::sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, ProgressBar *progress_bar)
 {
+    if (!m_texture)
+        return;
+
     const auto sampler = openvdb::tools::GridSampler<openvdb::FloatGrid, openvdb::tools::BoxSampler>(grid);
     const auto world_bbox = grid.transform().indexToWorld(getIndexSpaceBoundingBox(&grid));
     const auto domain_extents = texture_extents.asVec3d();
@@ -40,11 +43,14 @@ VolumeTexture VolumeSampler::sampleGridWithBoxFilter(const openvdb::FloatGrid& g
         const auto sample_pos_ws = (domain_index + 0.5) / domain_extents * world_bbox.extents() + world_bbox.min();
         return sampler.wsSample(sample_pos_ws);
     };
-    return sampleVolume(texture_extents, sampling_func, progress_bar);
+    sampleVolume(texture_extents, sampling_func, progress_bar);
 }
 
-VolumeTexture VolumeSampler::sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents, ProgressBar *progress_bar)
+void VolumeSampler::sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents, ProgressBar *progress_bar)
 {
+    if (!m_texture)
+        return;
+
     // Calculate LOD level.
     const auto index_bbox = getIndexSpaceBoundingBox(multires.grid(0).get());
     const auto grid_extents = index_bbox.extents().asVec3d();
@@ -59,12 +65,15 @@ VolumeTexture VolumeSampler::sampleMultiResGrid(const openvdb::tools::MultiResGr
         const auto sample_pos_is = multires.transform().worldToIndex(sample_pos_ws);
         return multires.sampleValue<1>(sample_pos_is, lod_level);
     };
-    return sampleVolume(texture_extents, sampling_func, progress_bar);
+    sampleVolume(texture_extents, sampling_func, progress_bar);
 }
 
 template <typename SamplingFunc>
-VolumeTexture VolumeSampler::sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func, ProgressBar *progress_bar)
+void VolumeSampler::sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func, ProgressBar *progress_bar)
 {
+    if (!m_texture)
+        return;
+
     const auto domain = openvdb::CoordBBox(openvdb::Coord(), extents - openvdb::Coord(1, 1, 1));
     m_buffer.resize(domain.volume());
 
@@ -117,11 +126,27 @@ VolumeTexture VolumeSampler::sampleVolume(const openvdb::Coord& extents, Samplin
     if (progress_bar)
         progress_bar->setProgress(100);
 
-    return { extents, m_buffer.data(), value_range };
+    // Update the attached texture.
+    bool inplace_updateable = false;
+    if (m_texture->texture_ptr)
+    {
+        MHWRender::MTextureDescription desc;
+        m_texture->texture_ptr->textureDescription(desc);
+        inplace_updateable = desc.fWidth == extents.x() &&
+                             desc.fHeight == extents.y() &&
+                             desc.fDepth == extents.z();
+    }
+
+    if (inplace_updateable)
+        m_texture->texture_ptr->update(m_buffer.data(), true);
+    else
+        m_texture->texture_ptr.reset(acquireVolumeTexture(extents, m_buffer.data()));
+
+    m_texture->value_range = value_range;
 }
 
 MHWRender::MTexture*
-VolumeTexture::acquireVolumeTexture(const openvdb::Coord& texture_extents, const float* pixel_data)
+VolumeSampler::acquireVolumeTexture(const openvdb::Coord& texture_extents, const float* pixel_data)
 {
     MHWRender::MTextureDescription texture_desc;
     texture_desc.fWidth = texture_extents.x();
