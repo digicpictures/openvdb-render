@@ -1088,14 +1088,11 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     float3 albedo = SampleScatteringTexture(input.pos_model, 0);
 
     float3 view_dir_model = normalize(mul(world_inverse_mat, float4(view_dir_world, 0)).xyz);
-    //float3 dom = DominantAxis(view_dir_model, float3(0, 0, 1));
-    //float3 slice_vector_model = dom * volume_size / float(max_slice_count);
-    //float slice_thickness = length(mul(world_mat, float4(slice_vector_model, 0)).xyz);
-    float slice_thickness = dot(DominantAxis(view_dir_model, float3(0, 0, 1)), volume_size / float(max_slice_count));
-
-    //float slice_thickness = dot(dom, volume_size / float(max_slice_count));
-
     float3 incident_dir_world = normalize(view_pos_world - input.pos_world);
+
+    float3 slice_vector_model = DominantAxis(view_dir_model, float3(0, 0, 1)) * volume_size / float(max_slice_count);
+    float3 slice_vector_world = mul(world_mat, float4(slice_vector_model, 0)).xyz;
+    float ray_distance = dot(slice_vector_world, slice_vector_world) / abs(dot(slice_vector_world, incident_dir_world));
 
     float3 lumi = float3(0, 0, 0);
 
@@ -1103,7 +1100,7 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     for (int i = 0; i < directional_light_count; ++i) {
         float3 light_dir_world = directional_light_directions[i];
         float3 light_dir_model = normalize(mul(world_inverse_mat, float4(light_dir_world, 0)).xyz);
-        float3 shadow = RayTransmittance(input.pos_model, input.pos_model - light_dir_model * slice_thickness * max_slice_count * 0.5f);
+        float3 shadow = RayTransmittance(input.pos_model, input.pos_model - light_dir_model * ray_distance * max_slice_count * 0.5f);
         float3 light_radiance = directional_light_colors[i] * directional_light_intensities[i];
         float3 incident_radiance = light_radiance * shadow;
         float phase = HGPhase(dot(incident_dir_world, normalize(light_dir_world)));
@@ -1124,7 +1121,7 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
         lumi += albedo * phase * incident_radiance;
     }
 
-    float3 transmittance = pow(transparency, density * slice_thickness);
+    float3 transmittance = pow(transparency, density * ray_distance);
 
     float3 emission = SampleEmissionTexture(input.pos_model, 0);
     // Divide by extinction coef because integral(exp(at)dt) = 1/a exp(at).
