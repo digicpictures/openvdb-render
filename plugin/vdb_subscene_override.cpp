@@ -832,7 +832,7 @@ namespace MHWRender {
 
     const std::string SlicedDisplay::s_effect_code = R"cgfx(
 float3 view_dir_world : ViewDirection < string Space = "World"; >;
-float3 view_pos_world : ViewPosition < string Space = "World"; >;
+float3 view_pos_world;
 float4x4 world_mat : World < string UIWidget = "None"; >;
 float4x4 world_inverse_mat : WorldInverse < string UIWidget = "None"; >;
 float4x4 world_view_proj_mat : WorldViewProjection < string UIWidget = "None"; >;
@@ -1150,8 +1150,16 @@ technique Main < int isTransparent = 1; >
 }
 )cgfx";
 
-    void SlicedDisplay::preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& /*renderItemList*/, MHWRender::MShaderInstance* shaderInstance)
+    void SlicedDisplay::preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& /*renderItemList*/, MHWRender::MShaderInstance* shader_instance)
     {
+        // Set view position.
+        {
+            MStatus status;
+            auto view_pos = context.getTuple(MHWRender::MFrameContext::kViewPosition, &status);
+            CHECK_MSTATUS(status);
+            CHECK_MSTATUS(shader_instance->setParameter("view_pos_world", MFloatVector(float(view_pos[0]), float(view_pos[1]), float(view_pos[2]))));
+        }
+
         // Collect light data.
 
         constexpr int MAX_POINT_LIGHTS = 8;
