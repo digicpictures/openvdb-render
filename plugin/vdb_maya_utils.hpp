@@ -175,3 +175,15 @@ private:
 
     static constexpr char FIELD_CHAR = '#';
 };
+
+constexpr float SRGB_TO_LINEAR_EXPONENT = 2.2f;
+inline void sRGBToLinear(float* data, size_t n)
+{
+    for (int i = 0; i < n; ++i)
+        data[i] = std::pow(data[i], SRGB_TO_LINEAR_EXPONENT);
+}
+
+inline MFloatVector sRGBToLinear(const MFloatVector& color)
+{
+    return { std::pow(color.x, SRGB_TO_LINEAR_EXPONENT), std::pow(color.y, SRGB_TO_LINEAR_EXPONENT), std::pow(color.z, SRGB_TO_LINEAR_EXPONENT) };
+}

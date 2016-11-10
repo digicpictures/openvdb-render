@@ -679,7 +679,7 @@ namespace {
 
 template <typename T> T getPlugValue(const MObject& tmo, const MObject& attrib) { return {}; }
 template <> float getPlugValue<float>(const MObject& tmo, const MObject& attrib) { return MPlug(tmo, attrib).asFloat(); }
-template <> MFloatVector getPlugValue<MFloatVector>(const MObject& tmo, const MObject& attrib) { return plugAsFloatVector(MPlug(tmo, attrib)); }
+template <> MFloatVector getPlugValue<MFloatVector>(const MObject& tmo, const MObject& attrib) { return sRGBToLinear(plugAsFloatVector(MPlug(tmo, attrib))); }
 
 template <typename T>
 void VDBVisualizerShape::setChannel(const MObject& channel_name, const MObject& color, const MObject& intensity, const MObject& source, const VDBGradientParams *gradient, ChannelParams<T>& output)

@@ -929,6 +929,16 @@ uniform float shadow_gain = 0.2;
 uniform int shadow_sample_count = 4;
 uniform int max_slice_count;
 
+float3 sRGBToLinear(float3 color)
+{
+    return pow(color, 2.2f);
+}
+
+float3 linearTosRGB(float3 color)
+{
+    return pow(color, 1.0f/2.2f);
+}
+
 float SampleDensityTexture(float3 pos_model, float lod)
 {
     float3 tex_coords = (pos_model - density_volume_origin) / density_volume_size;
@@ -947,7 +957,7 @@ float3 SampleScatteringTexture(float3 pos_model, float lod)
         //float voxel = tex3Dlod(scattering_sampler, float4(tex_coords, lod)).r;
         float voxel = lerp(scattering_value_range.x, scattering_value_range.y, tex3Dlod(scattering_sampler, float4(tex_coords, lod)).r);
         if (scattering_source)
-            res *= tex1Dlod(scattering_ramp_sampler, float4(saturate(voxel), 0, 0, 0)).xyz;
+            res *= sRGBToLinear(tex1Dlod(scattering_ramp_sampler, float4(voxel, 0, 0, 0)).xyz);
         else
             res *= voxel;
     }
@@ -972,7 +982,7 @@ float3 SampleEmissionTexture(float3 pos_model, float lod)
     {
         float voxel = lerp(emission_value_range.x, emission_value_range.y, tex3Dlod(emission_sampler, float4(tex_coords, lod)).r);
         if (emission_source)
-            res *= tex1Dlod(emission_ramp_sampler, float4(voxel, 0, 0, 0)).xyz;
+            res *= sRGBToLinear(tex1Dlod(emission_ramp_sampler, float4(voxel, 0, 0, 0)).xyz);
         else
             res *= voxel;
     }
@@ -1127,6 +1137,8 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     // Divide by extinction coef because integral(exp(at)dt) = 1/a exp(at).
     lumi += emission / extinction;
 
+    lumi = linearTosRGB(lumi);
+
     // Premultiply alpha.
     float alpha = 1 - dot(transmittance, float3(1, 1, 1) / 3);
     output.color = float4(lumi * alpha, alpha);
@@ -1233,17 +1245,21 @@ technique Main < int isTransparent = 1; >
             }
         }
 
+        // Convert colors to linear color space.
+        sRGBToLinear(point_light_colors.data(), point_light_colors.size());
+        sRGBToLinear(directional_light_colors.data(), directional_light_colors.size());
+
         // Set shader params.
 
-        CHECK_MSTATUS(shaderInstance->setParameter("point_light_count", point_light_count));
-        CHECK_MSTATUS(shaderInstance->setArrayParameter("point_light_positions", point_light_positions.data(), point_light_count));
-        CHECK_MSTATUS(shaderInstance->setArrayParameter("point_light_colors", point_light_colors.data(), point_light_count));
-        CHECK_MSTATUS(shaderInstance->setArrayParameter("point_light_intensities", point_light_intensities.data(), point_light_count));
+        CHECK_MSTATUS(shader_instance->setParameter("point_light_count", point_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("point_light_positions", point_light_positions.data(), point_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("point_light_colors", point_light_colors.data(), point_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("point_light_intensities", point_light_intensities.data(), point_light_count));
 
-        CHECK_MSTATUS(shaderInstance->setParameter("directional_light_count", directional_light_count));
-        CHECK_MSTATUS(shaderInstance->setArrayParameter("directional_light_directions", directional_light_directions.data(), directional_light_count));
-        CHECK_MSTATUS(shaderInstance->setArrayParameter("directional_light_colors", directional_light_colors.data(), directional_light_count));
-        CHECK_MSTATUS(shaderInstance->setArrayParameter("directional_light_intensities", directional_light_intensities.data(), directional_light_count));
+        CHECK_MSTATUS(shader_instance->setParameter("directional_light_count", directional_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("directional_light_directions", directional_light_directions.data(), directional_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("directional_light_colors", directional_light_colors.data(), directional_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("directional_light_intensities", directional_light_intensities.data(), directional_light_count));
     }
 
     SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
