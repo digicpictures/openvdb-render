@@ -8,8 +8,7 @@
 #include "vdb_shader.h"
 
 VDBVolumeStandardShaderParams::VDBVolumeStandardShaderParams()
-    : density_gradient("density"), scattering_gradient("scattering"), transparency_gradient("transparency"),
-    emission_gradient("emission"), temperature_gradient("temperature")
+    : scattering_gradient("scattering"), emission_gradient("emission")
 {
 }
 
@@ -27,7 +26,7 @@ void VDBVolumeStandardShaderParams::create_params(VDBShaderParams *shared_params
     density = nAttr.create("density", "density", MFnNumericData::kFloat);
     nAttr.setDefault(1.0f);
     nAttr.setMin(0.0f);
-    nAttr.setSoftMax(1.0f);
+    nAttr.setSoftMax(3.0f);
     nAttr.setChannelBox(true);
     MPxNode::addAttribute(density);
 
@@ -35,7 +34,13 @@ void VDBVolumeStandardShaderParams::create_params(VDBShaderParams *shared_params
     tAttr.setDefault(sData.create("density"));
     MPxNode::addAttribute(density_channel);
 
-    density_gradient.create_params();
+    // Scattering.
+
+    scattering_source = eAttr.create("scatteringColorSource", "scattering_color_source");
+    eAttr.addField("Scattering Color", 0);
+    eAttr.addField("Scattering Ramp", 1);
+    eAttr.setDefault(0);
+    MPxNode::addAttribute(scattering_source);
 
     // Transparency.
 
@@ -47,8 +52,6 @@ void VDBVolumeStandardShaderParams::create_params(VDBShaderParams *shared_params
     tAttr.setDefault(sData.create("density"));
     MPxNode::addAttribute(transparency_channel);
 
-    transparency_gradient.create_params();
-
     // Emission mode.
 
     emission_mode = eAttr.create("emissionMode", "emission_mode");
@@ -59,6 +62,12 @@ void VDBVolumeStandardShaderParams::create_params(VDBShaderParams *shared_params
     eAttr.addField("Density and blackbody", 4);
     eAttr.setDefault(0);
     MPxNode::addAttribute(emission_mode);
+
+    emission_source = eAttr.create("emissionColorSource", "emission_color_source");
+    eAttr.addField("Emission Color", 0);
+    eAttr.addField("Emission Ramp", 1);
+    eAttr.setDefault(0);
+    MPxNode::addAttribute(emission_source);
 
     // Temperature.
 
@@ -72,8 +81,6 @@ void VDBVolumeStandardShaderParams::create_params(VDBShaderParams *shared_params
     temperature_channel = tAttr.create("temperatureChannel", "temperature_channel", MFnData::kString);
     tAttr.setDefault(sData.create("temperature"));
     MPxNode::addAttribute(temperature_channel);
-
-    temperature_gradient.create_params();
 
     // === Params sharable with other shading modes. ===
 
@@ -99,7 +106,7 @@ void VDBVolumeStandardShaderParams::create_params(VDBShaderParams *shared_params
     scattering_intensity = nAttr.create("scatteringIntensity", "scattering_intensity", MFnNumericData::kFloat);
     nAttr.setDefault(1.0f);
     nAttr.setMin(0.0f);
-    nAttr.setSoftMax(1.0f);
+    nAttr.setSoftMax(3.0f);
     nAttr.setChannelBox(true);
     MPxNode::addAttribute(scattering_intensity);
 
@@ -143,47 +150,45 @@ void VDBVolumeStandardShaderParams::affect_output(MObject& out_object)
 {
     MPxNode::attributeAffects(density, out_object);
     MPxNode::attributeAffects(density_channel, out_object);
-    density_gradient.affect_output(out_object);
 
     MPxNode::attributeAffects(scattering_intensity, out_object);
     MPxNode::attributeAffects(scattering_color, out_object);
     MPxNode::attributeAffects(scattering_channel, out_object);
     MPxNode::attributeAffects(anisotropy, out_object);
+    MPxNode::attributeAffects(scattering_source, out_object);
     scattering_gradient.affect_output(out_object);
 
     MPxNode::attributeAffects(transparency, out_object);
     MPxNode::attributeAffects(transparency_channel, out_object);
-    transparency_gradient.affect_output(out_object);
 
     MPxNode::attributeAffects(emission_intensity, out_object);
     MPxNode::attributeAffects(emission_color, out_object);
     MPxNode::attributeAffects(emission_channel, out_object);
     MPxNode::attributeAffects(emission_mode, out_object);
+    MPxNode::attributeAffects(emission_source, out_object);
     emission_gradient.affect_output(out_object);
 
     MPxNode::attributeAffects(temperature_channel, out_object);
-    temperature_gradient.affect_output(out_object);
 }
 
 bool VDBVolumeStandardShaderParams::check_plug(const MPlug& plug)
 {
     return plug == density ||
            plug == density_channel ||
-           density_gradient.check_plug(plug) ||
            plug == scattering_intensity ||
            plug == scattering_color ||
            plug == scattering_channel ||
            plug == anisotropy ||
+           plug == scattering_source ||
            scattering_gradient.check_plug(plug) ||
            plug == transparency ||
            plug == transparency_channel ||
-           transparency_gradient.check_plug(plug) ||
            plug == emission_intensity ||
            plug == emission_color ||
            plug == emission_channel ||
            plug == emission_mode ||
+           plug == emission_source ||
            emission_gradient.check_plug(plug) ||
            plug == temperature ||
-           plug == temperature_channel ||
-           temperature_gradient.check_plug(plug);
+           plug == temperature_channel;
 }

@@ -33,6 +33,7 @@
 #include <maya/MGlobal.h>
 #include <maya/MNodeMessage.h>
 
+#include "gradient.hpp"
 #include "vdb_maya_utils.hpp"
 
 const MTypeId VDBVisualizerShape::typeId(ID_VDB_VISUALIZER);
@@ -676,22 +677,22 @@ namespace {
 
 } // unnamed namespace
 
-void VDBVisualizerShape::setFloatChannel(const MObject& channel_name, const MObject& channel_value, const VDBGradientParams& gradient, ChannelParams<float>& output)
-{
-    MObject tmo = thisMObject();
-    output.name = MPlug(tmo, channel_name).asString().asChar();
-    output.value = MPlug(tmo, channel_value).asFloat();
-    output.gradient.update(gradient, tmo);
-}
+template <typename T> T getPlugValue(const MObject& tmo, const MObject& attrib) { return {}; }
+template <> float getPlugValue<float>(const MObject& tmo, const MObject& attrib) { return MPlug(tmo, attrib).asFloat(); }
+template <> MFloatVector getPlugValue<MFloatVector>(const MObject& tmo, const MObject& attrib) { return plugAsFloatVector(MPlug(tmo, attrib)); }
 
-void VDBVisualizerShape::setColorChannel(const MObject& channel_name, const MObject& color, const MObject& intensity, const VDBGradientParams& gradient, ChannelParams<MFloatVector>& output)
+template <typename T>
+void VDBVisualizerShape::setChannel(const MObject& channel_name, const MObject& color, const MObject& intensity, const MObject& source, const VDBGradientParams *gradient, ChannelParams<T>& output)
 {
     MObject tmo = thisMObject();
     output.name = MPlug(tmo, channel_name).asString().asChar();
-    output.value = plugAsFloatVector(MPlug(tmo, color));
+    output.value = getPlugValue<T>(tmo, color);
     if (!intensity.isNull())
         output.value *= MPlug(tmo, intensity).asFloat();
-    output.gradient.update(gradient, tmo);
+    if (!source.isNull())
+        output.source = ChannelSource(MPlug(tmo, source).asInt());
+    if (gradient)
+        output.gradient.update(*gradient, tmo);
 }
 
 VDBVisualizerData* VDBVisualizerShape::get_update()
@@ -701,7 +702,23 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
     if (update_trigger != m_vdb_data.update_trigger)
     {
         MObject tmo = thisMObject();
-        m_vdb_data.display_mode = static_cast<VDBDisplayMode>(MPlug(tmo, s_display_mode).asShort());
+        auto display_mode = static_cast<VDBDisplayMode>(MPlug(tmo, s_display_mode).asShort());
+        if (display_mode != m_vdb_data.display_mode)
+        {
+            if (display_mode == DISPLAY_SLICES)
+            {
+                // Always use RGB ramp in sliced display mode.
+                m_vdb_data.scattering_channel.gradient.set_channel_mode_override(4);
+                m_vdb_data.emission_channel.gradient.set_channel_mode_override(4);
+            }
+            else
+            {
+                m_vdb_data.scattering_channel.gradient.clear_channel_mode_override();
+                m_vdb_data.emission_channel.gradient.clear_channel_mode_override();
+            }
+            m_vdb_data.display_mode = display_mode;
+        }
+
         m_vdb_data.point_size = MPlug(tmo, s_point_size).asFloat();
         m_vdb_data.point_jitter = MPlug(tmo, s_point_jitter).asFloat();
         m_vdb_data.point_skip = MPlug(tmo, s_point_skip).asInt();
@@ -843,39 +860,40 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
             else if (shader_mode == SHADER_MODE_VOLUME_STANDARD)
             {
                 // Density.
-                setFloatChannel(s_volume_standard_params.density_channel,
-                                s_volume_standard_params.density,
-                                s_volume_standard_params.density_gradient,
-                                m_vdb_data.density_channel);
+                setChannel<float>(s_volume_standard_params.density_channel,
+                                  s_volume_standard_params.density,
+                                  {}, {}, nullptr,
+                                  m_vdb_data.density_channel);
 
                 // Scattering.
-                setColorChannel(s_volume_standard_params.scattering_channel,
-                                s_volume_standard_params.scattering_color,
-                                s_volume_standard_params.scattering_intensity,
-                                s_volume_standard_params.scattering_gradient,
-                                m_vdb_data.scattering_channel);
+                setChannel<MFloatVector>(s_volume_standard_params.scattering_channel,
+                                         s_volume_standard_params.scattering_color,
+                                         s_volume_standard_params.scattering_intensity,
+                                         s_volume_standard_params.scattering_source,
+                                         &s_volume_standard_params.scattering_gradient,
+                                         m_vdb_data.scattering_channel);
                 m_vdb_data.anisotropy = MPlug(tmo, s_volume_standard_params.anisotropy).asFloat();
 
                 // Transparency.
-                setColorChannel(s_volume_standard_params.transparency_channel,
-                                s_volume_standard_params.transparency,
-                                MObject(),
-                                s_volume_standard_params.transparency_gradient,
-                                m_vdb_data.transparency_channel);
+                setChannel<MFloatVector>(s_volume_standard_params.transparency_channel,
+                                         s_volume_standard_params.transparency,
+                                         {}, {}, nullptr,
+                                         m_vdb_data.transparency_channel);
 
                 // Emission.
-                setColorChannel(s_volume_standard_params.emission_channel,
-                                s_volume_standard_params.emission_color,
-                                s_volume_standard_params.emission_intensity,
-                                s_volume_standard_params.emission_gradient,
-                                m_vdb_data.emission_channel);
+                setChannel<MFloatVector>(s_volume_standard_params.emission_channel,
+                                         s_volume_standard_params.emission_color,
+                                         s_volume_standard_params.emission_intensity,
+                                         s_volume_standard_params.emission_source,
+                                         &s_volume_standard_params.emission_gradient,
+                                         m_vdb_data.emission_channel);
                 m_vdb_data.emission_mode = EmissionMode(MPlug(tmo, s_volume_standard_params.emission_mode).asShort());
 
                 // Temperature.
-                setFloatChannel(s_volume_standard_params.temperature_channel,
-                                s_volume_standard_params.temperature,
-                                s_volume_standard_params.temperature_gradient,
-                                m_vdb_data.temperature_channel);
+                setChannel<float>(s_volume_standard_params.temperature_channel,
+                                  s_volume_standard_params.temperature,
+                                  {}, {}, nullptr,
+                                  m_vdb_data.temperature_channel);
             }
         }
     }

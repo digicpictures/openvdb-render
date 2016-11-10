@@ -25,12 +25,19 @@ enum class EmissionMode {
     DENSITY_AND_BLACKBODY = 4
 };
 
+enum class ChannelSource {
+    CONSTANT = 0,
+    RAMP = 1
+};
+
 template <typename T>
 struct ChannelParams
 {
+    typename T value_type;
     T value;
     std::string name;
     Gradient gradient;
+    ChannelSource source;
     template <typename... Args>
     ChannelParams(Args&&... args) : value(std::forward<Args>(args)...) {}
     ChannelParams(const ChannelParams<T>&) = default;

@@ -2,9 +2,9 @@
 
 #include "vdb_maya_utils.hpp"
 
-ProgressBar::ProgressBar(const MString& msg, const uint32_t max_progress, const bool is_interruptable)
+ProgressBar::ProgressBar(const MString& msg, const uint32_t max_progress, const bool is_interruptible)
   : m_show_progress_bar(MGlobal::mayaState() == MGlobal::kInteractive),
-    m_is_interruptable(is_interruptable)
+    m_is_interruptible(is_interruptible)
 {
     if (!m_show_progress_bar)
         return;
@@ -54,7 +54,7 @@ void ProgressBar::setProgress(const int percent)
 
 bool ProgressBar::isCancelled()
 {
-    if (!m_show_progress_bar || !m_is_interruptable)
+    if (!m_show_progress_bar || !m_is_interruptible)
         return false;
 
     tbb::mutex::scoped_lock lock(m_mutex);
@@ -64,7 +64,7 @@ bool ProgressBar::isCancelled()
 
 void ProgressBar::beginProgress(const MString& msg)
 {
-    m_computation.beginComputation(true, false);
+    m_computation.beginComputation(true, m_is_interruptible);
     m_computation.setProgressStatus(msg);
 }
 

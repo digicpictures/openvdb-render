@@ -79,11 +79,16 @@ technique Main
         if (renderer == nullptr)
             return nullptr;
 
-        auto shader_manager = renderer->getShaderManager();
-        if (shader_manager == nullptr)
+        return renderer->getShaderManager();
+    }
+
+    MHWRender::MTextureManager* get_texture_manager()
+    {
+        auto renderer = MHWRender::MRenderer::theRenderer();
+        if (renderer == nullptr)
             return nullptr;
 
-        return shader_manager;
+        return renderer->getTextureManager();
     }
 
     bool isPathSelected(MDagPath path)
@@ -150,6 +155,22 @@ namespace MHWRender {
         ChannelAssignment(const char *param_prefix_) : param_prefix(param_prefix_) {}
     };
 
+    struct RGBRampTexture
+    {
+        // Must be the same as Gradient resolution.
+        static constexpr int RESOLUTION = 128;
+
+        TexturePtr texture;
+
+        static const MHWRender::MSamplerState *ramp_sampler_state;
+        static const MHWRender::MSamplerState *initSamplerState();
+
+        RGBRampTexture();
+        void update(const Gradient& gradient);
+        static void assignSamplerToShader(MShaderInstance* shader_instance, const MString& sampler_param);
+        void assignTextureToShader(MShaderInstance* shader_instance, const MString& texture_param);
+    };
+
     class SlicedDisplay
     {
     public:
@@ -172,11 +193,14 @@ namespace MHWRender {
         ChannelAssignment m_emission_channel;
         ChannelAssignment m_transparency_channel;
         ChannelAssignment m_temperature_channel;
+        RGBRampTexture m_scattering_ramp;
+        RGBRampTexture m_emission_ramp;
         VolumeSampler m_volume_sampler;
 
         Renderable m_slices_renderable;
         Renderable m_bbox_renderable;
         const MHWRender::MSamplerState *m_volume_sampler_state;
+
         bool m_enabled;
         bool m_selected;
 
@@ -271,7 +295,12 @@ namespace MHWRender {
                 target = source;
                 return channel_mask;
             }
-            else if (target != source)
+            else if (target.gradient != source.gradient)
+            {
+                target = source;
+                return ChangeSet::GRADIENT;
+            }
+            else if (target.value != source.value || target.source != source.source)
             {
                 target = source;
                 return ChangeSet::GENERIC_ATTRIBUTE;
@@ -384,11 +413,7 @@ namespace MHWRender {
     {
         VDBSubSceneOverrideData* data = p_data.get();
 
-        MHWRender::MRenderer* renderer = MHWRender::MRenderer::theRenderer();
-        if (renderer == nullptr)
-            return;
-
-        const MHWRender::MShaderManager* shader_manager = renderer->getShaderManager();
+        const MHWRender::MShaderManager* shader_manager = get_shader_manager();
         if (shader_manager == nullptr)
             return;
 
@@ -803,17 +828,11 @@ namespace MHWRender {
             return { mayavecFromVec3f(bbox.min()), mayavecFromVec3f(bbox.max()) };
         }
 
-        const MHWRender::MShaderManager* getShaderManager()
-        {
-            auto renderer = MHWRender::MRenderer::theRenderer();
-            if (!renderer) return nullptr;
-            return renderer->getShaderManager();
-        }
-
     } // unnamed namespace
 
     const std::string SlicedDisplay::s_effect_code = R"cgfx(
 float3 view_dir_world : ViewDirection < string Space = "World"; >;
+float3 view_pos_world : ViewPosition < string Space = "World"; >;
 float4x4 world_mat : World < string UIWidget = "None"; >;
 float4x4 world_inverse_mat : WorldInverse < string UIWidget = "None"; >;
 float4x4 world_view_proj_mat : WorldViewProjection < string UIWidget = "None"; >;
@@ -834,6 +853,7 @@ sampler3D density_sampler = sampler_state {
 };
 
 float3    scattering_color = float3(1, 1, 1);
+int       scattering_source = 0;
 float     scattering_anisotropy = 0;
 bool      use_scattering_texture = true;
 float2    scattering_value_range = float2(0, 1);
@@ -860,6 +880,7 @@ sampler3D transparency_sampler = sampler_state {
 #define EMISSION_MODE_BLACKBODY             3
 #define EMISSION_MODE_DENSITY_AND_BLACKBODY 4
 int       emission_mode = 0;
+int       emission_source = 0;
 bool      use_emission_texture = false;
 float3    emission_color = float3(1, 1, 1);
 float2    emission_value_range = float2(0, 1);
@@ -878,6 +899,17 @@ float3    temperature_volume_origin;
 texture   temperature_texture < string TextureType = "3D"; >;
 sampler3D temperature_sampler = sampler_state {
     Texture = <temperature_texture>;
+};
+
+// Ramps.
+texture   scattering_ramp_texture;
+sampler1D scattering_ramp_sampler = sampler_state {
+    Texture = <scattering_ramp_texture>;
+};
+
+texture   emission_ramp_texture;
+sampler1D emission_ramp_sampler = sampler_state {
+    Texture = <emission_ramp_texture>;
 };
 
 // Lights.
@@ -909,34 +941,42 @@ float SampleDensityTexture(float3 pos_model, float lod)
 float3 SampleScatteringTexture(float3 pos_model, float lod)
 {
     float3 tex_coords = (pos_model - scattering_volume_origin) / scattering_volume_size;
+    float3 res = scattering_color;
     if (use_scattering_texture)
-        return scattering_color * lerp(scattering_value_range.x, scattering_value_range.y, tex3Dlod(scattering_sampler, float4(tex_coords, lod)).r);
-    else
-        return scattering_color;
+    {
+        //float voxel = tex3Dlod(scattering_sampler, float4(tex_coords, lod)).r;
+        float voxel = lerp(scattering_value_range.x, scattering_value_range.y, tex3Dlod(scattering_sampler, float4(tex_coords, lod)).r);
+        if (scattering_source)
+            res *= tex1Dlod(scattering_ramp_sampler, float4(saturate(voxel), 0, 0, 0)).xyz;
+        else
+            res *= voxel;
+    }
+    return res;
 }
 
 float3 SampleTransparencyTexture(float3 pos_model, float lod)
 {
     float3 tex_coords = (pos_model - transparency_volume_origin) / transparency_volume_size;
+    float3 res = transparency;
     if (use_transparency_texture)
-        return transparency * lerp(transparency_value_range.x, transparency_value_range.y, tex3Dlod(transparency_sampler, float4(tex_coords, lod)).r);
-    else
-        return transparency;
-}
+        res *= lerp(transparency_value_range.x, transparency_value_range.y, tex3Dlod(transparency_sampler, float4(tex_coords, lod)).r);
 
-float3 SampleAbsorption(float3 pos_model, float lod)
-{
-    float3 transparency = SampleTransparencyTexture(pos_model, lod);
-    return -log(transparency);
+    return max(float3(1e-4, 1e-4, 1e-4), res);
 }
 
 float3 SampleEmissionTexture(float3 pos_model, float lod)
 {
     float3 tex_coords = (pos_model - emission_volume_origin) / emission_volume_size;
-    if (emission_mode == EMISSION_MODE_UNIFORM)
-        return emission_color;
-    else if (emission_mode == EMISSION_MODE_CHANNEL)
-        return emission_color * lerp(emission_value_range.x, emission_value_range.y, tex3Dlod(emission_sampler, float4(tex_coords, lod)).r);
+    float3 res = emission_color;
+    if (emission_mode == EMISSION_MODE_CHANNEL)
+    {
+        float voxel = tex3Dlod(emission_sampler, float4(tex_coords, lod)).r;
+        if (emission_source)
+            res *= tex1Dlod(emission_ramp_sampler, float4(voxel, 0, 0, 0)).xyz;
+        else
+            res *= lerp(emission_value_range.x, emission_value_range.y, voxel);
+    }
+    return res;
 }
 
 float SampleTemperatureTexture(float3 pos_model, float lod)
@@ -971,7 +1011,7 @@ struct VERT_OUTPUT
 {
     float4 pos_clip : Position;
     float3 pos_model : Texcoord0;
-    float3 slice_vector_world : Texcoord1;
+    float3 pos_world : Texcoord1;
 };
 
 VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
@@ -986,6 +1026,7 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
         slice_idx = max_slice_count - 1 - slice_idx;
     float3 pos_dom = float3(pos_slice, float(slice_idx) / float(max_slice_count));
     output.pos_model = DominantAxis(view_dir_model, pos_dom) * volume_size + volume_origin;
+    output.pos_world = mul(world_mat, float4(output.pos_model, 1)).xyz;
     output.pos_clip = mul(world_view_proj_mat, float4(output.pos_model, 1));
 
     return output;
@@ -1015,16 +1056,15 @@ float3 RayTransmittance(float3 from_model, float3 to_model)
     float3 step_model = (to_model - from_model) / float(shadow_sample_count + 1);
     float step_size_model = length(step_model);
 
-    float scattering_lod = CalcLOD(step_size_model, scattering_volume_size);
+    float density_lod = CalcLOD(step_size_model, density_volume_size);
     float transparency_lod = CalcLOD(step_size_model, transparency_volume_size);
 
     float3 transmittance = float3(1, 1, 1);
     float3 pos_model = from_model + 0.5f * step_model;
     for (int i = 0; i < shadow_sample_count; ++i) {
-        float3 scattering = SampleScatteringTexture(pos_model, scattering_lod);
-        float3 absorption = SampleAbsorption(pos_model, transparency_lod);
-        float3 extinction = scattering + absorption;
-        transmittance *= exp(-extinction * step_size_model / (1.0 + float(i) * step_size_model * shadow_gain));
+        float density = SampleDensityTexture(pos_model, density_lod);
+        float3 transparency = SampleTransparencyTexture(pos_model, transparency_lod);
+        transmittance *= pow(transparency, density * step_size_model / (1.0 + float(i) * step_size_model * shadow_gain));
         pos_model += step_model;
     }
     return transmittance;
@@ -1041,50 +1081,58 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
 {
     FRAG_OUTPUT output;
 
-    float3 scattering = SampleScatteringTexture(input.pos_model, 0);
-    float3 absorption = SampleAbsorption(input.pos_model, 0);
-    float3 extinction = scattering + absorption;
-    float3 albedo = scattering / extinction;
+    float density = SampleDensityTexture(input.pos_model, 0);
+    float3 transparency = SampleTransparencyTexture(input.pos_model, 0);
+
+    float3 extinction = density * -log(transparency);
+    float3 albedo = SampleScatteringTexture(input.pos_model, 0);
 
     float3 view_dir_model = normalize(mul(world_inverse_mat, float4(view_dir_world, 0)).xyz);
-    float3 dom = DominantAxis(view_dir_model/volume_size, float3(0, 0, 1));
-    float slice_thickness = dot(volume_size / float(max_slice_count), float3(1,1,1)/3);
+    //float3 dom = DominantAxis(view_dir_model, float3(0, 0, 1));
+    //float3 slice_vector_model = dom * volume_size / float(max_slice_count);
+    //float slice_thickness = length(mul(world_mat, float4(slice_vector_model, 0)).xyz);
+    float slice_thickness = dot(DominantAxis(view_dir_model, float3(0, 0, 1)), volume_size / float(max_slice_count));
+
+    //float slice_thickness = dot(dom, volume_size / float(max_slice_count));
+
+    float3 incident_dir_world = normalize(view_pos_world - input.pos_world);
 
     float3 lumi = float3(0, 0, 0);
 
     // Loop through directional lights.
     for (int i = 0; i < directional_light_count; ++i) {
         float3 light_dir_world = directional_light_directions[i];
-        float3 light_dir_model = -normalize(mul(world_inverse_mat, float4(light_dir_world, 0)).xyz);
-        float3 corner = volume_origin + (0.5f + 0.5f * sign(light_dir_model)) * volume_size;
-        float3 light_pos = input.pos_model + 1.1f * length(corner - input.pos_model) * light_dir_model;
-        float3 shadow = RayTransmittance(input.pos_model, light_pos);
+        float3 light_dir_model = normalize(mul(world_inverse_mat, float4(light_dir_world, 0)).xyz);
+        float3 shadow = RayTransmittance(input.pos_model, input.pos_model - light_dir_model * slice_thickness * max_slice_count * 0.5f);
         float3 light_radiance = directional_light_colors[i] * directional_light_intensities[i];
         float3 incident_radiance = light_radiance * shadow;
-        float phase = HGPhase(dot(-view_dir_world, light_dir_world));
+        float phase = HGPhase(dot(incident_dir_world, normalize(light_dir_world)));
         // Divide by extinction coef (factored into albedo) because integral(exp(at)dt) = 1/a exp(at).
-        lumi += albedo * phase * incident_radiance * slice_thickness;
+        lumi += albedo * phase * incident_radiance;
     }
 
     // Loop through point lights.
     for (int i = 0; i < point_light_count; ++i) {
-        float3 light_pos_model = mul(world_inverse_mat, float4(point_light_positions[i], 1)).xyz;
+        float3 light_pos_world = point_light_positions[i];
+        float3 light_pos_model = mul(world_inverse_mat, float4(light_pos_world, 1)).xyz;
         float3 shadow = RayTransmittance(input.pos_model, light_pos_model);
         float3 light_radiance = point_light_colors[i] * point_light_intensities[i];
         float3 incident_radiance = light_radiance * shadow;
-        float3 light_dir_model = normalize(light_pos_model - input.pos_model);
-        float phase = HGPhase(dot(-view_dir_model, light_dir_model));
+        float3 light_dir_world = normalize(light_pos_world - input.pos_world);
+        float phase = HGPhase(dot(incident_dir_world, light_dir_world));
         // Divide by extinction coef (factored into albedo) because integral(exp(at)dt) = 1/a exp(at).
-        lumi += albedo * phase * incident_radiance * slice_thickness;
+        lumi += albedo * phase * incident_radiance;
     }
 
-    float3 transmittance = exp(-extinction * slice_thickness);
+    float3 transmittance = pow(transparency, density * slice_thickness);
 
     float3 emission = SampleEmissionTexture(input.pos_model, 0);
     // Divide by extinction coef because integral(exp(at)dt) = 1/a exp(at).
-    lumi += emission/extinction;
+    lumi += emission / extinction;
 
-    output.color = float4(lumi, 1 - dot(transmittance, float3(1, 1, 1)/3));
+    // We are using premultiplied alpha.
+    float alpha = 1 - dot(transmittance, float3(1, 1, 1) / 3);
+    output.color = float4(lumi * alpha, alpha);
 
     return output;
 }
@@ -1094,7 +1142,7 @@ technique Main < int isTransparent = 1; >
     pass P0
     {
         BlendEnable = true;
-        BlendFunc = int2(SrcAlpha, OneMinusSrcAlpha);
+        BlendFunc = int2(One, OneMinusSrcAlpha);
         CullFaceEnable = false;
         VertexProgram = compile gp5vp VolumeVertexShader();
         FragmentProgram = compile gp5fp VolumeFragmentShader();
@@ -1197,7 +1245,7 @@ technique Main < int isTransparent = 1; >
         : m_parent(parent), m_enabled(false), m_selected(false), m_volume_sampler_state(nullptr),
         m_density_channel("density"), m_scattering_channel("scattering"), m_transparency_channel("transparency"), m_emission_channel("emission"), m_temperature_channel("temperature")
     {
-        const MHWRender::MShaderManager* shader_manager = getShaderManager();
+        const MHWRender::MShaderManager* shader_manager = get_shader_manager();
         assert(shader_manager);
 
         // Load volume shader from effect file.
@@ -1229,6 +1277,10 @@ technique Main < int isTransparent = 1; >
         CHECK_MSTATUS(m_volume_shader->setParameter("transparency_sampler", *m_volume_sampler_state));
         CHECK_MSTATUS(m_volume_shader->setParameter("emission_sampler",  *m_volume_sampler_state));
         CHECK_MSTATUS(m_volume_shader->setParameter("temperature_sampler", *m_volume_sampler_state));
+
+        // Assign ramp sampler states.
+        m_scattering_ramp.assignSamplerToShader(m_volume_shader.get(), "scattering_ramp_sampler");
+        m_emission_ramp.assignSamplerToShader(m_volume_shader.get(), "emission_ramp_sampler");
     }
 
     void SlicedDisplay::enable(bool enable)
@@ -1283,7 +1335,7 @@ technique Main < int isTransparent = 1; >
         {
             // Selection bbox.
 
-            const MHWRender::MShaderManager* shader_manager = getShaderManager();
+            const MHWRender::MShaderManager* shader_manager = get_shader_manager();
             if (!shader_manager)
                 return false;
             static auto shader = shader_manager->getStockShader(MHWRender::MShaderManager::k3dSolidShader);
@@ -1401,10 +1453,69 @@ technique Main < int isTransparent = 1; >
 
     } // unnamed namespace
 
+
+    const MHWRender::MSamplerState *RGBRampTexture::ramp_sampler_state = initSamplerState();
+    const MHWRender::MSamplerState *RGBRampTexture::initSamplerState()
+    {
+        MHWRender::MSamplerStateDesc desc;
+        desc.filter = MHWRender::MSamplerState::kMinMagMipLinear;
+        desc.addressU = MHWRender::MSamplerState::kTexClamp;
+        return MHWRender::MStateManager::acquireSamplerState(desc);
+    }
+
+    RGBRampTexture::RGBRampTexture()
+    {
+        MTextureDescription ramp_desc;
+        ramp_desc.fWidth = RESOLUTION;
+        ramp_desc.fHeight = 1;
+        ramp_desc.fDepth = 1;
+        ramp_desc.fBytesPerRow = ramp_desc.fWidth * 4;
+        ramp_desc.fBytesPerSlice = ramp_desc.fBytesPerRow;
+        ramp_desc.fMipmaps = 1;
+        ramp_desc.fArraySlices = 1;
+        ramp_desc.fFormat = kR8G8B8X8;
+        ramp_desc.fTextureType = kImage1D;
+        ramp_desc.fEnvMapType = kEnvNone;
+
+        std::vector<uint8_t> zeros(RESOLUTION * 4, 0);
+        texture.reset(get_texture_manager()->acquireTexture("", ramp_desc, zeros.data(), false));
+    }
+
+    void RGBRampTexture::assignSamplerToShader(MShaderInstance* shader_instance, const MString& sampler_param)
+    {
+        CHECK_MSTATUS(shader_instance->setParameter(sampler_param, *ramp_sampler_state));
+    }
+
+    void RGBRampTexture::assignTextureToShader(MShaderInstance* shader_instance, const MString& texture_param)
+    {
+        MTextureAssignment ta;
+        ta.texture = texture.get();
+        CHECK_MSTATUS(shader_instance->setParameter(texture_param, ta));
+    }
+
+    void RGBRampTexture::update(const Gradient& gradient)
+    {
+        static std::array<uint8_t, 4 * RESOLUTION> staging;
+        const auto& ramp_samples = gradient.getRgbRamp();
+        if (texture && ramp_samples.size() >= RESOLUTION) {
+            for (int i = 0; i < RESOLUTION; ++i)
+            {
+                staging[4 * i + 0] = uint8_t(ramp_samples[i].x * 255);
+                staging[4 * i + 1] = uint8_t(ramp_samples[i].y * 255);
+                staging[4 * i + 2] = uint8_t(ramp_samples[i].z * 255);
+                staging[4 * i + 3] = 0;
+            }
+            texture->update(staging.data(), false);
+        }
+    }
+
     bool SlicedDisplay::update(MHWRender::MSubSceneContainer& container, const VDBSubSceneOverrideData& data)
     {
         if (!m_volume_shader)
             return false;
+
+        if (data.change_set == ChangeSet::NO_CHANGES)
+            return true;
 
         initRenderItems(container, data);
         if (!m_bbox_renderable || !m_slices_renderable)
@@ -1427,9 +1538,11 @@ technique Main < int isTransparent = 1; >
         // Update shader params.
         CHECK_MSTATUS(m_volume_shader->setParameter("density", data.density_channel.value));
         CHECK_MSTATUS(m_volume_shader->setParameter("scattering_color", data.scattering_channel.value));
+        CHECK_MSTATUS(m_volume_shader->setParameter("scattering_source", int(data.scattering_channel.source)));
         CHECK_MSTATUS(m_volume_shader->setParameter("scattering_anisotropy", data.anisotropy));
         CHECK_MSTATUS(m_volume_shader->setParameter("transparency", data.transparency_channel.value));
         CHECK_MSTATUS(m_volume_shader->setParameter("emission_color", data.emission_channel.value));
+        CHECK_MSTATUS(m_volume_shader->setParameter("emission_source", int(data.emission_channel.source)));
         CHECK_MSTATUS(m_volume_shader->setParameter("emission_mode", int(data.emission_mode)));
         CHECK_MSTATUS(m_volume_shader->setParameter("temperature", data.temperature_channel.value));
         CHECK_MSTATUS(m_volume_shader->setParameter("shadow_gain", data.shadow_gain));
@@ -1437,15 +1550,18 @@ technique Main < int isTransparent = 1; >
 
         // === Update channels. ===
 
-        // Bail if nothing has changed which would affect the volume textures or the gradient ramps.
-        if (data.change_set <= ChangeSet::GENERIC_ATTRIBUTE)
+        // Bail if nothing has changed which affects the volume textures or the gradient ramps.
+        if (data.change_set == ChangeSet::GENERIC_ATTRIBUTE)
             return true;
 
-        // Handle ramps.
-        // TODO
+        // Update ramps.
+        m_scattering_ramp.update(data.scattering_channel.gradient);
+        m_scattering_ramp.assignTextureToShader(m_volume_shader.get(), "scattering_ramp_texture");
+        m_emission_ramp.update(data.emission_channel.gradient);
+        m_emission_ramp.assignTextureToShader(m_volume_shader.get(), "emission_ramp_texture");
 
-        // Bail if nothing has changed which would affect the volume textures.
-        if (data.change_set <= ChangeSet::GRADIENT)
+        // Bail if nothing has changed which affects the volume textures.
+        if (data.change_set == ChangeSet::GRADIENT)
             return true;
 
         const bool vdb_file_changed        = hasChange(data.change_set, ChangeSet::VDB_FILE);
@@ -1465,9 +1581,20 @@ technique Main < int isTransparent = 1; >
 
         // Should come after channel cache is cleared.
         if (max_slice_count_changed)
+        {
             // Resample all channels.
             for (auto& channel : m_channel_cache)
                 channel.second.lock()->sample(m_volume_sampler, data.max_slice_count);
+            // Rebind texture params.
+            MTextureAssignment texture_assignment;
+            for (auto& channel_assignment : { m_density_channel, m_scattering_channel, m_transparency_channel, m_emission_channel, m_temperature_channel })
+            {
+                if (!channel_assignment.channel_ptr)
+                    continue;
+                texture_assignment.texture = channel_assignment.channel_ptr->volume_texture.texture_ptr.get();
+                CHECK_MSTATUS(m_volume_shader->setParameter(format("^1s_texture", channel_assignment.param_prefix), texture_assignment));
+            }
+        }
 
         // Update channels.
 
@@ -1487,12 +1614,13 @@ technique Main < int isTransparent = 1; >
                         channel.reset(new VolumeChannel());
                     // Load VDB grid, bail on error.
                     channel->loadGrid(data.vdb_file, grid_name);
-                    if (!channel->isValid())
-                        return;
-                    // Sample VDB grid.
-                    channel->sample(m_volume_sampler, data.max_slice_count);
-                    // Insert channel into cache.
-                    m_channel_cache.insert({ grid_name, channel });
+                    if (channel->isValid())
+                    {
+                        // Sample VDB grid.
+                        channel->sample(m_volume_sampler, data.max_slice_count);
+                        // Insert channel into cache.
+                        m_channel_cache.insert({ grid_name, channel });
+                    }
                 }
                 else
                 {

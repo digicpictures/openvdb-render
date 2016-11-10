@@ -102,8 +102,9 @@ public:
     static VDBVolumeStandardShaderParams s_volume_standard_params;
 
     VDBVisualizerData* get_update();
-    void setFloatChannel(const MObject& channel_name, const MObject& channel_value, const VDBGradientParams& gradient, ChannelParams<float>& output);
-    void setColorChannel(const MObject& channel_name, const MObject& color, const MObject& intensity, const VDBGradientParams& gradient, ChannelParams<MFloatVector>& output);
+
+    template <typename T>
+    void setChannel(const MObject& channel_name, const MObject& color, const MObject& intensity, const MObject& source, const VDBGradientParams *gradient, ChannelParams<T>& output);
 
 private:
 

@@ -9,15 +9,21 @@
 
 class Gradient : public GradientBase<MFloatVector> {
 public:
-    Gradient () : GradientBase<MFloatVector>()
+    Gradient () : GradientBase<MFloatVector>(), m_channel_mode_override(-1)
     { }
 
     ~Gradient()
     { }
 
+    inline void clear_channel_mode_override() { set_channel_mode_override(-1); }
+    inline void set_channel_mode_override(int channel_mode_override) { m_channel_mode_override = channel_mode_override; }
+
     inline void update(const VDBGradientParams& params, const MObject& tmo)
     {
-        m_channel_mode = MPlug(tmo, params.mode).asShort();
+        if (m_channel_mode_override >= 0)
+            m_channel_mode = m_channel_mode_override;
+        else
+            m_channel_mode = MPlug(tmo, params.mode).asShort();
 
         if (m_channel_mode > CHANNEL_MODE_RAW)
         {
@@ -76,6 +82,10 @@ public:
             GradientBase<MFloatVector>::update();
         }
     }
+
+    const std::vector<MFloatVector>& getRgbRamp() const { return m_rgb_ramp; }
+private:
+    int m_channel_mode_override;
 };
 
 template <>

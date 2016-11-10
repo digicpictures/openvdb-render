@@ -18,25 +18,24 @@ struct VDBVolumeStandardShaderParams
 
     MObject density;
     MObject density_channel;
-    VDBGradientParams density_gradient;
 
     MObject scattering_intensity;
     MObject scattering_color;
     MObject scattering_channel;
     MObject anisotropy;
+    MObject scattering_source;
     VDBGradientParams scattering_gradient;
 
     MObject transparency;
     MObject transparency_channel;
-    VDBGradientParams transparency_gradient;
 
     MObject emission_intensity;
     MObject emission_color;
     MObject emission_channel;
     MObject emission_mode;
+    MObject emission_source;
     VDBGradientParams emission_gradient;
 
     MObject temperature;
     MObject temperature_channel;
-    VDBGradientParams temperature_gradient;
 };

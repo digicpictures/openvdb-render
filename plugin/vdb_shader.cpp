@@ -48,7 +48,7 @@ void VDBShaderParams::create_params()
     scattering_intensity = nAttr.create("scatteringIntensity", "scattering_intensity", MFnNumericData::kFloat);
     nAttr.setDefault(1.0f);
     nAttr.setMin(0.0f);
-    nAttr.setSoftMax(1.0f);
+    nAttr.setSoftMax(3.0f);
     nAttr.setChannelBox(true);
     MPxNode::addAttribute(scattering_intensity);
 
@@ -108,7 +108,7 @@ void VDBShaderParams::create_params()
     emission_intensity = nAttr.create("emissionIntensity", "emission_intensity", MFnNumericData::kFloat);
     nAttr.setDefault(1.0f);
     nAttr.setMin(0.0f);
-    nAttr.setSoftMax(1.0f);
+    nAttr.setSoftMax(3.0f);
     nAttr.setChannelBox(true);
     MPxNode::addAttribute(emission_intensity);
 

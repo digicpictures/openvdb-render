@@ -85,7 +85,9 @@ void VolumeSampler::sampleVolume(const openvdb::Coord& extents, SamplingFunc sam
     typedef tbb::enumerable_thread_specific<FloatRange> PerThreadRange;
     PerThreadRange per_thread_ranges;
     const auto stride = openvdb::Vec3i(1, extents.x(), extents.x() * extents.y());
-    tbb::parallel_for(domain, [&sampling_func, &stride, progress_bar,
+    tbb::atomic<bool> cancelled;
+    cancelled = false;
+    tbb::parallel_for(domain, [&sampling_func, &stride, progress_bar, &cancelled,
                                &per_thread_ranges, output = m_buffer.data()](const CoordBBox& bbox) {
         const auto local_extents = bbox.extents();
         const auto progress_step = local_extents.x() * local_extents.y();
@@ -95,6 +97,8 @@ void VolumeSampler::sampleVolume(const openvdb::Coord& extents, SamplingFunc sam
         for (auto z = bbox.min().z(); z <= bbox.max().z(); ++z) {
             for (auto y = bbox.min().y(); y <= bbox.max().y(); ++y) {
                 for (auto x = bbox.min().x(); x <= bbox.max().x(); ++x) {
+                    if (cancelled)
+                        return;
                     const auto domain_index = openvdb::Vec3i(x, y, z);
                     const auto linear_index = domain_index.dot(stride);
                     const auto sample_value = sampling_func(domain_index);
@@ -105,9 +109,16 @@ void VolumeSampler::sampleVolume(const openvdb::Coord& extents, SamplingFunc sam
 
             // Report progress.
             if (progress_bar)
+            {
+                if (progress_bar->isCancelled())
+                    cancelled = true;
                 progress_bar->addProgress(progress_step);
+            }
         }
     });
+    if (cancelled)
+        return;
+
     // Merge per-thread value ranges.
     FloatRange value_range;
     for (const FloatRange& per_thread_range : per_thread_ranges) {

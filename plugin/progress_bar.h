@@ -13,7 +13,7 @@
 class ProgressBar
 {
 public:
-    ProgressBar(const MString& msg, const uint32_t max_progress=100, const bool is_interruptable = false);
+    ProgressBar(const MString& msg, const uint32_t max_progress=100, const bool is_interruptable = true);
     ~ProgressBar();
 
     void setMaxProgress(const uint32_t max_progress) { m_max_progress = max_progress; }
@@ -35,7 +35,7 @@ private:
 
     MComputation m_computation;
     bool m_show_progress_bar;
-    bool m_is_interruptable;
+    bool m_is_interruptible;
     uint32_t m_max_progress;
     tbb::atomic<uint32_t> m_progress;
 
