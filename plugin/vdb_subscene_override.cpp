@@ -1127,7 +1127,7 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     // Divide by extinction coef because integral(exp(at)dt) = 1/a exp(at).
     lumi += emission / extinction;
 
-    // We are using premultiplied alpha.
+    // Premultiply alpha.
     float alpha = 1 - dot(transmittance, float3(1, 1, 1) / 3);
     output.color = float4(lumi * alpha, alpha);
 
