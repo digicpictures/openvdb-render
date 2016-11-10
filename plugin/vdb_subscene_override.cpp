@@ -970,11 +970,11 @@ float3 SampleEmissionTexture(float3 pos_model, float lod)
     float3 res = emission_color;
     if (emission_mode == EMISSION_MODE_CHANNEL)
     {
-        float voxel = tex3Dlod(emission_sampler, float4(tex_coords, lod)).r;
+        float voxel = lerp(emission_value_range.x, emission_value_range.y, tex3Dlod(emission_sampler, float4(tex_coords, lod)).r);
         if (emission_source)
             res *= tex1Dlod(emission_ramp_sampler, float4(voxel, 0, 0, 0)).xyz;
         else
-            res *= lerp(emission_value_range.x, emission_value_range.y, voxel);
+            res *= voxel;
     }
     return res;
 }
