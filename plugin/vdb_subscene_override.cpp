@@ -945,7 +945,12 @@ float SampleDensityTexture(float3 pos_model, float lod)
 {
     float3 tex_coords = (pos_model - density_volume_origin) / density_volume_size;
     if (use_density_texture)
-        return density * lerp(density_value_range.x, density_value_range.y, tex3Dlod(density_sampler, float4(tex_coords, lod)).r);
+    {
+        float tex_sample = tex3Dlod(density_sampler, float4(tex_coords, lod)).r;
+        if (tex_sample == 0)
+            return -1;
+        return density * lerp(density_value_range.x, density_value_range.y, tex_sample);
+    }
     else
         return density;
 }
@@ -956,7 +961,6 @@ float3 SampleScatteringTexture(float3 pos_model, float lod)
     float3 res = scattering_color;
     if (use_scattering_texture)
     {
-        //float voxel = tex3Dlod(scattering_sampler, float4(tex_coords, lod)).r;
         float voxel = lerp(scattering_value_range.x, scattering_value_range.y, tex3Dlod(scattering_sampler, float4(tex_coords, lod)).r);
         if (scattering_source)
             res *= sRGBToLinear(tex1Dlod(scattering_ramp_sampler, float4(voxel, 0, 0, 0)).xyz);
@@ -973,22 +977,35 @@ float3 SampleTransparencyTexture(float3 pos_model, float lod)
     if (use_transparency_texture)
         res *= lerp(transparency_value_range.x, transparency_value_range.y, tex3Dlod(transparency_sampler, float4(tex_coords, lod)).r);
 
-    return max(float3(1e-4, 1e-4, 1e-4), res);
+    return clamp(res, (float3)1e-7, (float3)1);
 }
 
 float3 SampleEmissionTexture(float3 pos_model, float lod)
 {
-    float3 tex_coords = (pos_model - emission_volume_origin) / emission_volume_size;
-    float3 res = emission_color;
-    if (emission_mode == EMISSION_MODE_CHANNEL)
+    if (emission_mode == EMISSION_MODE_NONE)
+        return float3(0, 0, 0);
+
+    if (emission_mode == EMISSION_MODE_CHANNEL || emission_mode == EMISSION_MODE_DENSITY)
     {
-        float voxel = lerp(emission_value_range.x, emission_value_range.y, tex3Dlod(emission_sampler, float4(tex_coords, lod)).r);
-        if (emission_color_source)
-            res *= sRGBToLinear(tex1Dlod(emission_ramp_sampler, float4(voxel, 0, 0, 0)).xyz);
+        float channel_value = 0;
+        if (use_emission_texture)
+        {
+            float3 tex_coords = (pos_model - emission_volume_origin) / emission_volume_size;
+            channel_value = lerp(emission_value_range.x, emission_value_range.y, tex3Dlod(emission_sampler, float4(tex_coords, lod)).r);
+        }
+
+        float3 emission_tint = emission_color;
+        if (emission_color_source == EMISSION_COLOR_SOURCE_RAMP)
+            emission_tint = sRGBToLinear(tex1Dlod(emission_ramp_sampler, float4(channel_value, 0, 0, 0)).xyz);
+
+        // Color source is color.
+        if (use_emission_texture)
+            return channel_value * emission_tint;
         else
-            res *= voxel;
+            return emission_tint;
     }
-    return res;
+
+    return emission_color;
 }
 
 float SampleTemperatureTexture(float3 pos_model, float lod)
@@ -1094,6 +1111,11 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     FRAG_OUTPUT output;
 
     float density = SampleDensityTexture(input.pos_model, 0);
+    if (density < 0) {
+        output.color = float4(0, 0, 0, 0);
+        return output;
+    }
+
     float3 transparency = SampleTransparencyTexture(input.pos_model, 0);
 
     float3 extinction = density * -log(transparency);
