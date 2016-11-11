@@ -18,15 +18,15 @@ enum VDBDisplayMode {
 };
 
 enum class EmissionMode {
-    UNIFORM = 0,
+    NONE = 0,
     DENSITY = 1,
     CHANNEL = 2,
     BLACKBODY = 3,
     DENSITY_AND_BLACKBODY = 4
 };
 
-enum class ChannelSource {
-    CONSTANT = 0,
+enum class ChannelColorSource {
+    COLOR = 0,
     RAMP = 1
 };
 
@@ -37,7 +37,7 @@ struct ChannelParams
     T value;
     std::string name;
     Gradient gradient;
-    ChannelSource source;
+    ChannelColorSource color_source;
     template <typename... Args>
     ChannelParams(Args&&... args) : value(std::forward<Args>(args)...) {}
     ChannelParams(const ChannelParams<T>&) = default;

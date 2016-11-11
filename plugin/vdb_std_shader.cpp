@@ -55,7 +55,7 @@ void VDBVolumeStandardShaderParams::create_params(VDBShaderParams *shared_params
     // Emission mode.
 
     emission_mode = eAttr.create("emissionMode", "emission_mode");
-    eAttr.addField("Uniform", 0);
+    eAttr.addField("None", 0);
     eAttr.addField("Density", 1);
     eAttr.addField("Channel", 2);
     eAttr.addField("Blackbody", 3);

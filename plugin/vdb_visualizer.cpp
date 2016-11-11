@@ -690,7 +690,7 @@ void VDBVisualizerShape::setChannel(const MObject& channel_name, const MObject& 
     if (!intensity.isNull())
         output.value *= MPlug(tmo, intensity).asFloat();
     if (!source.isNull())
-        output.source = ChannelSource(MPlug(tmo, source).asInt());
+        output.color_source = ChannelColorSource(MPlug(tmo, source).asInt());
     if (gradient)
         output.gradient.update(*gradient, tmo);
 }
