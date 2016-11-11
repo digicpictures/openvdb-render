@@ -1156,16 +1156,15 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     }
 
     float3 transmittance = pow(transparency, density * ray_distance);
-
     float3 emission = SampleEmissionTexture(input.pos_model, 0);
-    // Divide by extinction coef because integral(exp(at)dt) = 1/a exp(at).
-    lumi += emission / extinction;
 
-    lumi = linearTosRGB(lumi);
+    // Truncated series of (1 - exp(-dt)) / t; d = ray_distance, t = extinction.
+    float3 x = -ray_distance * extinction;
+    float3 emission_factor = ray_distance * (1 - x * (0.5f + x * (1.0f/6.0f - x / 24.0f)));
 
     // Premultiply alpha.
     float alpha = 1 - dot(transmittance, float3(1, 1, 1) / 3);
-    output.color = float4(lumi * alpha, alpha);
+    output.color = float4((lumi * alpha + emission * emission_factor), alpha);
 
     return output;
 }
