@@ -168,6 +168,7 @@ void VDBVolumeStandardShaderParams::affect_output(MObject& out_object)
     MPxNode::attributeAffects(emission_source, out_object);
     emission_gradient.affect_output(out_object);
 
+    MPxNode::attributeAffects(temperature, out_object);
     MPxNode::attributeAffects(temperature_channel, out_object);
 }
 
