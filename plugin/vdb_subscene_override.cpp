@@ -12,6 +12,7 @@
 
 #include <Cg/cg.h>
 
+#include "blackbody.h"
 #include "progress_bar.h"
 #include "volume_sampler.h"
 #include "vdb_maya_utils.hpp"
@@ -155,20 +156,46 @@ namespace MHWRender {
         ChannelAssignment(const char *param_prefix_) : param_prefix(param_prefix_) {}
     };
 
-    struct RGBRampTexture
+    class SamplerState
     {
-        // Must be the same as Gradient resolution.
-        static constexpr int RESOLUTION = 128;
+    public:
+        SamplerState(MHWRender::MSamplerState::TextureFilter filter, MHWRender::MSamplerState::TextureAddress address)
+        {
+            MHWRender::MSamplerStateDesc desc;
+            desc.filter = filter;
+            desc.addressU = address;
+            desc.addressV = address;
+            desc.addressW = address;
+            m_sampler_state = MHWRender::MStateManager::acquireSamplerState(desc);
+        }
+        void assign(MHWRender::MShaderInstance *shader, const MString& param_name) const
+        {
+            CHECK_MSTATUS(shader->setParameter(param_name, *m_sampler_state));
+        }
 
-        TexturePtr texture;
+    private:
+        const MHWRender::MSamplerState *m_sampler_state;
+    };
 
-        static const MHWRender::MSamplerState *ramp_sampler_state;
-        static const MHWRender::MSamplerState *initSamplerState();
-
-        RGBRampTexture();
-        void update(const Gradient& gradient);
+    class RGBRampTexture
+    {
+    public:
+        RGBRampTexture(int resolution, const MFloatVector* colors = nullptr);
+        void updateFromGradient(const Gradient& gradient);
+        void updateFromData(const MFloatVector* colors);
         static void assignSamplerToShader(MShaderInstance* shader_instance, const MString& sampler_param);
-        void assignTextureToShader(MShaderInstance* shader_instance, const MString& texture_param);
+        void assignTextureToShader(MShaderInstance* shader_instance, const MString& texture_param) const;
+
+        operator bool() const { return m_texture.get() != nullptr; }
+
+    private:
+        void fillStagingVector(const MFloatVector* colors);
+
+        int m_resolution;
+        std::vector<uint8_t> m_staging;
+        TexturePtr m_texture;
+
+        static const SamplerState s_ramp_sampler_state;
     };
 
     class SlicedDisplay
@@ -193,13 +220,24 @@ namespace MHWRender {
         ChannelAssignment m_emission_channel;
         ChannelAssignment m_transparency_channel;
         ChannelAssignment m_temperature_channel;
+        VolumeSampler m_volume_sampler;
+
+        // Must be the same as Gradient resolution.
+        static constexpr int RAMP_RESOLUTION = 128;
         RGBRampTexture m_scattering_ramp;
         RGBRampTexture m_emission_ramp;
-        VolumeSampler m_volume_sampler;
+
+        static const struct BlackbodyLUT
+        {
+            static constexpr int MAX_TEMP = 15001;
+            static constexpr int RESOLUTION = 1024;
+            BlackbodyLUT();
+            RGBRampTexture lut;
+        } s_blackbody_lut;
 
         Renderable m_slices_renderable;
         Renderable m_bbox_renderable;
-        const MHWRender::MSamplerState *m_volume_sampler_state;
+        static const SamplerState s_volume_sampler_state;
 
         bool m_enabled;
         bool m_selected;
@@ -903,6 +941,12 @@ sampler3D temperature_sampler = sampler_state {
     Texture = <temperature_texture>;
 };
 
+#define MAX_LUT_TEMPERATURE 15001.0f
+texture   blackbody_lut_texture;
+sampler1D blackbody_lut_sampler = sampler_state {
+    Texture = <blackbody_lut_texture>;
+};
+
 // Ramps.
 texture   scattering_ramp_texture;
 sampler1D scattering_ramp_sampler = sampler_state {
@@ -941,11 +985,19 @@ float3 linearTosRGB(float3 color)
     return pow(color, 1.0f/2.2f);
 }
 
-float SampleDensityTexture(float3 pos_model, float lod)
+#define MAXV(v) max(max(v.x, v.y), v.z)
+float CalcLOD(float distance_model, float3 size_model)
 {
-    float3 tex_coords = (pos_model - density_volume_origin) / density_volume_size;
+    float3 distance_voxels = (distance_model / size_model) * float(max_slice_count);
+    return max(0, log(MAXV(distance_voxels)) / log(2.f));
+}
+
+float SampleDensityTexture(float3 pos_model, float lod_scale_model)
+{
     if (use_density_texture)
     {
+        float3 tex_coords = (pos_model - density_volume_origin) / density_volume_size;
+        float lod = CalcLOD(lod_scale_model, density_volume_size);
         float tex_sample = tex3Dlod(density_sampler, float4(tex_coords, lod)).r;
         if (tex_sample == 0)
             return -1;
@@ -955,12 +1007,13 @@ float SampleDensityTexture(float3 pos_model, float lod)
         return density;
 }
 
-float3 SampleScatteringTexture(float3 pos_model, float lod)
+float3 SampleScatteringTexture(float3 pos_model, float lod_scale_model)
 {
-    float3 tex_coords = (pos_model - scattering_volume_origin) / scattering_volume_size;
     float3 res = scattering_color;
     if (use_scattering_texture)
     {
+        float3 tex_coords = (pos_model - scattering_volume_origin) / scattering_volume_size;
+        float lod = CalcLOD(lod_scale_model, scattering_volume_size);
         float voxel = lerp(scattering_value_range.x, scattering_value_range.y, tex3Dlod(scattering_sampler, float4(tex_coords, lod)).r);
         if (scattering_source)
             res *= sRGBToLinear(tex1Dlod(scattering_ramp_sampler, float4(voxel, 0, 0, 0)).xyz);
@@ -970,51 +1023,69 @@ float3 SampleScatteringTexture(float3 pos_model, float lod)
     return res;
 }
 
-float3 SampleTransparencyTexture(float3 pos_model, float lod)
+float3 SampleTransparencyTexture(float3 pos_model, float lod_scale_model)
 {
-    float3 tex_coords = (pos_model - transparency_volume_origin) / transparency_volume_size;
     float3 res = transparency;
     if (use_transparency_texture)
+    {
+        float3 tex_coords = (pos_model - transparency_volume_origin) / transparency_volume_size;
+        float lod = CalcLOD(lod_scale_model, transparency_volume_size);
         res *= lerp(transparency_value_range.x, transparency_value_range.y, tex3Dlod(transparency_sampler, float4(tex_coords, lod)).r);
+    }
 
     return clamp(res, (float3)1e-7, (float3)1);
 }
 
-float3 SampleEmissionTexture(float3 pos_model, float lod)
+float SampleTemperatureTexture(float3 pos_model, float lod_scale_model)
+{
+    float res = temperature;
+    if (use_temperature_texture)
+    {
+        float3 tex_coords = (pos_model - temperature_volume_origin) / temperature_volume_size;
+        float lod = CalcLOD(lod_scale_model, temperature_volume_size);
+        res *= lerp(temperature_value_range.x, temperature_value_range.y, tex3Dlod(temperature_sampler, float4(tex_coords, lod)).r);
+    }
+
+    return res;
+}
+
+float3 SampleEmissionTexture(float3 pos_model, float lod_scale_model)
 {
     if (emission_mode == EMISSION_MODE_NONE)
         return float3(0, 0, 0);
 
-    if (emission_mode == EMISSION_MODE_CHANNEL || emission_mode == EMISSION_MODE_DENSITY)
+    float channel_value = 0;
+    if (use_emission_texture)
     {
-        float channel_value = 0;
-        if (use_emission_texture)
-        {
-            float3 tex_coords = (pos_model - emission_volume_origin) / emission_volume_size;
-            channel_value = lerp(emission_value_range.x, emission_value_range.y, tex3Dlod(emission_sampler, float4(tex_coords, lod)).r);
-        }
-
-        float3 emission_tint = emission_color;
-        if (emission_color_source == EMISSION_COLOR_SOURCE_RAMP)
-            emission_tint = sRGBToLinear(tex1Dlod(emission_ramp_sampler, float4(channel_value, 0, 0, 0)).xyz);
-
-        // Color source is color.
-        if (use_emission_texture)
-            return channel_value * emission_tint;
-        else
-            return emission_tint;
+        float3 tex_coords = (pos_model - emission_volume_origin) / emission_volume_size;
+        float lod = CalcLOD(lod_scale_model, emission_volume_size);
+        channel_value = lerp(emission_value_range.x, emission_value_range.y, tex3Dlod(emission_sampler, float4(tex_coords, lod)).r);
     }
 
-    return emission_color;
-}
+    float3 res = emission_color;
+    if (emission_color_source == EMISSION_COLOR_SOURCE_RAMP)
+        res = sRGBToLinear(tex1Dlod(emission_ramp_sampler, float4(channel_value, 0, 0, 0)).xyz);
 
-float SampleTemperatureTexture(float3 pos_model, float lod)
-{
-    float3 tex_coords = (pos_model - temperature_volume_origin) / temperature_volume_size;
-    if (use_temperature_texture)
-        return temperature * lerp(temperature_value_range.x, temperature_value_range.y, tex3Dlod(temperature_sampler, float4(tex_coords, lod)).r);
-    else
-        return temperature_color;
+    if (use_emission_texture)
+        res *= channel_value;
+
+    if (emission_mode == EMISSION_MODE_BLACKBODY || emission_mode == EMISSION_MODE_DENSITY_AND_BLACKBODY)
+    {
+        if (!use_temperature_texture)
+            return float3(0, 0, 0);
+
+        float temperature = SampleTemperatureTexture(pos_model, lod_scale_model);
+        float3 blackbody_color = tex1Dlod(blackbody_lut_sampler, float4(temperature / MAX_LUT_TEMPERATURE, 0, 0, 0)).rgb;
+
+        float strength = 1;
+        float physicalIntensity = 1;
+        float exposure = -20;
+        //blackbody_color *= lerp(1.0f, pow(temperature/100.0, 4) * 5.67 * pow(2.0f, exposure), physicalIntensity);
+
+        res *= blackbody_color * strength;
+    }
+
+    return res;
 }
 
 float3 DominantAxis(float3 dir, float3 v)
@@ -1063,15 +1134,6 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
 
 // ======== FRAGMENT SHADER ========
 
-#define OOR(x) ((x) < 0.0f || (x) > 1.0f)
-#define MAXV(v) max(max(v.x, v.y), v.z)
-
-float CalcLOD(float distance_model, float3 size_model)
-{
-    float3 distance_voxels = (distance_model / size_model) * float(max_slice_count);
-    return log(MAXV(distance_voxels)) / log(2.f);
-}
-
 #define ONE_OVER_4PI 0.07957747f
 float HGPhase(float costheta)
 {
@@ -1085,14 +1147,11 @@ float3 RayTransmittance(float3 from_model, float3 to_model)
     float3 step_model = (to_model - from_model) / float(shadow_sample_count + 1);
     float step_size_model = length(step_model);
 
-    float density_lod = CalcLOD(step_size_model, density_volume_size);
-    float transparency_lod = CalcLOD(step_size_model, transparency_volume_size);
-
     float3 transmittance = float3(1, 1, 1);
     float3 pos_model = from_model + 0.5f * step_model;
     for (int i = 0; i < shadow_sample_count; ++i) {
-        float density = SampleDensityTexture(pos_model, density_lod);
-        float3 transparency = SampleTransparencyTexture(pos_model, transparency_lod);
+        float density = SampleDensityTexture(pos_model, step_size_model);
+        float3 transparency = SampleTransparencyTexture(pos_model, step_size_model);
         transmittance *= pow(transparency, density * step_size_model / (1.0 + float(i) * step_size_model * shadow_gain));
         pos_model += step_model;
     }
@@ -1157,6 +1216,8 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
 
     float3 transmittance = pow(transparency, density * ray_distance);
     float3 emission = SampleEmissionTexture(input.pos_model, 0);
+    if (emission_mode == EMISSION_MODE_DENSITY || emission_mode == EMISSION_MODE_DENSITY_AND_BLACKBODY)
+        emission *= density;
 
     // Truncated series of (1 - exp(-dt)) / t; d = ray_distance, t = extinction.
     float3 x = -ray_distance * extinction;
@@ -1182,111 +1243,22 @@ technique Main < int isTransparent = 1; >
 }
 )cgfx";
 
-    void SlicedDisplay::preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& /*renderItemList*/, MHWRender::MShaderInstance* shader_instance)
+    SlicedDisplay::BlackbodyLUT::BlackbodyLUT() : lut(RESOLUTION)
     {
-        // Set view position.
+        std::vector<MFloatVector> blackbody_lut(RESOLUTION);
+        for (int i = 0; i < RESOLUTION; ++i)
         {
-            MStatus status;
-            auto view_pos = context.getTuple(MHWRender::MFrameContext::kViewPosition, &status);
-            CHECK_MSTATUS(status);
-            CHECK_MSTATUS(shader_instance->setParameter("view_pos_world", MFloatVector(float(view_pos[0]), float(view_pos[1]), float(view_pos[2]))));
+            float temp = float(MAX_TEMP) / float(RESOLUTION - 1) * float(i);
+            blackbody_lut[i] = blackbodyColorRGB(temp);
         }
-
-        // Collect light data.
-
-        constexpr int MAX_POINT_LIGHTS = 8;
-        int point_light_count = 0;
-        std::array<float, 3*MAX_POINT_LIGHTS> point_light_positions;
-        std::array<float, 3*MAX_POINT_LIGHTS> point_light_colors;
-        std::array<float, MAX_POINT_LIGHTS>   point_light_intensities;
-
-        constexpr int MAX_DIRECTIONAL_LIGHTS = 8;
-        int directional_light_count = 0;
-        std::array<float, 3*MAX_DIRECTIONAL_LIGHTS> directional_light_directions;
-        std::array<float, 3*MAX_DIRECTIONAL_LIGHTS> directional_light_colors;
-        std::array<float, MAX_DIRECTIONAL_LIGHTS>   directional_light_intensities;
-
-        const auto light_count = context.numberOfActiveLights();
-        for (unsigned int i = 0; i < light_count; ++i)
-        {
-            MIntArray int_array;
-            MFloatArray float_array;
-
-            const auto light_params = context.getLightParameterInformation(i);
-
-            // Continue if light is not enabled.
-            const auto status = light_params->getParameter(MLightParameterInformation::kLightEnabled, float_array);
-            if (status != MS::kSuccess || float_array[0] != 1)
-                continue;
-
-            // Get additional info based on light type and save light data.
-            const auto light_type = light_params->lightType();
-            if (light_type == "pointLight")
-            {
-                if (point_light_count == MAX_POINT_LIGHTS)
-                    continue;
-
-                // Position.
-                light_params->getParameter(MLightParameterInformation::kWorldPosition, float_array);
-                memcpy(point_light_positions.data() + 3 * point_light_count, &float_array[0], 3 * sizeof(float));
-
-                // Color.
-                light_params->getParameter(MLightParameterInformation::kColor, float_array);
-                memcpy(point_light_colors.data() + 3 * point_light_count, &float_array[0], 3 * sizeof(float));
-
-                // Intensity.
-                light_params->getParameter(MLightParameterInformation::kIntensity, float_array);
-                point_light_intensities[point_light_count] = float_array[0];
-
-                ++point_light_count;
-            }
-            else if (light_type == "directionalLight")
-            {
-                if (directional_light_count == MAX_DIRECTIONAL_LIGHTS)
-                    continue;
-
-                // Direction.
-                light_params->getParameter(MLightParameterInformation::kWorldDirection, float_array);
-                memcpy(directional_light_directions.data() + 3 * directional_light_count, &float_array[0], 3 * sizeof(float));
-
-                // Color.
-                light_params->getParameter(MLightParameterInformation::kColor, float_array);
-                memcpy(directional_light_colors.data() + 3 * directional_light_count, &float_array[0], 3 * sizeof(float));
-
-                // Intensity.
-                light_params->getParameter(MLightParameterInformation::kIntensity, float_array);
-                directional_light_intensities[directional_light_count] = float_array[0];
-
-                ++directional_light_count;
-            }
-            else
-            {
-                std::stringstream ss;
-                ss << "unsupported light type: " << light_type;
-                LOG_ERROR(ss.str());
-                continue;
-            }
-        }
-
-        // Convert colors to linear color space.
-        sRGBToLinear(point_light_colors.data(), point_light_colors.size());
-        sRGBToLinear(directional_light_colors.data(), directional_light_colors.size());
-
-        // Set shader params.
-
-        CHECK_MSTATUS(shader_instance->setParameter("point_light_count", point_light_count));
-        CHECK_MSTATUS(shader_instance->setArrayParameter("point_light_positions", point_light_positions.data(), point_light_count));
-        CHECK_MSTATUS(shader_instance->setArrayParameter("point_light_colors", point_light_colors.data(), point_light_count));
-        CHECK_MSTATUS(shader_instance->setArrayParameter("point_light_intensities", point_light_intensities.data(), point_light_count));
-
-        CHECK_MSTATUS(shader_instance->setParameter("directional_light_count", directional_light_count));
-        CHECK_MSTATUS(shader_instance->setArrayParameter("directional_light_directions", directional_light_directions.data(), directional_light_count));
-        CHECK_MSTATUS(shader_instance->setArrayParameter("directional_light_colors", directional_light_colors.data(), directional_light_count));
-        CHECK_MSTATUS(shader_instance->setArrayParameter("directional_light_intensities", directional_light_intensities.data(), directional_light_count));
+        lut.updateFromData(blackbody_lut.data());
     }
 
+    const SlicedDisplay::BlackbodyLUT SlicedDisplay::s_blackbody_lut;
+    const SamplerState SlicedDisplay::s_volume_sampler_state = SamplerState(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexBorder);
+
     SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
-        : m_parent(parent), m_enabled(false), m_selected(false), m_volume_sampler_state(nullptr),
+        : m_parent(parent), m_enabled(false), m_selected(false), m_scattering_ramp(RAMP_RESOLUTION), m_emission_ramp(RAMP_RESOLUTION),
         m_density_channel("density"), m_scattering_channel("scattering"), m_transparency_channel("transparency"), m_emission_channel("emission"), m_temperature_channel("temperature")
     {
         const MHWRender::MShaderManager* shader_manager = get_shader_manager();
@@ -1310,21 +1282,16 @@ technique Main < int isTransparent = 1; >
         m_volume_shader->setIsTransparent(true);
 
         // Create sampler state for textures.
-        MHWRender::MSamplerStateDesc volume_sampler_state_desc;
-        volume_sampler_state_desc.filter = MHWRender::MSamplerState::kMinMagMipLinear;
-        volume_sampler_state_desc.addressU = MHWRender::MSamplerState::kTexBorder;
-        volume_sampler_state_desc.addressV = MHWRender::MSamplerState::kTexBorder;
-        volume_sampler_state_desc.addressW = MHWRender::MSamplerState::kTexBorder;
-        m_volume_sampler_state = MHWRender::MStateManager::acquireSamplerState(volume_sampler_state_desc);
-        CHECK_MSTATUS(m_volume_shader->setParameter("density_sampler", *m_volume_sampler_state));
-        CHECK_MSTATUS(m_volume_shader->setParameter("scattering_sampler", *m_volume_sampler_state));
-        CHECK_MSTATUS(m_volume_shader->setParameter("transparency_sampler", *m_volume_sampler_state));
-        CHECK_MSTATUS(m_volume_shader->setParameter("emission_sampler",  *m_volume_sampler_state));
-        CHECK_MSTATUS(m_volume_shader->setParameter("temperature_sampler", *m_volume_sampler_state));
+        for (MString param : { "density_sampler", "scattering_sampler", "transparency_sampler", "emission_sampler", "temperature_sampler" })
+            s_volume_sampler_state.assign(m_volume_shader.get(), param);
 
         // Assign ramp sampler states.
-        m_scattering_ramp.assignSamplerToShader(m_volume_shader.get(), "scattering_ramp_sampler");
-        m_emission_ramp.assignSamplerToShader(m_volume_shader.get(), "emission_ramp_sampler");
+        RGBRampTexture::assignSamplerToShader(m_volume_shader.get(), "scattering_ramp_sampler");
+        RGBRampTexture::assignSamplerToShader(m_volume_shader.get(), "emission_ramp_sampler");
+
+        // Set up blackbody LUT texture.
+        RGBRampTexture::assignSamplerToShader(m_volume_shader.get(), "blackbody_lut_sampler");
+        s_blackbody_lut.lut.assignTextureToShader(m_volume_shader.get(), "blackbody_lut_texture");
     }
 
     void SlicedDisplay::enable(bool enable)
@@ -1481,76 +1448,111 @@ technique Main < int isTransparent = 1; >
         CHECK_MSTATUS(m_volume_shader->setParameter("volume_size", extents));
     }
 
-    namespace {
+    void SlicedDisplay::preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& /*renderItemList*/, MHWRender::MShaderInstance* shader_instance)
+    {
+        //{
+        //    context.getInternalTexture(MHWRender::MDrawContext::kDep)
+        //}
 
-        bool isPathSelected(MDagPath path)
+        // Set view position.
         {
-            MSelectionList selectedList;
-            MGlobal::getActiveSelectionList(selectedList);
-            do {
-                if (selectedList.hasItem(path)) {
-                    return true;
-                }
-            } while (path.pop());
-            return false;
+            MStatus status;
+            auto view_pos = context.getTuple(MHWRender::MFrameContext::kViewPosition, &status);
+            CHECK_MSTATUS(status);
+            CHECK_MSTATUS(shader_instance->setParameter("view_pos_world", MFloatVector(float(view_pos[0]), float(view_pos[1]), float(view_pos[2]))));
         }
 
-    } // unnamed namespace
+        // Collect light data.
 
+        constexpr int MAX_POINT_LIGHTS = 8;
+        int point_light_count = 0;
+        std::array<float, 3*MAX_POINT_LIGHTS> point_light_positions;
+        std::array<float, 3*MAX_POINT_LIGHTS> point_light_colors;
+        std::array<float, MAX_POINT_LIGHTS>   point_light_intensities;
 
-    const MHWRender::MSamplerState *RGBRampTexture::ramp_sampler_state = initSamplerState();
-    const MHWRender::MSamplerState *RGBRampTexture::initSamplerState()
-    {
-        MHWRender::MSamplerStateDesc desc;
-        desc.filter = MHWRender::MSamplerState::kMinMagMipLinear;
-        desc.addressU = MHWRender::MSamplerState::kTexClamp;
-        return MHWRender::MStateManager::acquireSamplerState(desc);
-    }
+        constexpr int MAX_DIRECTIONAL_LIGHTS = 8;
+        int directional_light_count = 0;
+        std::array<float, 3*MAX_DIRECTIONAL_LIGHTS> directional_light_directions;
+        std::array<float, 3*MAX_DIRECTIONAL_LIGHTS> directional_light_colors;
+        std::array<float, MAX_DIRECTIONAL_LIGHTS>   directional_light_intensities;
 
-    RGBRampTexture::RGBRampTexture()
-    {
-        MTextureDescription ramp_desc;
-        ramp_desc.fWidth = RESOLUTION;
-        ramp_desc.fHeight = 1;
-        ramp_desc.fDepth = 1;
-        ramp_desc.fBytesPerRow = ramp_desc.fWidth * 4;
-        ramp_desc.fBytesPerSlice = ramp_desc.fBytesPerRow;
-        ramp_desc.fMipmaps = 1;
-        ramp_desc.fArraySlices = 1;
-        ramp_desc.fFormat = kR8G8B8X8;
-        ramp_desc.fTextureType = kImage1D;
-        ramp_desc.fEnvMapType = kEnvNone;
+        const auto light_count = context.numberOfActiveLights();
+        for (unsigned int i = 0; i < light_count; ++i)
+        {
+            MIntArray int_array;
+            MFloatArray float_array;
 
-        std::vector<uint8_t> zeros(RESOLUTION * 4, 0);
-        texture.reset(get_texture_manager()->acquireTexture("", ramp_desc, zeros.data(), false));
-    }
+            const auto light_params = context.getLightParameterInformation(i);
 
-    void RGBRampTexture::assignSamplerToShader(MShaderInstance* shader_instance, const MString& sampler_param)
-    {
-        CHECK_MSTATUS(shader_instance->setParameter(sampler_param, *ramp_sampler_state));
-    }
+            // Continue if light is not enabled.
+            const auto status = light_params->getParameter(MLightParameterInformation::kLightEnabled, float_array);
+            if (status != MS::kSuccess || float_array[0] != 1)
+                continue;
 
-    void RGBRampTexture::assignTextureToShader(MShaderInstance* shader_instance, const MString& texture_param)
-    {
-        MTextureAssignment ta;
-        ta.texture = texture.get();
-        CHECK_MSTATUS(shader_instance->setParameter(texture_param, ta));
-    }
-
-    void RGBRampTexture::update(const Gradient& gradient)
-    {
-        static std::array<uint8_t, 4 * RESOLUTION> staging;
-        const auto& ramp_samples = gradient.getRgbRamp();
-        if (texture && ramp_samples.size() >= RESOLUTION) {
-            for (int i = 0; i < RESOLUTION; ++i)
+            // Get additional info based on light type and save light data.
+            const auto light_type = light_params->lightType();
+            if (light_type == "pointLight")
             {
-                staging[4 * i + 0] = uint8_t(ramp_samples[i].x * 255);
-                staging[4 * i + 1] = uint8_t(ramp_samples[i].y * 255);
-                staging[4 * i + 2] = uint8_t(ramp_samples[i].z * 255);
-                staging[4 * i + 3] = 0;
+                if (point_light_count == MAX_POINT_LIGHTS)
+                    continue;
+
+                // Position.
+                light_params->getParameter(MLightParameterInformation::kWorldPosition, float_array);
+                memcpy(point_light_positions.data() + 3 * point_light_count, &float_array[0], 3 * sizeof(float));
+
+                // Color.
+                light_params->getParameter(MLightParameterInformation::kColor, float_array);
+                memcpy(point_light_colors.data() + 3 * point_light_count, &float_array[0], 3 * sizeof(float));
+
+                // Intensity.
+                light_params->getParameter(MLightParameterInformation::kIntensity, float_array);
+                point_light_intensities[point_light_count] = float_array[0];
+
+                ++point_light_count;
             }
-            texture->update(staging.data(), false);
+            else if (light_type == "directionalLight")
+            {
+                if (directional_light_count == MAX_DIRECTIONAL_LIGHTS)
+                    continue;
+
+                // Direction.
+                light_params->getParameter(MLightParameterInformation::kWorldDirection, float_array);
+                memcpy(directional_light_directions.data() + 3 * directional_light_count, &float_array[0], 3 * sizeof(float));
+
+                // Color.
+                light_params->getParameter(MLightParameterInformation::kColor, float_array);
+                memcpy(directional_light_colors.data() + 3 * directional_light_count, &float_array[0], 3 * sizeof(float));
+
+                // Intensity.
+                light_params->getParameter(MLightParameterInformation::kIntensity, float_array);
+                directional_light_intensities[directional_light_count] = float_array[0];
+
+                ++directional_light_count;
+            }
+            else
+            {
+                std::stringstream ss;
+                ss << "unsupported light type: " << light_type;
+                LOG_ERROR(ss.str());
+                continue;
+            }
         }
+
+        // Convert colors to linear color space.
+        sRGBToLinear(point_light_colors.data(), point_light_colors.size());
+        sRGBToLinear(directional_light_colors.data(), directional_light_colors.size());
+
+        // Set shader params.
+
+        CHECK_MSTATUS(shader_instance->setParameter("point_light_count", point_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("point_light_positions", point_light_positions.data(), point_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("point_light_colors", point_light_colors.data(), point_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("point_light_intensities", point_light_intensities.data(), point_light_count));
+
+        CHECK_MSTATUS(shader_instance->setParameter("directional_light_count", directional_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("directional_light_directions", directional_light_directions.data(), directional_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("directional_light_colors", directional_light_colors.data(), directional_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("directional_light_intensities", directional_light_intensities.data(), directional_light_count));
     }
 
     bool SlicedDisplay::update(MHWRender::MSubSceneContainer& container, const VDBSubSceneOverrideData& data)
@@ -1599,9 +1601,9 @@ technique Main < int isTransparent = 1; >
             return true;
 
         // Update ramps.
-        m_scattering_ramp.update(data.scattering_channel.gradient);
+        m_scattering_ramp.updateFromGradient(data.scattering_channel.gradient);
         m_scattering_ramp.assignTextureToShader(m_volume_shader.get(), "scattering_ramp_texture");
-        m_emission_ramp.update(data.emission_channel.gradient);
+        m_emission_ramp.updateFromGradient(data.emission_channel.gradient);
         m_emission_ramp.assignTextureToShader(m_volume_shader.get(), "emission_ramp_texture");
 
         // Bail if nothing has changed which affects the volume textures.
@@ -1718,4 +1720,69 @@ technique Main < int isTransparent = 1; >
         // Note: render item has to be added to the MSubSceneContainer before calling setGeometryForRenderItem.
         CHECK_MSTATUS(subscene_override.setGeometryForRenderItem(*render_item, vertex_buffer_array, *index_buffer, &bbox));
     }
+
+    // === RGBRampTexture implementation =======================================
+
+    const SamplerState RGBRampTexture::s_ramp_sampler_state = SamplerState(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexClamp);
+
+    RGBRampTexture::RGBRampTexture(int resolution, const MFloatVector *colors) : m_resolution(resolution), m_staging(4 * resolution, 0)
+    {
+        MTextureDescription ramp_desc;
+        ramp_desc.fWidth = resolution;
+        ramp_desc.fHeight = 1;
+        ramp_desc.fDepth = 1;
+        ramp_desc.fBytesPerRow = ramp_desc.fWidth * 4;
+        ramp_desc.fBytesPerSlice = ramp_desc.fBytesPerRow;
+        ramp_desc.fMipmaps = 1;
+        ramp_desc.fArraySlices = 1;
+        ramp_desc.fFormat = kR8G8B8X8;
+        ramp_desc.fTextureType = kImage1D;
+        ramp_desc.fEnvMapType = kEnvNone;
+
+        if (colors)
+            updateFromData(colors);
+        m_texture.reset(get_texture_manager()->acquireTexture("", ramp_desc, m_staging.data(), false));
+    }
+
+    void RGBRampTexture::assignSamplerToShader(MShaderInstance* shader_instance, const MString& sampler_param)
+    {
+        s_ramp_sampler_state.assign(shader_instance, sampler_param);
+    }
+
+    void RGBRampTexture::assignTextureToShader(MShaderInstance* shader_instance, const MString& texture_param) const
+    {
+        MTextureAssignment ta;
+        ta.texture = m_texture.get();
+        CHECK_MSTATUS(shader_instance->setParameter(texture_param, ta));
+    }
+
+    void RGBRampTexture::fillStagingVector(const MFloatVector *colors)
+    {
+        for (int i = 0; i < m_resolution; ++i)
+        {
+            m_staging[4 * i + 0] = uint8_t(colors[i].x * 255);
+            m_staging[4 * i + 1] = uint8_t(colors[i].y * 255);
+            m_staging[4 * i + 2] = uint8_t(colors[i].z * 255);
+            m_staging[4 * i + 3] = 0;
+        }
+    }
+
+    void RGBRampTexture::updateFromGradient(const Gradient& gradient)
+    {
+        if (!m_texture)
+            return;
+
+        const auto& sample_vector = gradient.getRgbRamp();
+        if (sample_vector.size() < m_resolution)
+            return;
+        fillStagingVector(sample_vector.data());
+        m_texture->update(m_staging.data(), false);
+    }
+
+    void RGBRampTexture::updateFromData(const MFloatVector* colors)
+    {
+        fillStagingVector(colors);
+        m_texture->update(m_staging.data(), false);
+    }
+
 }
