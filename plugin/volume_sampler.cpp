@@ -143,9 +143,9 @@ void VolumeSampler::sampleVolume(const openvdb::Coord& extents, SamplingFunc sam
     {
         MHWRender::MTextureDescription desc;
         m_texture->texture_ptr->textureDescription(desc);
-        inplace_updateable = desc.fWidth == extents.x() &&
-                             desc.fHeight == extents.y() &&
-                             desc.fDepth == extents.z();
+        inplace_updateable = int(desc.fWidth) == extents.x() &&
+                             int(desc.fHeight) == extents.y() &&
+                             int(desc.fDepth) == extents.z();
     }
 
     if (inplace_updateable)
