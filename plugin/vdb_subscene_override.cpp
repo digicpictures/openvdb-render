@@ -891,8 +891,11 @@ sampler3D density_sampler = sampler_state {
     Texture = <density_texture>;
 };
 
+#define COLOR_SOURCE_COLOR 0
+#define COLOR_SOURCE_RAMP  1
+
 float3    scattering_color = float3(1, 1, 1);
-int       scattering_source = 0;
+int       scattering_color_source = 0;
 float     scattering_anisotropy = 0;
 bool      use_scattering_texture = true;
 float2    scattering_value_range = float2(0, 1);
@@ -919,8 +922,6 @@ sampler3D transparency_sampler = sampler_state {
 #define EMISSION_MODE_BLACKBODY             3
 #define EMISSION_MODE_DENSITY_AND_BLACKBODY 4
 int       emission_mode = 0;
-#define EMISSION_COLOR_SOURCE_COLOR         0
-#define EMISSION_COLOR_SOURCE_RAMP          1
 int       emission_color_source = 0;
 bool      use_emission_texture = false;
 float3    emission_color = float3(1, 1, 1);
@@ -1021,7 +1022,7 @@ float3 SampleScatteringTexture(float3 pos_model, float lod_scale_model)
         float3 tex_coords = (pos_model - scattering_volume_origin) / scattering_volume_size;
         float lod = CalcLOD(lod_scale_model, scattering_volume_size);
         float voxel = lerp(scattering_value_range.x, scattering_value_range.y, tex3Dlod(scattering_sampler, float4(tex_coords, lod)).r);
-        if (scattering_source)
+        if (scattering_color_source == COLOR_SOURCE_RAMP)
             res *= sampleColorRamp(scattering_ramp_sampler, voxel);
         else
             res *= voxel;
@@ -1069,7 +1070,7 @@ float3 SampleEmissionTexture(float3 pos_model, float lod_scale_model)
     }
 
     float3 res = emission_color;
-    if (emission_color_source == EMISSION_COLOR_SOURCE_RAMP)
+    if (emission_color_source == COLOR_SOURCE_RAMP)
         res = sampleColorRamp(emission_ramp_sampler, channel_value);
 
     if (use_emission_texture)
