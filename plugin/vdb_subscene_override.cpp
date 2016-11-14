@@ -264,8 +264,8 @@ namespace MHWRender {
 
     struct VDBSubSceneOverrideData : public VDBVisualizerData {
         MMatrix world_matrix;
-        bool is_selected;
         MColor wireframe_color;
+        bool is_selected, is_visible;
 
         openvdb::GridBase::ConstPtr scattering_grid;
         openvdb::GridBase::ConstPtr attenuation_grid;
@@ -360,8 +360,9 @@ namespace MHWRender {
         MDagPath dg = MDagPath::getAPathTo(obj);
         const MMatrix inc_world_matrix = dg.inclusiveMatrix();
         change_set |= setup_parameter(world_matrix, inc_world_matrix, ChangeSet::GENERIC_ATTRIBUTE);
-        change_set |= setup_parameter(is_selected, isPathSelected(dg), ChangeSet::GENERIC_ATTRIBUTE);
         change_set |= setup_parameter(wireframe_color, MHWRender::MGeometryUtilities::wireframeColor(dg), ChangeSet::GENERIC_ATTRIBUTE);
+        change_set |= setup_parameter(is_selected, isPathSelected(dg), ChangeSet::GENERIC_ATTRIBUTE);
+        change_set |= setup_parameter(is_visible, dg.isVisible(), ChangeSet::GENERIC_ATTRIBUTE);
 
         if (data == nullptr || update_trigger == data->update_trigger)
             return change_set != ChangeSet::NO_CHANGES;
@@ -518,7 +519,7 @@ namespace MHWRender {
         if (!file_exists || data->display_mode <= DISPLAY_GRID_BBOX)
         {
             point_cloud->enable(false);
-            bounding_box->enable(true);
+            bounding_box->enable(data->is_visible);
             m_sliced_display->enable(false);
 
             MVertexBufferArray vertex_buffers;
@@ -605,7 +606,7 @@ namespace MHWRender {
                     return;
                 }
 
-                point_cloud->enable(true);
+                point_cloud->enable(data->is_visible);
                 m_sliced_display->enable(false);
 
                 const openvdb::Vec3d voxel_size = data->attenuation_grid->voxelSize();
@@ -782,7 +783,7 @@ namespace MHWRender {
             {
                 point_cloud->enable(false);
 
-                m_sliced_display->enable(true);
+                m_sliced_display->enable(data->is_visible);
                 m_sliced_display->update(container, *data);
             }
         }
