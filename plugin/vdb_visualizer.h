@@ -103,8 +103,7 @@ public:
 
     VDBVisualizerData* get_update();
 
-    template <typename T>
-    void setChannel(const MObject& channel_name, const MObject& color, const MObject& intensity, const MObject& source, const VDBGradientParams *gradient, ChannelParams<T>& output);
+    void setChannel(const MObject& channel_name, const MObject& intensity, const MObject& color, const MObject& color_source, const VDBGradientParams *gradient, ChannelParams& output);
 
 private:
 

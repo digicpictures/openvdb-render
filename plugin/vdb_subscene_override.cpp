@@ -325,8 +325,7 @@ namespace MHWRender {
     }
 
     namespace {
-        template <typename T>
-        ChangeSet setup_channel(ChannelParams<T>& target, const ChannelParams<T>& source, ChangeSet channel_mask)
+        ChangeSet setup_channel(ChannelParams& target, const ChannelParams& source, ChangeSet channel_mask)
         {
             if (target.name != source.name)
             {
@@ -338,7 +337,7 @@ namespace MHWRender {
                 target = source;
                 return ChangeSet::GRADIENT;
             }
-            else if (target.value != source.value || target.color_source != source.color_source)
+            else if (target.color_source != source.color_source || target.intensity != source.intensity || target.color != source.color)
             {
                 target = source;
                 return ChangeSet::GENERIC_ATTRIBUTE;
@@ -752,12 +751,12 @@ namespace MHWRender {
                         const MFloatVector scattering_color = data->scattering_channel.gradient.evaluate(scattering_sampler->get_rgb(pos));
                         const MFloatVector emission_color = data->emission_channel.gradient.evaluate(emission_sampler->get_rgb(pos));
                         const MFloatVector attenuation_color = data->attenuation_channel.gradient.evaluate(attenuation_sampler->get_rgb(pos));
-                        color.r = scattering_color.x * data->scattering_channel.value.x + emission_color.x * data->emission_channel.value.x;
-                        color.g = scattering_color.y * data->scattering_channel.value.y + emission_color.y * data->emission_channel.value.y;
-                        color.b = scattering_color.z * data->scattering_channel.value.z + emission_color.z * data->emission_channel.value.z;
-                        color.a = (attenuation_color.x * data->attenuation_channel.value.x +
-                            attenuation_color.y * data->attenuation_channel.value.y +
-                            attenuation_color.z * data->attenuation_channel.value.z) / 3.0f;
+                        color.r = scattering_color.x * data->scattering_channel.color.x + emission_color.x * data->emission_channel.color.x;
+                        color.g = scattering_color.y * data->scattering_channel.color.y + emission_color.y * data->emission_channel.color.y;
+                        color.b = scattering_color.z * data->scattering_channel.color.z + emission_color.z * data->emission_channel.color.z;
+                        color.a = (attenuation_color.x * data->attenuation_channel.color.x +
+                            attenuation_color.y * data->attenuation_channel.color.y +
+                            attenuation_color.z * data->attenuation_channel.color.z) / 3.0f;
                     }
                 });
                 p_color_buffer->commit(colors);
@@ -894,6 +893,7 @@ sampler3D density_sampler = sampler_state {
 #define COLOR_SOURCE_COLOR 0
 #define COLOR_SOURCE_RAMP  1
 
+float     scattering_intensity = 1;
 float3    scattering_color = float3(1, 1, 1);
 int       scattering_color_source = 0;
 float     scattering_anisotropy = 0;
@@ -924,6 +924,7 @@ sampler3D transparency_sampler = sampler_state {
 int       emission_mode = 0;
 int       emission_color_source = 0;
 bool      use_emission_texture = false;
+float     emission_intensity = 1;
 float3    emission_color = float3(1, 1, 1);
 float2    emission_value_range = float2(0, 1);
 float3    emission_volume_size;
@@ -1016,17 +1017,22 @@ float SampleDensityTexture(float3 pos_model, float lod_scale_model)
 
 float3 SampleScatteringTexture(float3 pos_model, float lod_scale_model)
 {
-    float3 res = scattering_color;
+    float channel_value = 0;
     if (use_scattering_texture)
     {
         float3 tex_coords = (pos_model - scattering_volume_origin) / scattering_volume_size;
         float lod = CalcLOD(lod_scale_model, scattering_volume_size);
-        float voxel = lerp(scattering_value_range.x, scattering_value_range.y, tex3Dlod(scattering_sampler, float4(tex_coords, lod)).r);
-        if (scattering_color_source == COLOR_SOURCE_RAMP)
-            res *= sampleColorRamp(scattering_ramp_sampler, voxel);
-        else
-            res *= voxel;
+        channel_value = lerp(scattering_value_range.x, scattering_value_range.y, tex3Dlod(scattering_sampler, float4(tex_coords, lod)).r);
     }
+
+    float3 res = scattering_color;
+    if (scattering_color_source == COLOR_SOURCE_RAMP)
+        res = sampleColorRamp(scattering_ramp_sampler, channel_value);
+    res *= scattering_intensity;
+
+    if (use_scattering_texture)
+        res *= channel_value;
+
     return res;
 }
 
@@ -1072,6 +1078,7 @@ float3 SampleEmissionTexture(float3 pos_model, float lod_scale_model)
     float3 res = emission_color;
     if (emission_color_source == COLOR_SOURCE_RAMP)
         res = sampleColorRamp(emission_ramp_sampler, channel_value);
+    res *= emission_intensity;
 
     if (use_emission_texture)
         res *= channel_value;
@@ -1589,15 +1596,17 @@ technique Main < int isTransparent = 1; >
         m_bbox_renderable.render_item->setMatrix(&data.world_matrix);
 
         // Update shader params.
-        CHECK_MSTATUS(m_volume_shader->setParameter("density", data.density_channel.value));
-        CHECK_MSTATUS(m_volume_shader->setParameter("scattering_color", data.scattering_channel.value));
-        CHECK_MSTATUS(m_volume_shader->setParameter("scattering_source", int(data.scattering_channel.color_source)));
+        CHECK_MSTATUS(m_volume_shader->setParameter("density", data.density_channel.intensity));
+        CHECK_MSTATUS(m_volume_shader->setParameter("scattering_intensity", data.scattering_channel.intensity));
+        CHECK_MSTATUS(m_volume_shader->setParameter("scattering_color", data.scattering_channel.color));
+        CHECK_MSTATUS(m_volume_shader->setParameter("scattering_color_source", int(data.scattering_channel.color_source)));
         CHECK_MSTATUS(m_volume_shader->setParameter("scattering_anisotropy", data.anisotropy));
-        CHECK_MSTATUS(m_volume_shader->setParameter("transparency", data.transparency_channel.value));
-        CHECK_MSTATUS(m_volume_shader->setParameter("emission_color", data.emission_channel.value));
+        CHECK_MSTATUS(m_volume_shader->setParameter("transparency", data.transparency_channel.intensity));
+        CHECK_MSTATUS(m_volume_shader->setParameter("emission_intensity", data.emission_channel.intensity));
+        CHECK_MSTATUS(m_volume_shader->setParameter("emission_color", data.emission_channel.color));
         CHECK_MSTATUS(m_volume_shader->setParameter("emission_color_source", int(data.emission_channel.color_source)));
         CHECK_MSTATUS(m_volume_shader->setParameter("emission_mode", int(data.emission_mode)));
-        CHECK_MSTATUS(m_volume_shader->setParameter("temperature", data.temperature_channel.value));
+        CHECK_MSTATUS(m_volume_shader->setParameter("temperature", data.temperature_channel.intensity));
         CHECK_MSTATUS(m_volume_shader->setParameter("shadow_gain", data.shadow_gain));
         CHECK_MSTATUS(m_volume_shader->setParameter("shadow_sample_count", data.shadow_sample_count));
 

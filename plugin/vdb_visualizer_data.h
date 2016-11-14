@@ -30,23 +30,21 @@ enum class ChannelColorSource {
     RAMP = 1
 };
 
-template <typename T>
 struct ChannelParams
 {
-    typename T value_type;
-    T value;
+    float intensity;
+    MFloatVector color;
     std::string name;
     Gradient gradient;
     ChannelColorSource color_source;
-    template <typename... Args>
-    ChannelParams(Args&&... args) : value(std::forward<Args>(args)...) {}
-    ChannelParams(const ChannelParams<T>&) = default;
-    ChannelParams<T>& operator=(const ChannelParams<T>&) = default;
-    bool operator==(const ChannelParams<T>& rhs) const
+    ChannelParams() : intensity(0) {}
+    ChannelParams(const ChannelParams&) = default;
+    ChannelParams& operator=(const ChannelParams&) = default;
+    bool operator==(const ChannelParams& rhs) const
     {
-        return value == rhs.value && name == rhs.name && !gradient.is_different(rhs.gradient);
+        return intensity == rhs.intensity && color == rhs.color && name == rhs.name && !gradient.is_different(rhs.gradient);
     }
-    bool operator!=(const ChannelParams<T>& rhs) const { return !(*this == rhs); }
+    bool operator!=(const ChannelParams& rhs) const { return !(*this == rhs); }
 };
 
 struct VDBVisualizerData {
@@ -55,12 +53,12 @@ struct VDBVisualizerData {
     std::string vdb_path;
     openvdb::io::File* vdb_file;
 
-    ChannelParams<float>        density_channel;
-    ChannelParams<MFloatVector> scattering_channel;
-    ChannelParams<MFloatVector> attenuation_channel;
-    ChannelParams<MFloatVector> emission_channel;
-    ChannelParams<MFloatVector> transparency_channel;
-    ChannelParams<float>        temperature_channel;
+    ChannelParams density_channel;
+    ChannelParams scattering_channel;
+    ChannelParams attenuation_channel;
+    ChannelParams emission_channel;
+    ChannelParams transparency_channel;
+    ChannelParams temperature_channel;
     float anisotropy;
     EmissionMode emission_mode;
 

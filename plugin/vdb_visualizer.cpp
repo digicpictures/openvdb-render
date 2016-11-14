@@ -206,11 +206,6 @@ namespace {
 
 VDBVisualizerData::VDBVisualizerData()
     : bbox(MPoint(-1.0, -1.0, -1.0), MPoint(1.0, 1.0, 1.0)),
-    density_channel(1.0f),
-    scattering_channel(1.0f, 1.0f, 1.0f),
-    attenuation_channel(1.0f, 1.0f, 1.0f),
-    emission_channel(1.0f, 1.0f, 1.0f),
-    temperature_channel(0.0f),
     vdb_file(nullptr),
     point_size(std::numeric_limits<float>::infinity()),
     point_jitter(std::numeric_limits<float>::infinity()),
@@ -677,20 +672,16 @@ namespace {
 
 } // unnamed namespace
 
-template <typename T> T getPlugValue(const MObject& tmo, const MObject& attrib) { return {}; }
-template <> float getPlugValue<float>(const MObject& tmo, const MObject& attrib) { return MPlug(tmo, attrib).asFloat(); }
-template <> MFloatVector getPlugValue<MFloatVector>(const MObject& tmo, const MObject& attrib) { return sRGBToLinear(plugAsFloatVector(MPlug(tmo, attrib))); }
-
-template <typename T>
-void VDBVisualizerShape::setChannel(const MObject& channel_name, const MObject& color, const MObject& intensity, const MObject& source, const VDBGradientParams *gradient, ChannelParams<T>& output)
+void VDBVisualizerShape::setChannel(const MObject& channel_name, const MObject& intensity, const MObject& color, const MObject& color_source, const VDBGradientParams *gradient, ChannelParams& output)
 {
     MObject tmo = thisMObject();
     output.name = MPlug(tmo, channel_name).asString().asChar();
-    output.value = getPlugValue<T>(tmo, color);
     if (!intensity.isNull())
-        output.value *= MPlug(tmo, intensity).asFloat();
-    if (!source.isNull())
-        output.color_source = ChannelColorSource(MPlug(tmo, source).asInt());
+        output.intensity = MPlug(tmo, intensity).asFloat();
+    if (!color.isNull())
+        output.color = sRGBToLinear(plugAsFloatVector(MPlug(tmo, color)));
+    if (!color_source.isNull())
+        output.color_source = ChannelColorSource(MPlug(tmo, color_source).asInt());
     if (gradient)
         output.gradient.update(*gradient, tmo);
 }
@@ -742,9 +733,9 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
                 const short scattering_mode = MPlug(tmo, s_shader_params.scattering_source).asShort();
                 MPlug scattering_color_plug(tmo, s_shader_params.scattering_color);
                 const float scattering_intensity = MPlug(tmo, s_shader_params.scattering_intensity).asFloat();
-                m_vdb_data.scattering_channel.value.x = scattering_color_plug.child(0).asFloat() * scattering_intensity;
-                m_vdb_data.scattering_channel.value.y = scattering_color_plug.child(1).asFloat() * scattering_intensity;
-                m_vdb_data.scattering_channel.value.z = scattering_color_plug.child(2).asFloat() * scattering_intensity;
+                m_vdb_data.scattering_channel.color.x = scattering_color_plug.child(0).asFloat() * scattering_intensity;
+                m_vdb_data.scattering_channel.color.y = scattering_color_plug.child(1).asFloat() * scattering_intensity;
+                m_vdb_data.scattering_channel.color.z = scattering_color_plug.child(2).asFloat() * scattering_intensity;
 
                 if (scattering_mode == 1)
                     m_vdb_data.scattering_channel.name = MPlug(tmo, s_shader_params.scattering_channel).asString().asChar();
@@ -753,9 +744,9 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
                     MPlug scattering_plug(tmo, s_shader_params.scattering);
                     if (!scattering_plug.isConnected()) // TODO: handle this
                     {
-                        m_vdb_data.scattering_channel.value.x *= scattering_plug.child(0).asFloat();
-                        m_vdb_data.scattering_channel.value.y *= scattering_plug.child(1).asFloat();
-                        m_vdb_data.scattering_channel.value.z *= scattering_plug.child(2).asFloat();
+                        m_vdb_data.scattering_channel.color.x *= scattering_plug.child(0).asFloat();
+                        m_vdb_data.scattering_channel.color.y *= scattering_plug.child(1).asFloat();
+                        m_vdb_data.scattering_channel.color.z *= scattering_plug.child(2).asFloat();
                     }
 
                     m_vdb_data.scattering_channel.name = "";
@@ -764,9 +755,9 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
                 const short attenuation_mode = MPlug(tmo, s_shader_params.attenuation_source).asShort();
                 MPlug attenuation_color_plug(tmo, s_shader_params.attenuation_color);
                 const float attenuation_intensity = MPlug(tmo, s_shader_params.attenuation_intensity).asFloat();
-                m_vdb_data.attenuation_channel.value.x = attenuation_color_plug.child(0).asFloat() * attenuation_intensity;
-                m_vdb_data.attenuation_channel.value.y = attenuation_color_plug.child(1).asFloat() * attenuation_intensity;
-                m_vdb_data.attenuation_channel.value.z = attenuation_color_plug.child(2).asFloat() * attenuation_intensity;
+                m_vdb_data.attenuation_channel.color.x = attenuation_color_plug.child(0).asFloat() * attenuation_intensity;
+                m_vdb_data.attenuation_channel.color.y = attenuation_color_plug.child(1).asFloat() * attenuation_intensity;
+                m_vdb_data.attenuation_channel.color.z = attenuation_color_plug.child(2).asFloat() * attenuation_intensity;
 
                 if (attenuation_mode == 1)
                     m_vdb_data.attenuation_channel.name = MPlug(tmo, s_shader_params.attenuation_channel).asString().asChar();
@@ -775,9 +766,9 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
                     MPlug attenuation_plug(tmo, s_shader_params.attenuation);
                     if (!attenuation_plug.isConnected()) // TODO: handle this
                     {
-                        m_vdb_data.attenuation_channel.value.x *= attenuation_plug.child(0).asFloat();
-                        m_vdb_data.attenuation_channel.value.y *= attenuation_plug.child(1).asFloat();
-                        m_vdb_data.attenuation_channel.value.z *= attenuation_plug.child(2).asFloat();
+                        m_vdb_data.attenuation_channel.color.x *= attenuation_plug.child(0).asFloat();
+                        m_vdb_data.attenuation_channel.color.y *= attenuation_plug.child(1).asFloat();
+                        m_vdb_data.attenuation_channel.color.z *= attenuation_plug.child(2).asFloat();
                     }
 
                     m_vdb_data.attenuation_channel.name = "";
@@ -788,9 +779,9 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
                 const short emission_mode = MPlug(tmo, s_shader_params.emission_source).asShort();
                 MPlug emission_color_plug(tmo, s_shader_params.emission_color);
                 const float emission_intensity = MPlug(tmo, s_shader_params.emission_intensity).asFloat();
-                m_vdb_data.emission_channel.value.x = emission_color_plug.child(0).asFloat() * emission_intensity;
-                m_vdb_data.emission_channel.value.y = emission_color_plug.child(1).asFloat() * emission_intensity;
-                m_vdb_data.emission_channel.value.z = emission_color_plug.child(2).asFloat() * emission_intensity;
+                m_vdb_data.emission_channel.color.x = emission_color_plug.child(0).asFloat() * emission_intensity;
+                m_vdb_data.emission_channel.color.y = emission_color_plug.child(1).asFloat() * emission_intensity;
+                m_vdb_data.emission_channel.color.z = emission_color_plug.child(2).asFloat() * emission_intensity;
 
                 if (emission_mode == 1)
                     m_vdb_data.emission_channel.name = MPlug(tmo, s_shader_params.emission_channel).asString().asChar();
@@ -799,9 +790,9 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
                     MPlug emission_plug(tmo, s_shader_params.emission);
                     if (!emission_plug.isConnected()) // TODO: handle this
                     {
-                        m_vdb_data.emission_channel.value.x *= emission_plug.child(0).asFloat();
-                        m_vdb_data.emission_channel.value.y *= emission_plug.child(1).asFloat();
-                        m_vdb_data.emission_channel.value.z *= emission_plug.child(2).asFloat();
+                        m_vdb_data.emission_channel.color.x *= emission_plug.child(0).asFloat();
+                        m_vdb_data.emission_channel.color.y *= emission_plug.child(1).asFloat();
+                        m_vdb_data.emission_channel.color.z *= emission_plug.child(2).asFloat();
                     }
 
                     m_vdb_data.emission_channel.name = "";
@@ -820,36 +811,36 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
                 MPlug smoke_plug(tmo, s_simple_shader_params.smoke);
                 if (!smoke_plug.isConnected())
                 {
-                    m_vdb_data.scattering_channel.value.x = smoke_plug.child(0).asFloat() * smoke_intensity;
-                    m_vdb_data.scattering_channel.value.y = smoke_plug.child(1).asFloat() * smoke_intensity;
-                    m_vdb_data.scattering_channel.value.z = smoke_plug.child(2).asFloat() * smoke_intensity;
+                    m_vdb_data.scattering_channel.color.x = smoke_plug.child(0).asFloat() * smoke_intensity;
+                    m_vdb_data.scattering_channel.color.y = smoke_plug.child(1).asFloat() * smoke_intensity;
+                    m_vdb_data.scattering_channel.color.z = smoke_plug.child(2).asFloat() * smoke_intensity;
                 }
                 else
-                    m_vdb_data.scattering_channel.value.x = m_vdb_data.scattering_channel.value.y = m_vdb_data.scattering_channel.value.z = smoke_intensity;
+                    m_vdb_data.scattering_channel.color.x = m_vdb_data.scattering_channel.color.y = m_vdb_data.scattering_channel.color.z = smoke_intensity;
 
                 m_vdb_data.attenuation_channel.name = MPlug(tmo, s_simple_shader_params.opacity_channel).asString().asChar();
                 const float opacity_intensity = MPlug(tmo, s_simple_shader_params.opacity_intensity).asFloat();
                 MPlug opacity_plug(tmo, s_simple_shader_params.opacity);
                 if (!opacity_plug.isConnected())
                 {
-                    m_vdb_data.attenuation_channel.value.x = opacity_plug.child(0).asFloat() * opacity_intensity;
-                    m_vdb_data.attenuation_channel.value.y = opacity_plug.child(1).asFloat() * opacity_intensity;
-                    m_vdb_data.attenuation_channel.value.z = opacity_plug.child(2).asFloat() * opacity_intensity;
+                    m_vdb_data.attenuation_channel.color.x = opacity_plug.child(0).asFloat() * opacity_intensity;
+                    m_vdb_data.attenuation_channel.color.y = opacity_plug.child(1).asFloat() * opacity_intensity;
+                    m_vdb_data.attenuation_channel.color.z = opacity_plug.child(2).asFloat() * opacity_intensity;
                 }
                 else
-                    m_vdb_data.attenuation_channel.value.x = m_vdb_data.attenuation_channel.value.y = m_vdb_data.attenuation_channel.value.z = opacity_intensity;
+                    m_vdb_data.attenuation_channel.color.x = m_vdb_data.attenuation_channel.color.y = m_vdb_data.attenuation_channel.color.z = opacity_intensity;
 
                 m_vdb_data.emission_channel.name = MPlug(tmo, s_simple_shader_params.fire_channel).asString().asChar();
                 const float fire_intensity = MPlug(tmo, s_simple_shader_params.fire_intensity).asFloat();
                 MPlug fire_plug(tmo, s_simple_shader_params.fire);
                 if (!fire_plug.isConnected())
                 {
-                    m_vdb_data.emission_channel.value.x = fire_plug.child(0).asFloat() * fire_intensity;
-                    m_vdb_data.emission_channel.value.y = fire_plug.child(1).asFloat() * fire_intensity;
-                    m_vdb_data.emission_channel.value.z = fire_plug.child(2).asFloat() * fire_intensity;
+                    m_vdb_data.emission_channel.color.x = fire_plug.child(0).asFloat() * fire_intensity;
+                    m_vdb_data.emission_channel.color.y = fire_plug.child(1).asFloat() * fire_intensity;
+                    m_vdb_data.emission_channel.color.z = fire_plug.child(2).asFloat() * fire_intensity;
                 }
                 else
-                    m_vdb_data.emission_channel.value.x = m_vdb_data.emission_channel.value.y = m_vdb_data.emission_channel.value.z = fire_intensity;
+                    m_vdb_data.emission_channel.color.x = m_vdb_data.emission_channel.color.y = m_vdb_data.emission_channel.color.z = fire_intensity;
 
                 m_vdb_data.scattering_channel.gradient.clear();
                 m_vdb_data.attenuation_channel.gradient.clear();
@@ -860,40 +851,40 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
             else if (shader_mode == SHADER_MODE_VOLUME_STANDARD)
             {
                 // Density.
-                setChannel<float>(s_volume_standard_params.density_channel,
-                                  s_volume_standard_params.density,
-                                  {}, {}, nullptr,
-                                  m_vdb_data.density_channel);
+                setChannel(s_volume_standard_params.density_channel,
+                           s_volume_standard_params.density,
+                           {}, {}, nullptr,
+                           m_vdb_data.density_channel);
 
                 // Scattering.
-                setChannel<MFloatVector>(s_volume_standard_params.scattering_channel,
-                                         s_volume_standard_params.scattering_color,
-                                         s_volume_standard_params.scattering_intensity,
-                                         s_volume_standard_params.scattering_source,
-                                         &s_volume_standard_params.scattering_gradient,
-                                         m_vdb_data.scattering_channel);
+                setChannel(s_volume_standard_params.scattering_channel,
+                           s_volume_standard_params.scattering_intensity,
+                           s_volume_standard_params.scattering_color,
+                           s_volume_standard_params.scattering_source,
+                           &s_volume_standard_params.scattering_gradient,
+                           m_vdb_data.scattering_channel);
                 m_vdb_data.anisotropy = MPlug(tmo, s_volume_standard_params.anisotropy).asFloat();
 
                 // Transparency.
-                setChannel<MFloatVector>(s_volume_standard_params.transparency_channel,
-                                         s_volume_standard_params.transparency,
-                                         {}, {}, nullptr,
-                                         m_vdb_data.transparency_channel);
+                setChannel(s_volume_standard_params.transparency_channel,
+                           s_volume_standard_params.transparency,
+                           {}, {}, nullptr,
+                           m_vdb_data.transparency_channel);
 
                 // Emission.
-                setChannel<MFloatVector>(s_volume_standard_params.emission_channel,
-                                         s_volume_standard_params.emission_color,
-                                         s_volume_standard_params.emission_intensity,
-                                         s_volume_standard_params.emission_source,
-                                         &s_volume_standard_params.emission_gradient,
-                                         m_vdb_data.emission_channel);
+                setChannel(s_volume_standard_params.emission_channel,
+                           s_volume_standard_params.emission_intensity,
+                           s_volume_standard_params.emission_color,
+                           s_volume_standard_params.emission_source,
+                           &s_volume_standard_params.emission_gradient,
+                           m_vdb_data.emission_channel);
                 m_vdb_data.emission_mode = EmissionMode(MPlug(tmo, s_volume_standard_params.emission_mode).asShort());
 
                 // Temperature.
-                setChannel<float>(s_volume_standard_params.temperature_channel,
-                                  s_volume_standard_params.temperature,
-                                  {}, {}, nullptr,
-                                  m_vdb_data.temperature_channel);
+                setChannel(s_volume_standard_params.temperature_channel,
+                           s_volume_standard_params.temperature,
+                           {}, {}, nullptr,
+                           m_vdb_data.temperature_channel);
             }
         }
     }
