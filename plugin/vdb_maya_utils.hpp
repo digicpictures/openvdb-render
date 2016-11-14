@@ -187,3 +187,9 @@ inline MFloatVector sRGBToLinear(const MFloatVector& color)
 {
     return { std::pow(color.x, SRGB_TO_LINEAR_EXPONENT), std::pow(color.y, SRGB_TO_LINEAR_EXPONENT), std::pow(color.z, SRGB_TO_LINEAR_EXPONENT) };
 }
+
+constexpr float LINEAR_TO_SRGB_EXPONENT = 1.0f / SRGB_TO_LINEAR_EXPONENT;
+inline MFloatVector linearTosRGB(const MFloatVector& color)
+{
+    return { std::pow(color.x, LINEAR_TO_SRGB_EXPONENT), std::pow(color.y, LINEAR_TO_SRGB_EXPONENT), std::pow(color.z, LINEAR_TO_SRGB_EXPONENT) };
+}

@@ -986,6 +986,11 @@ float3 linearTosRGB(float3 color)
     return pow(color, 1.0f/2.2f);
 }
 
+float3 sampleColorRamp(sampler1D ramp_sampler, float texcoord)
+{
+    return sRGBToLinear(tex1Dlod(ramp_sampler, float4(texcoord, 0, 0, 0)).xyz);
+}
+
 #define MAXV(v) max(max(v.x, v.y), v.z)
 float CalcLOD(float distance_model, float3 size_model)
 {
@@ -1017,7 +1022,7 @@ float3 SampleScatteringTexture(float3 pos_model, float lod_scale_model)
         float lod = CalcLOD(lod_scale_model, scattering_volume_size);
         float voxel = lerp(scattering_value_range.x, scattering_value_range.y, tex3Dlod(scattering_sampler, float4(tex_coords, lod)).r);
         if (scattering_source)
-            res *= sRGBToLinear(tex1Dlod(scattering_ramp_sampler, float4(voxel, 0, 0, 0)).xyz);
+            res *= sampleColorRamp(scattering_ramp_sampler, voxel);
         else
             res *= voxel;
     }
@@ -1065,7 +1070,7 @@ float3 SampleEmissionTexture(float3 pos_model, float lod_scale_model)
 
     float3 res = emission_color;
     if (emission_color_source == EMISSION_COLOR_SOURCE_RAMP)
-        res = sRGBToLinear(tex1Dlod(emission_ramp_sampler, float4(channel_value, 0, 0, 0)).xyz);
+        res = sampleColorRamp(emission_ramp_sampler, channel_value);
 
     if (use_emission_texture)
         res *= channel_value;
@@ -1076,7 +1081,7 @@ float3 SampleEmissionTexture(float3 pos_model, float lod_scale_model)
             return float3(0, 0, 0);
 
         float temperature = SampleTemperatureTexture(pos_model, lod_scale_model);
-        float3 blackbody_color = tex1Dlod(blackbody_lut_sampler, float4(temperature / MAX_LUT_TEMPERATURE, 0, 0, 0)).rgb;
+        float3 blackbody_color = sampleColorRamp(blackbody_lut_sampler, temperature / MAX_LUT_TEMPERATURE);
 
         float strength = 1;
         float physicalIntensity = 1;
@@ -1250,7 +1255,7 @@ technique Main < int isTransparent = 1; >
         for (int i = 0; i < RESOLUTION; ++i)
         {
             float temp = float(MAX_TEMP) / float(RESOLUTION - 1) * float(i);
-            blackbody_lut[i] = blackbodyColorRGB(temp);
+            blackbody_lut[i] = linearTosRGB(blackbodyColorRGB(temp));
         }
         lut.updateFromData(blackbody_lut.data());
     }
