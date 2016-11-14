@@ -30,7 +30,7 @@ namespace {
     // Awesome, right?
 
     const char* point_cloud_technique = R"ogsfx(
-uniform mat4 wvp : WorldViewProjection;
+mat4 wvp : WorldViewProjection;
 
 attribute vs_input
 {
@@ -963,20 +963,20 @@ sampler1D emission_ramp_sampler = sampler_state {
 
 // Lights.
 #define MAX_POINT_LIGHTS 8
-uniform int    point_light_count;
-uniform float3 point_light_positions[MAX_POINT_LIGHTS];
-uniform float3 point_light_colors[MAX_POINT_LIGHTS];
-uniform float  point_light_intensities[MAX_POINT_LIGHTS];
+int    point_light_count;
+float3 point_light_positions[MAX_POINT_LIGHTS];
+float3 point_light_colors[MAX_POINT_LIGHTS];
+float  point_light_intensities[MAX_POINT_LIGHTS];
 
 #define MAX_DIRECTIONAL_LIGHTS 8
-uniform int    directional_light_count;
-uniform float3 directional_light_directions[MAX_DIRECTIONAL_LIGHTS];
-uniform float3 directional_light_colors[MAX_DIRECTIONAL_LIGHTS];
-uniform float  directional_light_intensities[MAX_DIRECTIONAL_LIGHTS];
+int    directional_light_count;
+float3 directional_light_directions[MAX_DIRECTIONAL_LIGHTS];
+float3 directional_light_colors[MAX_DIRECTIONAL_LIGHTS];
+float  directional_light_intensities[MAX_DIRECTIONAL_LIGHTS];
 
-uniform float shadow_gain = 0.2;
-uniform int shadow_sample_count = 4;
-uniform int max_slice_count;
+float shadow_gain = 0.2;
+int shadow_sample_count = 4;
+int max_slice_count;
 
 float3 sRGBToLinear(float3 color)
 {
