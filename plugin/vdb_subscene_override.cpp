@@ -288,7 +288,6 @@ namespace MHWRender {
     {
         MTextureAssignment ta;
         ta.texture = m_texture.get();
-        std::cout << texture_param << ": " << ta.texture << std::endl;
         CHECK_MSTATUS(shader_instance->setParameter(texture_param, ta));
     }
 
