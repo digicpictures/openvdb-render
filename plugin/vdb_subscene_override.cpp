@@ -118,7 +118,7 @@ technique Main
 
 namespace MHWRender {
 
-    // === Sliced display mode =================================================
+    // === Renderable ==========================================================
 
     struct Renderable
     {
@@ -131,6 +131,14 @@ namespace MHWRender {
         void update(MHWRender::MPxSubSceneOverride& subscene_override, const MBoundingBox& bbox);
         operator bool() const { return render_item != nullptr; }
     };
+
+    void Renderable::update(MHWRender::MPxSubSceneOverride& subscene_override, const MBoundingBox& bbox)
+    {
+        // Note: render item has to be added to the MSubSceneContainer before calling setGeometryForRenderItem.
+        CHECK_MSTATUS(subscene_override.setGeometryForRenderItem(*render_item, vertex_buffer_array, *index_buffer, &bbox));
+    }
+
+    // === VolumeChannel =======================================================
 
     struct VolumeChannel
     {
@@ -149,12 +157,63 @@ namespace MHWRender {
         void sample(VolumeSampler& volume_sampler, int slice_count);
     };
 
+    namespace {
+        openvdb::FloatGrid::ConstPtr loadFloatGrid(openvdb::io::File* vdb_file, const std::string& grid_name)
+        {
+            if (!vdb_file || !vdb_file->isOpen()) {
+                return nullptr;
+            }
+
+            openvdb::GridBase::ConstPtr grid_base_ptr;
+            try {
+                grid_base_ptr = vdb_file->readGrid(grid_name);
+            }
+            catch (const openvdb::Exception& e) {
+                std::stringstream ss;
+                ss << "Error reading grid " << grid_name << ": " << e.what();
+                LOG_ERROR(ss.str());
+                return nullptr;
+            }
+
+            auto grid_ptr = openvdb::gridConstPtrCast<openvdb::FloatGrid>(grid_base_ptr);
+            if (!grid_ptr) {
+                LOG_ERROR("Grid is not a FloatGrid.");
+                return nullptr;
+            }
+
+            return grid_ptr;
+        }
+    } // unnamed namespace
+
+    void VolumeChannel::loadGrid(openvdb::io::File* vdb_file, const std::string& channel_name)
+    {
+        // Load grid.
+        grid = loadFloatGrid(vdb_file, channel_name);
+        if (!grid)
+            return;
+
+        // Create multires grid.
+        const auto grid_extents = getIndexSpaceBoundingBox(grid.get()).extents().asVec3d();
+        const auto num_levels = size_t(openvdb::math::Ceil(std::log2(maxComponentValue(grid_extents))));
+        multires.reset(new openvdb::tools::MultiResGrid<openvdb::FloatTree>(num_levels, *grid.get()));
+    }
+
+    void VolumeChannel::sample(VolumeSampler& volume_sampler, int slice_count)
+    {
+        ProgressBar pb("vdb_visualizer: sampling grid");
+        const auto extents = openvdb::Coord(slice_count, slice_count, slice_count);
+        volume_sampler.attachTexture(&volume_texture);
+        volume_sampler.sampleMultiResGrid(*multires, extents, &pb);
+    }
+
     struct ChannelAssignment
     {
         const char *param_prefix;
         VolumeChannel::Ptr channel_ptr;
         ChannelAssignment(const char *param_prefix_) : param_prefix(param_prefix_) {}
     };
+
+    // === SamplerState ========================================================
 
     class SamplerState
     {
@@ -177,6 +236,8 @@ namespace MHWRender {
         const MHWRender::MSamplerState *m_sampler_state;
     };
 
+    // === RGBRampTexture ======================================================
+
     class RGBRampTexture
     {
     public:
@@ -194,9 +255,94 @@ namespace MHWRender {
         int m_resolution;
         std::vector<uint8_t> m_staging;
         TexturePtr m_texture;
-
         const SamplerState m_ramp_sampler_state;
     };
+
+    RGBRampTexture::RGBRampTexture(int resolution, const MFloatVector *colors)
+        : m_resolution(resolution), m_staging(4 * resolution, 0),
+        m_ramp_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexClamp)
+    {
+        MTextureDescription ramp_desc;
+        ramp_desc.fWidth = resolution;
+        ramp_desc.fHeight = 1;
+        ramp_desc.fDepth = 1;
+        ramp_desc.fBytesPerRow = ramp_desc.fWidth * 4;
+        ramp_desc.fBytesPerSlice = ramp_desc.fBytesPerRow;
+        ramp_desc.fMipmaps = 1;
+        ramp_desc.fArraySlices = 1;
+        ramp_desc.fFormat = kR8G8B8X8;
+        ramp_desc.fTextureType = kImage1D;
+        ramp_desc.fEnvMapType = kEnvNone;
+
+        if (colors)
+            updateFromData(colors);
+        m_texture.reset(get_texture_manager()->acquireTexture("", ramp_desc, m_staging.data(), false));
+    }
+
+    void RGBRampTexture::assignSamplerToShader(MShaderInstance* shader_instance, const MString& sampler_param)
+    {
+        m_ramp_sampler_state.assign(shader_instance, sampler_param);
+    }
+
+    void RGBRampTexture::assignTextureToShader(MShaderInstance* shader_instance, const MString& texture_param) const
+    {
+        MTextureAssignment ta;
+        ta.texture = m_texture.get();
+        std::cout << texture_param << ": " << ta.texture << std::endl;
+        CHECK_MSTATUS(shader_instance->setParameter(texture_param, ta));
+    }
+
+    void RGBRampTexture::fillStagingVector(const MFloatVector *colors)
+    {
+        for (int i = 0; i < m_resolution; ++i)
+        {
+            m_staging[4 * i + 0] = uint8_t(colors[i].x * 255);
+            m_staging[4 * i + 1] = uint8_t(colors[i].y * 255);
+            m_staging[4 * i + 2] = uint8_t(colors[i].z * 255);
+            m_staging[4 * i + 3] = 0;
+        }
+    }
+
+    void RGBRampTexture::updateFromGradient(const Gradient& gradient)
+    {
+        if (!m_texture)
+            return;
+
+        const auto& sample_vector = gradient.getRgbRamp();
+        if (sample_vector.size() < m_resolution)
+            return;
+        fillStagingVector(sample_vector.data());
+        m_texture->update(m_staging.data(), false);
+    }
+
+    void RGBRampTexture::updateFromData(const MFloatVector* colors)
+    {
+        fillStagingVector(colors);
+        m_texture->update(m_staging.data(), false);
+    }
+
+    // === BlackbodyLUT ========================================================
+
+    struct BlackbodyLUT
+    {
+        static constexpr int MAX_TEMP = 15001;
+        static constexpr int RESOLUTION = 1024;
+        BlackbodyLUT();
+        RGBRampTexture lut;
+    };
+
+    BlackbodyLUT::BlackbodyLUT() : lut(RESOLUTION)
+    {
+        std::vector<MFloatVector> blackbody_lut(RESOLUTION);
+        for (int i = 0; i < RESOLUTION; ++i)
+        {
+            float temp = float(MAX_TEMP) / float(RESOLUTION - 1) * float(i);
+            blackbody_lut[i] = linearTosRGB(blackbodyColorRGB(temp));
+        }
+        lut.updateFromData(blackbody_lut.data());
+    }
+
+    // === SlicedDisplay =======================================================
 
     class SlicedDisplay
     {
@@ -230,13 +376,6 @@ namespace MHWRender {
         RGBRampTexture m_scattering_ramp;
         RGBRampTexture m_emission_ramp;
 
-        struct BlackbodyLUT
-        {
-            static constexpr int MAX_TEMP = 15001;
-            static constexpr int RESOLUTION = 1024;
-            BlackbodyLUT();
-            RGBRampTexture lut;
-        };
         static std::unique_ptr<BlackbodyLUT> s_blackbody_lut;
 
         Renderable m_slices_renderable;
@@ -814,58 +953,6 @@ namespace MHWRender {
 
     namespace {
 
-        openvdb::FloatGrid::ConstPtr loadFloatGrid(openvdb::io::File* vdb_file, const std::string& grid_name)
-        {
-            if (!vdb_file || !vdb_file->isOpen()) {
-                return nullptr;
-            }
-
-            openvdb::GridBase::ConstPtr grid_base_ptr;
-            try {
-                grid_base_ptr = vdb_file->readGrid(grid_name);
-            }
-            catch (const openvdb::Exception& e) {
-                std::stringstream ss;
-                ss << "Error reading grid " << grid_name << ": " << e.what();
-                LOG_ERROR(ss.str());
-                return nullptr;
-            }
-
-            auto grid_ptr = openvdb::gridConstPtrCast<openvdb::FloatGrid>(grid_base_ptr);
-            if (!grid_ptr) {
-                LOG_ERROR("Grid is not a FloatGrid.");
-                return nullptr;
-            }
-
-            return grid_ptr;
-        }
-
-    } // unnamed namespace
-
-    void VolumeChannel::loadGrid(openvdb::io::File* vdb_file, const std::string& channel_name)
-    {
-        // Load grid.
-        grid = loadFloatGrid(vdb_file, channel_name);
-        if (!grid)
-            return;
-
-        // Create multires grid.
-        const auto grid_extents = getIndexSpaceBoundingBox(grid.get()).extents().asVec3d();
-        const auto num_levels = size_t(openvdb::math::Ceil(std::log2(maxComponentValue(grid_extents))));
-        multires.reset(new openvdb::tools::MultiResGrid<openvdb::FloatTree>(num_levels, *grid.get()));
-    }
-
-    void VolumeChannel::sample(VolumeSampler& volume_sampler, int slice_count)
-    {
-        ProgressBar pb("vdb_visualizer: sampling grid");
-        const auto extents = openvdb::Coord(slice_count, slice_count, slice_count);
-        volume_sampler.attachTexture(&volume_texture);
-        volume_sampler.sampleMultiResGrid(*multires, extents, &pb);
-    }
-
-
-    namespace {
-
         MFloatVector inline mayavecFromVec3f(const openvdb::Vec3f& vec)
         {
             return { vec.x(), vec.y(), vec.z() };
@@ -1287,18 +1374,7 @@ technique Main < int isTransparent = 1; >
 }
 )cgfx";
 
-    SlicedDisplay::BlackbodyLUT::BlackbodyLUT() : lut(RESOLUTION)
-    {
-        std::vector<MFloatVector> blackbody_lut(RESOLUTION);
-        for (int i = 0; i < RESOLUTION; ++i)
-        {
-            float temp = float(MAX_TEMP) / float(RESOLUTION - 1) * float(i);
-            blackbody_lut[i] = linearTosRGB(blackbodyColorRGB(temp));
-        }
-        lut.updateFromData(blackbody_lut.data());
-    }
-
-    std::unique_ptr<SlicedDisplay::BlackbodyLUT> SlicedDisplay::s_blackbody_lut;
+    std::unique_ptr<BlackbodyLUT> SlicedDisplay::s_blackbody_lut;
 
     SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
         : m_parent(parent), m_enabled(false), m_selected(false), m_scattering_ramp(RAMP_RESOLUTION), m_emission_ramp(RAMP_RESOLUTION),
@@ -1760,76 +1836,6 @@ technique Main < int isTransparent = 1; >
                 it = m_channel_cache.erase(it);
 
         return true;
-    }
-
-    void Renderable::update(MHWRender::MPxSubSceneOverride& subscene_override, const MBoundingBox& bbox)
-    {
-        // Note: render item has to be added to the MSubSceneContainer before calling setGeometryForRenderItem.
-        CHECK_MSTATUS(subscene_override.setGeometryForRenderItem(*render_item, vertex_buffer_array, *index_buffer, &bbox));
-    }
-
-    // === RGBRampTexture implementation =======================================
-
-    RGBRampTexture::RGBRampTexture(int resolution, const MFloatVector *colors)
-       : m_resolution(resolution), m_staging(4 * resolution, 0),
-       m_ramp_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexClamp)
-    {
-        MTextureDescription ramp_desc;
-        ramp_desc.fWidth = resolution;
-        ramp_desc.fHeight = 1;
-        ramp_desc.fDepth = 1;
-        ramp_desc.fBytesPerRow = ramp_desc.fWidth * 4;
-        ramp_desc.fBytesPerSlice = ramp_desc.fBytesPerRow;
-        ramp_desc.fMipmaps = 1;
-        ramp_desc.fArraySlices = 1;
-        ramp_desc.fFormat = kR8G8B8X8;
-        ramp_desc.fTextureType = kImage1D;
-        ramp_desc.fEnvMapType = kEnvNone;
-
-        if (colors)
-            updateFromData(colors);
-        m_texture.reset(get_texture_manager()->acquireTexture("", ramp_desc, m_staging.data(), false));
-    }
-
-    void RGBRampTexture::assignSamplerToShader(MShaderInstance* shader_instance, const MString& sampler_param)
-    {
-        s_ramp_sampler_state.assign(shader_instance, sampler_param);
-    }
-
-    void RGBRampTexture::assignTextureToShader(MShaderInstance* shader_instance, const MString& texture_param) const
-    {
-        MTextureAssignment ta;
-        ta.texture = m_texture.get();
-        CHECK_MSTATUS(shader_instance->setParameter(texture_param, ta));
-    }
-
-    void RGBRampTexture::fillStagingVector(const MFloatVector *colors)
-    {
-        for (int i = 0; i < m_resolution; ++i)
-        {
-            m_staging[4 * i + 0] = uint8_t(colors[i].x * 255);
-            m_staging[4 * i + 1] = uint8_t(colors[i].y * 255);
-            m_staging[4 * i + 2] = uint8_t(colors[i].z * 255);
-            m_staging[4 * i + 3] = 0;
-        }
-    }
-
-    void RGBRampTexture::updateFromGradient(const Gradient& gradient)
-    {
-        if (!m_texture)
-            return;
-
-        const auto& sample_vector = gradient.getRgbRamp();
-        if (sample_vector.size() < m_resolution)
-            return;
-        fillStagingVector(sample_vector.data());
-        m_texture->update(m_staging.data(), false);
-    }
-
-    void RGBRampTexture::updateFromData(const MFloatVector* colors)
-    {
-        fillStagingVector(colors);
-        m_texture->update(m_staging.data(), false);
     }
 
 }
