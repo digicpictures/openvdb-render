@@ -45,11 +45,11 @@ void VDBVolumeStandardShaderParams::create_params(VDBShaderParams *shared_params
     // Transparency.
 
     transparency = nAttr.createColor("transparency", "transparency");
-    nAttr.setDefault(1.0, 1.0, 1.0);
+    nAttr.setDefault(0.5, 0.5, 0.5);
     MPxNode::addAttribute(transparency);
 
     transparency_channel = tAttr.create("transparencyChannel", "transparency_channel", MFnData::kString);
-    tAttr.setDefault(sData.create("density"));
+    tAttr.setDefault(sData.create(""));
     MPxNode::addAttribute(transparency_channel);
 
     // Emission mode.
