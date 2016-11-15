@@ -1755,37 +1755,38 @@ technique Main < int isTransparent = 1; >
 
         // Update channels.
 
-        auto handle_channel_change = [&](const std::string& grid_name, ChannelAssignment& channel_assignment) {
-            auto& channel = channel_assignment.channel_ptr;
+        auto handle_channel_change = [&](const std::string& grid_name, VolumeChannel::Ptr& channel) {
             if (grid_name.empty())
             {
                 channel.reset();
-            }
-            else
-            {
-                auto it = m_channel_cache.find(grid_name);
-                if (it == m_channel_cache.end())
-                {
-                    // Create new channel if we don't have an exclusively owned one already.
-                    if (channel.use_count() != 1)
-                        channel.reset(new VolumeChannel());
-                    // Load VDB grid, bail on error.
-                    channel->loadGrid(data.vdb_file, grid_name);
-                    if (channel->isValid())
-                    {
-                        // Sample VDB grid.
-                        channel->sample(m_volume_sampler, data.max_slice_count);
-                        // Insert channel into cache.
-                        m_channel_cache.insert({ grid_name, channel });
-                    }
-                }
-                else
-                {
-                    // Use cached channel.
-                    channel = it->second.lock();
-                }
+                return;
             }
 
+            auto it = m_channel_cache.find(grid_name);
+            if (it != m_channel_cache.end())
+            {
+                // Use cached channel.
+                channel = it->second.lock();
+                return;
+            }
+
+            // Create new channel if we don't have an exclusively owned one already.
+            if (channel.use_count() != 1)
+                channel.reset(new VolumeChannel());
+
+            // Load VDB grid, bail on error.
+            channel->loadGrid(data.vdb_file, grid_name);
+            if (!channel->isValid())
+                return;
+
+            // Sample VDB grid.
+            channel->sample(m_volume_sampler, data.max_slice_count);
+            // Insert channel into cache.
+            m_channel_cache.insert({ grid_name, channel });
+        };
+
+        auto bind_texture_params = [&](ChannelAssignment& channel_assignment) {
+            auto& channel = channel_assignment.channel_ptr;
             const bool use_texture = channel && channel->isValid();
             CHECK_MSTATUS(m_volume_shader->setParameter(format("use_^1s_texture", channel_assignment.param_prefix), use_texture));
             if (!use_texture)
@@ -1804,19 +1805,34 @@ technique Main < int isTransparent = 1; >
         };
 
         if (vdb_file_changed || hasChange(data.change_set, ChangeSet::DENSITY_CHANNEL))
-            handle_channel_change(data.density_channel.name, m_density_channel);
+        {
+            handle_channel_change(data.density_channel.name, m_density_channel.channel_ptr);
+            bind_texture_params(m_density_channel);
+        }
 
         if (vdb_file_changed || hasChange(data.change_set, ChangeSet::SCATTERING_CHANNEL))
-            handle_channel_change(data.scattering_channel.name, m_scattering_channel);
+        {
+            handle_channel_change(data.scattering_channel.name, m_scattering_channel.channel_ptr);
+            bind_texture_params(m_scattering_channel);
+        }
 
         if (vdb_file_changed || hasChange(data.change_set, ChangeSet::TRANSPARENCY_CHANNEL))
-            handle_channel_change(data.transparency_channel.name, m_transparency_channel);
+        {
+            handle_channel_change(data.transparency_channel.name, m_transparency_channel.channel_ptr);
+            bind_texture_params(m_transparency_channel);
+        }
 
         if (vdb_file_changed || hasChange(data.change_set, ChangeSet::EMISSION_CHANNEL))
-            handle_channel_change(data.emission_channel.name, m_emission_channel);
+        {
+            handle_channel_change(data.emission_channel.name, m_emission_channel.channel_ptr);
+            bind_texture_params(m_emission_channel);
+        }
 
         if (vdb_file_changed || hasChange(data.change_set, ChangeSet::TEMPERATURE_CHANNEL))
-            handle_channel_change(data.temperature_channel.name, m_temperature_channel);
+        {
+            handle_channel_change(data.temperature_channel.name, m_temperature_channel.channel_ptr);
+            bind_texture_params(m_temperature_channel);
+        }
 
         // Clean-up channel cache.
         for (auto it = m_channel_cache.cbegin(); it != m_channel_cache.cend(); ++it)
