@@ -874,8 +874,8 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
 
                 // Transparency.
                 setChannel(s_volume_standard_params.transparency_channel,
-                           s_volume_standard_params.transparency,
-                           {}, {}, nullptr,
+                           {}, s_volume_standard_params.transparency,
+                           {}, nullptr,
                            m_vdb_data.transparency_channel);
 
                 // Emission.

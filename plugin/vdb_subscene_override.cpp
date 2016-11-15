@@ -1611,7 +1611,7 @@ technique Main < int isTransparent = 1; >
         CHECK_MSTATUS(m_volume_shader->setParameter("scattering_color", data.scattering_channel.color));
         CHECK_MSTATUS(m_volume_shader->setParameter("scattering_color_source", int(data.scattering_channel.color_source)));
         CHECK_MSTATUS(m_volume_shader->setParameter("scattering_anisotropy", data.anisotropy));
-        CHECK_MSTATUS(m_volume_shader->setParameter("transparency", data.transparency_channel.intensity));
+        CHECK_MSTATUS(m_volume_shader->setParameter("transparency", data.transparency_channel.color));
         CHECK_MSTATUS(m_volume_shader->setParameter("emission_intensity", data.emission_channel.intensity));
         CHECK_MSTATUS(m_volume_shader->setParameter("emission_color", data.emission_channel.color));
         CHECK_MSTATUS(m_volume_shader->setParameter("emission_color_source", int(data.emission_channel.color_source)));
