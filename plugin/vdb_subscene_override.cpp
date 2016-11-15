@@ -1836,7 +1836,7 @@ technique Main < int isTransparent = 1; >
 
         // Clean-up channel cache.
         for (auto it = m_channel_cache.cbegin(); it != m_channel_cache.cend(); ++it)
-            if (it->second.expired())
+            if (it->second.expired() || !it->second.lock()->isValid())
                 it = m_channel_cache.erase(it);
 
         return true;
