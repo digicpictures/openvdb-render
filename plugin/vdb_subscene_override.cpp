@@ -227,6 +227,7 @@ namespace MHWRender {
             desc.addressW = address;
             m_sampler_state = MHWRender::MStateManager::acquireSamplerState(desc);
         }
+        ~SamplerState() { MHWRender::MStateManager::releaseSamplerState(m_sampler_state); }
         void assign(MHWRender::MShaderInstance *shader, const MString& param_name) const
         {
             CHECK_MSTATUS(shader->setParameter(param_name, *m_sampler_state));
