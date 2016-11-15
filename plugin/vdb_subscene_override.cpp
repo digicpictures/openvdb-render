@@ -1382,7 +1382,8 @@ technique Main < int isTransparent = 1; >
         m_volume_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexBorder)
     {
         const MHWRender::MShaderManager* shader_manager = get_shader_manager();
-        assert(shader_manager);
+        if (!shader_manager)
+            return;
 
         // Load volume shader from effect file.
         m_volume_shader.reset(shader_manager->getEffectsBufferShader(s_effect_code.c_str(), unsigned(s_effect_code.size()), "Main", 0, 0, false, preDrawCallback));
