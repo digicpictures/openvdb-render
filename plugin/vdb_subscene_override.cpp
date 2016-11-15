@@ -1140,7 +1140,7 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
     float3 view_dir_model = normalize(mul(world_inverse_mat, float4(view_dir_world, 0)).xyz);
     if (dot(DominantAxis(view_dir_model, float3(0, 0, 1)), view_dir_model) > 0)
         slice_idx = max_slice_count - 1 - slice_idx;
-    float3 pos_dom = float3(pos_slice, float(slice_idx) / float(max_slice_count));
+    float3 pos_dom = float3(pos_slice, float(slice_idx) / float(max_slice_count - 1));
     output.pos_model = DominantAxis(view_dir_model, pos_dom) * volume_size + volume_origin;
     output.pos_world = mul(world_mat, float4(output.pos_model, 1)).xyz;
     output.pos_clip = mul(world_view_proj_mat, float4(output.pos_model, 1));
