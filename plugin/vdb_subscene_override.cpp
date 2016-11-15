@@ -1681,9 +1681,6 @@ technique Main < int isTransparent = 1; >
         if (!m_volume_shader)
             return false;
 
-        if (data.change_set == ChangeSet::NO_CHANGES)
-            return true;
-
         initRenderItems(container, data);
         if (!m_bbox_renderable || !m_slices_renderable)
             return false;
