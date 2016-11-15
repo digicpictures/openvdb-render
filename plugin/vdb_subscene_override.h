@@ -22,6 +22,10 @@ namespace MHWRender {
         virtual void update(MSubSceneContainer& container, const MFrameContext& frameContext);
         virtual bool requiresUpdate(const MSubSceneContainer& container, const MFrameContext& frameContext) const;
 
+        // Should be called from initializePlugin and uninitializePlugin respectively.
+        static void initialize();
+        static void uninitialize();
+
         static MString registrantId;
     private:
 

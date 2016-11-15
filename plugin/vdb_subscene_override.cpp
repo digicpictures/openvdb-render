@@ -183,7 +183,7 @@ namespace MHWRender {
         RGBRampTexture(int resolution, const MFloatVector* colors = nullptr);
         void updateFromGradient(const Gradient& gradient);
         void updateFromData(const MFloatVector* colors);
-        static void assignSamplerToShader(MShaderInstance* shader_instance, const MString& sampler_param);
+        void assignSamplerToShader(MShaderInstance* shader_instance, const MString& sampler_param);
         void assignTextureToShader(MShaderInstance* shader_instance, const MString& texture_param) const;
 
         operator bool() const { return m_texture.get() != nullptr; }
@@ -195,12 +195,15 @@ namespace MHWRender {
         std::vector<uint8_t> m_staging;
         TexturePtr m_texture;
 
-        static const SamplerState s_ramp_sampler_state;
+        const SamplerState m_ramp_sampler_state;
     };
 
     class SlicedDisplay
     {
     public:
+        static void initialize() { s_blackbody_lut.reset(new BlackbodyLUT()); }
+        static void uninitialize() { s_blackbody_lut.reset(); }
+
         SlicedDisplay(MHWRender::MPxSubSceneOverride& parent);
         bool update(MHWRender::MSubSceneContainer& container, const VDBSubSceneOverrideData& data);
         void enable(bool enable);
@@ -227,17 +230,18 @@ namespace MHWRender {
         RGBRampTexture m_scattering_ramp;
         RGBRampTexture m_emission_ramp;
 
-        static const struct BlackbodyLUT
+        struct BlackbodyLUT
         {
             static constexpr int MAX_TEMP = 15001;
             static constexpr int RESOLUTION = 1024;
             BlackbodyLUT();
             RGBRampTexture lut;
-        } s_blackbody_lut;
+        };
+        static std::unique_ptr<BlackbodyLUT> s_blackbody_lut;
 
         Renderable m_slices_renderable;
         Renderable m_bbox_renderable;
-        static const SamplerState s_volume_sampler_state;
+        SamplerState m_volume_sampler_state;
 
         bool m_enabled;
         bool m_selected;
@@ -406,6 +410,16 @@ namespace MHWRender {
         auto shmgr = get_shader_manager();
         if (shmgr != nullptr)
             shmgr->releaseShader(p);
+    }
+
+    void VDBSubSceneOverride::initialize()
+    {
+        SlicedDisplay::initialize();
+    }
+
+    void VDBSubSceneOverride::uninitialize()
+    {
+        SlicedDisplay::uninitialize();
     }
 
     MString VDBSubSceneOverride::registrantId("VDBVisualizerSubSceneOverride");
@@ -1278,12 +1292,12 @@ technique Main < int isTransparent = 1; >
         lut.updateFromData(blackbody_lut.data());
     }
 
-    const SlicedDisplay::BlackbodyLUT SlicedDisplay::s_blackbody_lut;
-    const SamplerState SlicedDisplay::s_volume_sampler_state = SamplerState(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexBorder);
+    std::unique_ptr<SlicedDisplay::BlackbodyLUT> SlicedDisplay::s_blackbody_lut;
 
     SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
         : m_parent(parent), m_enabled(false), m_selected(false), m_scattering_ramp(RAMP_RESOLUTION), m_emission_ramp(RAMP_RESOLUTION),
-        m_density_channel("density"), m_scattering_channel("scattering"), m_transparency_channel("transparency"), m_emission_channel("emission"), m_temperature_channel("temperature")
+        m_density_channel("density"), m_scattering_channel("scattering"), m_transparency_channel("transparency"), m_emission_channel("emission"), m_temperature_channel("temperature"),
+        m_volume_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexBorder)
     {
         const MHWRender::MShaderManager* shader_manager = get_shader_manager();
         assert(shader_manager);
@@ -1307,15 +1321,15 @@ technique Main < int isTransparent = 1; >
 
         // Create sampler state for textures.
         for (MString param : { "density_sampler", "scattering_sampler", "transparency_sampler", "emission_sampler", "temperature_sampler" })
-            s_volume_sampler_state.assign(m_volume_shader.get(), param);
+            m_volume_sampler_state.assign(m_volume_shader.get(), param);
 
         // Assign ramp sampler states.
-        RGBRampTexture::assignSamplerToShader(m_volume_shader.get(), "scattering_ramp_sampler");
-        RGBRampTexture::assignSamplerToShader(m_volume_shader.get(), "emission_ramp_sampler");
+        m_scattering_ramp.assignSamplerToShader(m_volume_shader.get(), "scattering_ramp_sampler");
+        m_emission_ramp.assignSamplerToShader(m_volume_shader.get(), "emission_ramp_sampler");
 
         // Set up blackbody LUT texture.
-        RGBRampTexture::assignSamplerToShader(m_volume_shader.get(), "blackbody_lut_sampler");
-        s_blackbody_lut.lut.assignTextureToShader(m_volume_shader.get(), "blackbody_lut_texture");
+        s_blackbody_lut->lut.assignSamplerToShader(m_volume_shader.get(), "blackbody_lut_sampler");
+        s_blackbody_lut->lut.assignTextureToShader(m_volume_shader.get(), "blackbody_lut_texture");
     }
 
     void SlicedDisplay::enable(bool enable)
@@ -1750,9 +1764,9 @@ technique Main < int isTransparent = 1; >
 
     // === RGBRampTexture implementation =======================================
 
-    const SamplerState RGBRampTexture::s_ramp_sampler_state = SamplerState(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexClamp);
-
-    RGBRampTexture::RGBRampTexture(int resolution, const MFloatVector *colors) : m_resolution(resolution), m_staging(4 * resolution, 0)
+    RGBRampTexture::RGBRampTexture(int resolution, const MFloatVector *colors)
+       : m_resolution(resolution), m_staging(4 * resolution, 0),
+       m_ramp_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexClamp)
     {
         MTextureDescription ramp_desc;
         ramp_desc.fWidth = resolution;

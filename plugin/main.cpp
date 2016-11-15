@@ -73,6 +73,7 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
 
 
     openvdb::initialize();
+    MHWRender::VDBSubSceneOverride::initialize();
 
     status = plugin.registerCommand("vdb_query", VDBQueryCmd::creator, VDBQueryCmd::create_syntax);
     if (!status)
@@ -159,6 +160,7 @@ PLUGIN_EXPORT MStatus uninitializePlugin(MObject obj)
         return status;
     }
 
+    MHWRender::VDBSubSceneOverride::uninitialize();
     openvdb::uninitialize();
 
     return status;
