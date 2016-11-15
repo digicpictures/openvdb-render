@@ -1287,7 +1287,6 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
 
     float3 transparency = SampleTransparencyTexture(input.pos_model, 0);
 
-    float3 extinction = density * -log(transparency);
     float3 albedo = SampleScatteringTexture(input.pos_model, 0);
 
     float3 view_dir_model = normalize(mul(world_inverse_mat, float4(view_dir_world, 0)).xyz);
