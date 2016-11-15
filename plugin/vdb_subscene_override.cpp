@@ -346,9 +346,6 @@ namespace MHWRender {
     class SlicedDisplay
     {
     public:
-        static void initialize() { s_blackbody_lut.reset(new BlackbodyLUT()); }
-        static void uninitialize() { s_blackbody_lut.reset(); }
-
         SlicedDisplay(MHWRender::MPxSubSceneOverride& parent);
         bool update(MHWRender::MSubSceneContainer& container, const VDBSubSceneOverrideData& data);
         void enable(bool enable);
@@ -375,7 +372,7 @@ namespace MHWRender {
         RGBRampTexture m_scattering_ramp;
         RGBRampTexture m_emission_ramp;
 
-        static std::unique_ptr<BlackbodyLUT> s_blackbody_lut;
+        BlackbodyLUT m_blackbody_lut;
 
         Renderable m_slices_renderable;
         Renderable m_bbox_renderable;
@@ -548,16 +545,6 @@ namespace MHWRender {
         auto shmgr = get_shader_manager();
         if (shmgr != nullptr)
             shmgr->releaseShader(p);
-    }
-
-    void VDBSubSceneOverride::initialize()
-    {
-        SlicedDisplay::initialize();
-    }
-
-    void VDBSubSceneOverride::uninitialize()
-    {
-        SlicedDisplay::uninitialize();
     }
 
     MString VDBSubSceneOverride::registrantId("VDBVisualizerSubSceneOverride");
@@ -1373,8 +1360,6 @@ technique Main < int isTransparent = 1; >
 }
 )cgfx";
 
-    std::unique_ptr<BlackbodyLUT> SlicedDisplay::s_blackbody_lut;
-
     SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
         : m_parent(parent), m_enabled(false), m_selected(false), m_scattering_ramp(RAMP_RESOLUTION), m_emission_ramp(RAMP_RESOLUTION),
         m_density_channel("density"), m_scattering_channel("scattering"), m_transparency_channel("transparency"), m_emission_channel("emission"), m_temperature_channel("temperature"),
@@ -1410,8 +1395,8 @@ technique Main < int isTransparent = 1; >
         m_emission_ramp.assignSamplerToShader(m_volume_shader.get(), "emission_ramp_sampler");
 
         // Set up blackbody LUT texture.
-        s_blackbody_lut->lut.assignSamplerToShader(m_volume_shader.get(), "blackbody_lut_sampler");
-        s_blackbody_lut->lut.assignTextureToShader(m_volume_shader.get(), "blackbody_lut_texture");
+        m_blackbody_lut.lut.assignSamplerToShader(m_volume_shader.get(), "blackbody_lut_sampler");
+        m_blackbody_lut.lut.assignTextureToShader(m_volume_shader.get(), "blackbody_lut_texture");
     }
 
     void SlicedDisplay::enable(bool enable)
