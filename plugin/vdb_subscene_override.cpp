@@ -195,7 +195,10 @@ namespace MHWRender {
         // Create multires grid.
         const auto grid_extents = getIndexSpaceBoundingBox(grid.get()).extents().asVec3d();
         const auto num_levels = size_t(openvdb::math::Ceil(std::log2(maxComponentValue(grid_extents))));
-        multires.reset(new openvdb::tools::MultiResGrid<openvdb::FloatTree>(num_levels, *grid.get()));
+        if (num_levels > 1)
+            multires.reset(new openvdb::tools::MultiResGrid<openvdb::FloatTree>(num_levels, *grid.get()));
+        else
+            multires.reset();
     }
 
     void VolumeChannel::sample(VolumeSampler& volume_sampler, int slice_count)
@@ -203,7 +206,10 @@ namespace MHWRender {
         ProgressBar pb("vdb_visualizer: sampling grid");
         const auto extents = openvdb::Coord(slice_count, slice_count, slice_count);
         volume_sampler.attachTexture(&volume_texture);
-        volume_sampler.sampleMultiResGrid(*multires, extents, &pb);
+        if (multires)
+            volume_sampler.sampleMultiResGrid(*multires, extents, &pb);
+        else
+            volume_sampler.sampleGridWithBoxFilter(*grid, extents, &pb);
     }
 
     struct ChannelAssignment
