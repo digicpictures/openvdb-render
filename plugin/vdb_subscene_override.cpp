@@ -1249,6 +1249,11 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
         lumi = linearTosRGB(lumi);
 
     float3 transmittance = pow(transparency, density * ray_distance);
+    float alpha = 1 - dot(transmittance, float3(1, 1, 1) / 3);
+    lumi *= alpha;
+
+    // Emission.
+
     float3 emission = SampleEmissionTexture(input.pos_model, 0);
     if (emission_mode == EMISSION_MODE_DENSITY || emission_mode == EMISSION_MODE_DENSITY_AND_BLACKBODY)
         emission *= density;
@@ -1258,12 +1263,13 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
         emission = linearTosRGB(emission);
 
     // Truncated series of (1 - exp(-dt)) / t; d = ray_distance, t = extinction.
+    float3 extinction = density * -log(transparency);
     float3 x = -ray_distance * extinction;
     float3 emission_factor = ray_distance * (1 - x * (0.5f + x * (1.0f/6.0f - x / 24.0f)));
+    emission *= emission_factor;
+    lumi += emission;
 
-    // Premultiply alpha.
-    float alpha = 1 - dot(transmittance, float3(1, 1, 1) / 3);
-    output.color = float4((lumi * alpha + emission * emission_factor), alpha);
+    output.color = float4(lumi, alpha);
 
     return output;
 }
