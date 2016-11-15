@@ -74,6 +74,7 @@ struct VDBVisualizerData {
     int max_slice_count;
     float shadow_gain;
     int shadow_sample_count;
+    bool per_slice_gamma;
 
     VDBVisualizerData();
     ~VDBVisualizerData();

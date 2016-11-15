@@ -62,6 +62,7 @@ MObject VDBVisualizerShape::s_max_slice_count;
 MObject VDBVisualizerShape::s_apply_max_slice_count;
 MObject VDBVisualizerShape::s_shadow_gain;
 MObject VDBVisualizerShape::s_shadow_sample_count;
+MObject VDBVisualizerShape::s_per_slice_gamma;
 
 MObject VDBVisualizerShape::s_point_size;
 MObject VDBVisualizerShape::s_point_jitter;
@@ -585,6 +586,11 @@ MStatus VDBVisualizerShape::initialize()
     addAttribute(s_shadow_sample_count);
     attributeAffects(s_shadow_sample_count, s_update_trigger);
 
+    s_per_slice_gamma = nAttr.create("perSliceGamma", "per_slice_gamma", MFnNumericData::kBoolean);
+    nAttr.setDefault(false);
+    addAttribute(s_per_slice_gamma);
+    attributeAffects(s_per_slice_gamma, s_update_trigger);
+
     //
 
     s_override_shader = nAttr.create("overrideShader", "override_shader", MFnNumericData::kBoolean);
@@ -723,6 +729,7 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
         {
             m_vdb_data.shadow_gain =         MPlug(tmo, s_shadow_gain).asFloat();
             m_vdb_data.shadow_sample_count = MPlug(tmo, s_shadow_sample_count).asInt();
+            m_vdb_data.per_slice_gamma =     MPlug(tmo, s_per_slice_gamma).asFloat();
         }
 
         if (m_vdb_data.display_mode >= DISPLAY_POINT_CLOUD)

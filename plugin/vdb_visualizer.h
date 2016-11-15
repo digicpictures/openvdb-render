@@ -75,6 +75,7 @@ public:
     static MObject s_attenuation_intensity;
     static MObject s_shadow_gain;
     static MObject s_shadow_sample_count;
+    static MObject s_per_slice_gamma;
 
     // display parameters
     static MObject s_point_size;

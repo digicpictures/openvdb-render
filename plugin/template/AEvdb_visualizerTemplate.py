@@ -296,6 +296,7 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.callCustom(self.create_max_slice_count, self.update_max_slice_count, "maxSliceCount")
         self.addControl("shadowGain",          label="Shadow ray gain")
         self.addControl("shadowSampleCount",   label="Shadow ray sample count")
+        self.addControl("perSliceGamma",       label="Per-slice gamma")
 
         self.endLayout()
 

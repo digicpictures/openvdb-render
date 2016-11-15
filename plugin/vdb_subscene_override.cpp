@@ -390,6 +390,7 @@ namespace MHWRender {
             change_set |= setup_parameter(max_slice_count, data->max_slice_count, ChangeSet::MAX_SLICE_COUNT);
             change_set |= setup_parameter(shadow_sample_count, data->shadow_sample_count, ChangeSet::GENERIC_ATTRIBUTE);
             change_set |= setup_parameter(shadow_gain, data->shadow_gain, ChangeSet::GENERIC_ATTRIBUTE);
+            change_set |= setup_parameter(per_slice_gamma, data->per_slice_gamma, ChangeSet::GENERIC_ATTRIBUTE);
         }
 
         point_size = data->point_size;
@@ -977,6 +978,7 @@ float  directional_light_intensities[MAX_DIRECTIONAL_LIGHTS];
 float shadow_gain = 0.2;
 int shadow_sample_count = 4;
 int max_slice_count;
+bool per_slice_gamma = false;
 
 float3 sRGBToLinear(float3 color)
 {
@@ -1228,10 +1230,18 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
         lumi += albedo * phase * incident_radiance;
     }
 
+    // This is wrong, but serves as an approximation for now.
+    if (per_slice_gamma)
+        lumi = linearTosRGB(lumi);
+
     float3 transmittance = pow(transparency, density * ray_distance);
     float3 emission = SampleEmissionTexture(input.pos_model, 0);
     if (emission_mode == EMISSION_MODE_DENSITY || emission_mode == EMISSION_MODE_DENSITY_AND_BLACKBODY)
         emission *= density;
+
+    // This is wrong too.
+    if (per_slice_gamma)
+        emission = linearTosRGB(emission);
 
     // Truncated series of (1 - exp(-dt)) / t; d = ray_distance, t = extinction.
     float3 x = -ray_distance * extinction;
@@ -1609,6 +1619,7 @@ technique Main < int isTransparent = 1; >
         CHECK_MSTATUS(m_volume_shader->setParameter("temperature", data.temperature_channel.intensity));
         CHECK_MSTATUS(m_volume_shader->setParameter("shadow_gain", data.shadow_gain));
         CHECK_MSTATUS(m_volume_shader->setParameter("shadow_sample_count", data.shadow_sample_count));
+        CHECK_MSTATUS(m_volume_shader->setParameter("per_slice_gamma", data.per_slice_gamma));
 
         // === Update channels. ===
 
