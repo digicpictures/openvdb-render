@@ -71,8 +71,6 @@ public:
     // sliced display parameters
     static MObject s_max_slice_count;
     static MObject s_apply_max_slice_count;
-    static MObject s_attenuation_color;
-    static MObject s_attenuation_intensity;
     static MObject s_shadow_gain;
     static MObject s_shadow_sample_count;
     static MObject s_per_slice_gamma;
