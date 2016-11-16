@@ -4,8 +4,11 @@
 #include <random>
 #include <unordered_map>
 
-#include <maya/MHwGeometryUtilities.h>
 #include <maya/MDrawContext.h>
+#include <maya/MGlobal.h>
+#include <maya/MHwGeometryUtilities.h>
+#include <maya/MSelectionList.h>
+#include <maya/MShaderManager.h>
 
 #include <tbb/task_scheduler_init.h>
 #include <tbb/parallel_for.h>
