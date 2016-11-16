@@ -1323,19 +1323,19 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     float3 transparency = SampleTransparencyTexture(input.pos_model, 0);
     float3 albedo = SampleScatteringTexture(input.pos_model, 0);
 
-    float3 view_dir_model = normalize(mul(world_inverse_mat, float4(view_dir_world, 0)).xyz);
     float3 incident_dir_world = normalize(view_pos_world - input.pos_world);
 
+    float3 view_dir_model = normalize(mul(world_inverse_mat, float4(view_dir_world, 0)).xyz);
     float3 slice_vector_model = DominantAxis(view_dir_model, float3(0, 0, 1)) * volume_size / float(max_slice_count - 1);
     float3 slice_vector_world = mul(world_mat, float4(slice_vector_model, 0)).xyz;
     float ray_distance = dot(slice_vector_world, slice_vector_world) / abs(dot(slice_vector_world, incident_dir_world));
-
-    float3 lumi = float3(0, 0, 0);
 
     float3x3 vol_scale_model = float3x3(volume_size.x, 0, 0,
                                         0, volume_size.y, 0,
                                         0, 0, volume_size.z);
     float3x3 vol_scale_world = float3x3(world_mat) * vol_scale_model * float3x3(world_inverse_mat);
+
+    float3 lumi = float3(0, 0, 0);
 
     // Loop through directional lights.
     for (int i = 0; i < directional_light_count; ++i) {
