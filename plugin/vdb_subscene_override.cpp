@@ -1103,8 +1103,6 @@ float SampleDensityTexture(float3 pos_model, float lod_scale_model)
         float3 tex_coords = (pos_model - density_volume_origin) / density_volume_size;
         float lod = CalcLOD(lod_scale_model, density_volume_size);
         float tex_sample = tex3Dlod(density_sampler, float4(tex_coords, lod)).r;
-        if (tex_sample == 0)
-            return -1;
         return density * lerp(density_value_range.x, density_value_range.y, tex_sample);
     }
     else
@@ -1280,11 +1278,6 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     FRAG_OUTPUT output;
 
     float density = SampleDensityTexture(input.pos_model, 0);
-    if (density < 0) {
-        output.color = float4(0, 0, 0, 0);
-        return output;
-    }
-
     float3 transparency = SampleTransparencyTexture(input.pos_model, 0);
 
     float3 albedo = SampleScatteringTexture(input.pos_model, 0);
