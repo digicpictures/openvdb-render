@@ -685,7 +685,7 @@ void VDBVisualizerShape::setChannel(const MObject& channel_name, const MObject& 
     if (!intensity.isNull())
         output.intensity = MPlug(tmo, intensity).asFloat();
     if (!color.isNull())
-        output.color = sRGBToLinear(plugAsFloatVector(MPlug(tmo, color)));
+        output.color = LinearFromSRGB(plugAsFloatVector(MPlug(tmo, color)));
     if (!color_source.isNull())
         output.color_source = ChannelColorSource(MPlug(tmo, color_source).asInt());
     if (gradient)

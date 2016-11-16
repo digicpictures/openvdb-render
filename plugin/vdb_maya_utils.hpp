@@ -4,6 +4,7 @@
 
 #include <openvdb/openvdb.h>
 
+#include <maya/MFloatVector.h>
 #include <maya/MBoundingBox.h>
 #include <maya/MMatrix.h>
 
@@ -176,20 +177,20 @@ private:
     static constexpr char FIELD_CHAR = '#';
 };
 
-constexpr float SRGB_TO_LINEAR_EXPONENT = 2.2f;
-inline void sRGBToLinear(float* data, size_t n)
+constexpr float LINEAR_FROM_SRGB_EXPONENT = 2.2f;
+inline void LinearFromSRGB(float* data, size_t n)
 {
     for (int i = 0; i < n; ++i)
-        data[i] = std::pow(data[i], SRGB_TO_LINEAR_EXPONENT);
+        data[i] = std::pow(data[i], LINEAR_FROM_SRGB_EXPONENT);
 }
 
-inline MFloatVector sRGBToLinear(const MFloatVector& color)
+inline MFloatVector LinearFromSRGB(const MFloatVector& color)
 {
-    return { std::pow(color.x, SRGB_TO_LINEAR_EXPONENT), std::pow(color.y, SRGB_TO_LINEAR_EXPONENT), std::pow(color.z, SRGB_TO_LINEAR_EXPONENT) };
+    return { std::pow(color.x, LINEAR_FROM_SRGB_EXPONENT), std::pow(color.y, LINEAR_FROM_SRGB_EXPONENT), std::pow(color.z, LINEAR_FROM_SRGB_EXPONENT) };
 }
 
-constexpr float LINEAR_TO_SRGB_EXPONENT = 1.0f / SRGB_TO_LINEAR_EXPONENT;
-inline MFloatVector linearTosRGB(const MFloatVector& color)
+constexpr float SRGB_FROM_LINEAR_EXPONENT = 1.0f / LINEAR_FROM_SRGB_EXPONENT;
+inline MFloatVector SRGBFromLinear(const MFloatVector& color)
 {
-    return { std::pow(color.x, LINEAR_TO_SRGB_EXPONENT), std::pow(color.y, LINEAR_TO_SRGB_EXPONENT), std::pow(color.z, LINEAR_TO_SRGB_EXPONENT) };
+    return { std::pow(color.x, SRGB_FROM_LINEAR_EXPONENT), std::pow(color.y, SRGB_FROM_LINEAR_EXPONENT), std::pow(color.z, SRGB_FROM_LINEAR_EXPONENT) };
 }

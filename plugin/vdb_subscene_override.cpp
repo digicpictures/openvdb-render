@@ -1074,19 +1074,19 @@ int shadow_sample_count = 4;
 int max_slice_count;
 bool per_slice_gamma = false;
 
-float3 sRGBToLinear(float3 color)
+float3 LinearFromSRGB(float3 color)
 {
     return pow(color, 2.2f);
 }
 
-float3 linearTosRGB(float3 color)
+float3 SRGBFromLinear(float3 color)
 {
     return pow(color, 1.0f/2.2f);
 }
 
 float3 sampleColorRamp(sampler1D ramp_sampler, float texcoord)
 {
-    return sRGBToLinear(tex1Dlod(ramp_sampler, float4(texcoord, 0, 0, 0)).xyz);
+    return LinearFromSRGB(tex1Dlod(ramp_sampler, float4(texcoord, 0, 0, 0)).xyz);
 }
 
 #define MAXV(v) max(max(v.x, v.y), v.z)
@@ -1325,7 +1325,7 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
 
     // This is wrong, but serves as an approximation for now.
     if (per_slice_gamma)
-        lumi = linearTosRGB(lumi);
+        lumi = SRGBFromLinear(lumi);
 
     float3 transmittance = pow(transparency, density * ray_distance);
     float alpha = 1 - dot(transmittance, float3(1, 1, 1) / 3);
@@ -1339,7 +1339,7 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
 
     // This is wrong too.
     if (per_slice_gamma)
-        emission = linearTosRGB(emission);
+        emission = SRGBFromLinear(emission);
 
     // Truncated series of (1 - exp(-dt)) / t; d = ray_distance, t = extinction.
     float3 extinction = density * -log(transparency);
@@ -1650,8 +1650,8 @@ technique Main < int isTransparent = 1; >
         }
 
         // Convert colors to linear color space.
-        sRGBToLinear(point_light_colors.data(), point_light_colors.size());
-        sRGBToLinear(directional_light_colors.data(), directional_light_colors.size());
+        LinearFromSRGB(point_light_colors.data(), point_light_colors.size());
+        LinearFromSRGB(directional_light_colors.data(), directional_light_colors.size());
 
         // Set shader params.
 
