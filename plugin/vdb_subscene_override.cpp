@@ -1191,6 +1191,8 @@ float3 SampleEmissionTexture(float3 pos_model, float lod_scale_model)
     if (use_emission_texture)
         res *= channel_value;
 
+    res = max(float3(0, 0, 0), res);
+
     if (emission_mode == EMISSION_MODE_BLACKBODY || emission_mode == EMISSION_MODE_DENSITY_AND_BLACKBODY)
     {
         if (!use_temperature_texture)
