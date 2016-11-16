@@ -1266,17 +1266,21 @@ float HGPhase(float costheta)
     return ONE_OVER_4PI * (1 - g_squared) / pow(1 + g_squared - 2*g*costheta, 1.5f);
 }
 
-float3 RayTransmittance(float3 from_model, float3 to_model)
+float3 RayTransmittance(float3 from_world, float3 to_world)
 {
-    float3 step_model = (to_model - from_model) / float(shadow_sample_count + 1);
-    float step_size_model = length(step_model);
+    float3 step_world = (to_world - from_world) / float(shadow_sample_count + 1);
+    float  step_size_world = length(step_world);
+    float3 step_model = mul(float3x3(world_inverse_mat), step_world);
+    float  step_size_model = length(step_model);
+
+    float3 from_model = mul(world_inverse_mat, float4(from_world, 1)).xyz;
 
     float3 transmittance = float3(1, 1, 1);
     float3 pos_model = from_model + 0.5f * step_model;
     for (int i = 0; i < shadow_sample_count; ++i) {
         float density = SampleDensityTexture(pos_model, step_size_model);
         float3 transparency = SampleTransparencyTexture(pos_model, step_size_model);
-        transmittance *= pow(transparency, density * step_size_model / (1.0 + float(i) * step_size_model * shadow_gain));
+        transmittance *= pow(transparency, density * step_size_world / (1.0 + float(i) * step_size_world * shadow_gain));
         pos_model += step_model;
     }
     return transmittance;
@@ -1307,11 +1311,16 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
 
     float3 lumi = float3(0, 0, 0);
 
+    float3x3 vol_scale_model = float3x3(volume_size.x, 0, 0,
+                                        0, volume_size.y, 0,
+                                        0, 0, volume_size.z);
+    float3x3 vol_scale_world = float3x3(world_mat) * vol_scale_model * float3x3(world_inverse_mat);
+
     // Loop through directional lights.
     for (int i = 0; i < directional_light_count; ++i) {
         float3 light_dir_world = directional_light_directions[i];
-        float3 light_dir_model = normalize(mul(world_inverse_mat, float4(light_dir_world, 0)).xyz);
-        float3 shadow = RayTransmittance(input.pos_model, input.pos_model - light_dir_model * ray_distance * max_slice_count * 0.5f);
+        float  shadow_distance = length(mul(vol_scale_world, light_dir_world)) * 0.5f;
+        float3 shadow = RayTransmittance(input.pos_world, input.pos_world - light_dir_world * shadow_distance);
         float3 light_radiance = directional_light_colors[i] * directional_light_intensities[i];
         float3 incident_radiance = light_radiance * shadow;
         float phase = HGPhase(dot(incident_dir_world, normalize(light_dir_world)));
@@ -1322,8 +1331,7 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     // Loop through point lights.
     for (int i = 0; i < point_light_count; ++i) {
         float3 light_pos_world = point_light_positions[i];
-        float3 light_pos_model = mul(world_inverse_mat, float4(light_pos_world, 1)).xyz;
-        float3 shadow = RayTransmittance(input.pos_model, light_pos_model);
+        float3 shadow = RayTransmittance(input.pos_world, light_pos_world);
         float3 light_radiance = point_light_colors[i] * point_light_intensities[i];
         float3 incident_radiance = light_radiance * shadow;
         float3 light_dir_world = normalize(light_pos_world - input.pos_world);
