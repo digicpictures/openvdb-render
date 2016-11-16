@@ -353,6 +353,7 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.create_rgb_ramp("emission", node_name)
         self.addSeparator()
         self.addControl("temperature", label="Blackbody Kelvin")
+        self.addControl("blackbody_intensity", label="Blackbody Intensity")
         self.endLayout()
 
         self.endLayout()

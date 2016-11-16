@@ -60,6 +60,7 @@ struct VDBVisualizerData {
     ChannelParams transparency_channel;
     ChannelParams temperature_channel;
     float anisotropy;
+    float blackbody_intensity;
     EmissionMode emission_mode;
 
     int update_trigger;

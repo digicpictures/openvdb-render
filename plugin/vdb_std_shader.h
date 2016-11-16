@@ -37,5 +37,6 @@ struct VDBVolumeStandardShaderParams
     VDBGradientParams emission_gradient;
 
     MObject temperature;
+    MObject blackbody_intensity;
     MObject temperature_channel;
 };

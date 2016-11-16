@@ -78,6 +78,13 @@ void VDBVolumeStandardShaderParams::create_params(VDBShaderParams *shared_params
     nAttr.setChannelBox(true);
     MPxNode::addAttribute(temperature);
 
+    blackbody_intensity = nAttr.create("blackbodyIntensity", "blackbody_intensity", MFnNumericData::kFloat);
+    nAttr.setDefault(1.0f);
+    nAttr.setMin(0.0f);
+    nAttr.setMax(1.0f);
+    nAttr.setChannelBox(true);
+    MPxNode::addAttribute(blackbody_intensity);
+
     temperature_channel = tAttr.create("temperatureChannel", "temperature_channel", MFnData::kString);
     tAttr.setDefault(sData.create("temperature"));
     MPxNode::addAttribute(temperature_channel);
@@ -169,6 +176,7 @@ void VDBVolumeStandardShaderParams::affect_output(MObject& out_object)
     emission_gradient.affect_output(out_object);
 
     MPxNode::attributeAffects(temperature, out_object);
+    MPxNode::attributeAffects(blackbody_intensity, out_object);
     MPxNode::attributeAffects(temperature_channel, out_object);
 }
 
@@ -191,5 +199,6 @@ bool VDBVolumeStandardShaderParams::check_plug(const MPlug& plug)
            plug == emission_source ||
            emission_gradient.check_plug(plug) ||
            plug == temperature ||
+           plug == blackbody_intensity ||
            plug == temperature_channel;
 }

@@ -892,6 +892,7 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
                            s_volume_standard_params.temperature,
                            {}, {}, nullptr,
                            m_vdb_data.temperature_channel);
+                m_vdb_data.blackbody_intensity = MPlug(tmo, s_volume_standard_params.blackbody_intensity).asFloat();
             }
         }
     }

@@ -250,14 +250,14 @@ namespace MHWRender {
     public:
         RGBRampTexture(int resolution, const MFloatVector* colors = nullptr);
         void updateFromGradient(const Gradient& gradient);
-        void updateFromData(const MFloatVector* colors);
+        void updateFromData(const MFloatVector* colors, const float normalizer = 1.0f);
         void assignSamplerToShader(MShaderInstance* shader_instance, const MString& sampler_param);
         void assignTextureToShader(MShaderInstance* shader_instance, const MString& texture_param) const;
 
         operator bool() const { return m_texture.get() != nullptr; }
 
     private:
-        void fillStagingVector(const MFloatVector* colors);
+        void fillStagingVector(const MFloatVector* colors, const float normalizer = 1.0f);
 
         int m_resolution;
         std::vector<uint8_t> m_staging;
@@ -298,13 +298,14 @@ namespace MHWRender {
         CHECK_MSTATUS(shader_instance->setParameter(texture_param, ta));
     }
 
-    void RGBRampTexture::fillStagingVector(const MFloatVector *colors)
+    void RGBRampTexture::fillStagingVector(const MFloatVector *colors, const float normalizer)
     {
         for (int i = 0; i < m_resolution; ++i)
         {
-            m_staging[4 * i + 0] = uint8_t(colors[i].x * 255);
-            m_staging[4 * i + 1] = uint8_t(colors[i].y * 255);
-            m_staging[4 * i + 2] = uint8_t(colors[i].z * 255);
+            auto srgb_color = SRGBFromLinear(colors[i] / normalizer);
+            m_staging[4 * i + 0] = uint8_t(srgb_color.x * 255);
+            m_staging[4 * i + 1] = uint8_t(srgb_color.y * 255);
+            m_staging[4 * i + 2] = uint8_t(srgb_color.z * 255);
             m_staging[4 * i + 3] = 0;
         }
     }
@@ -321,9 +322,9 @@ namespace MHWRender {
         m_texture->update(m_staging.data(), false);
     }
 
-    void RGBRampTexture::updateFromData(const MFloatVector* colors)
+    void RGBRampTexture::updateFromData(const MFloatVector* colors, const float normalizer)
     {
-        fillStagingVector(colors);
+        fillStagingVector(colors, normalizer);
         m_texture->update(m_staging.data(), false);
     }
 
@@ -331,21 +332,13 @@ namespace MHWRender {
 
     struct BlackbodyLUT
     {
-        static constexpr int MAX_TEMP = 15001;
-        static constexpr int RESOLUTION = 1024;
         BlackbodyLUT();
         RGBRampTexture lut;
     };
 
-    BlackbodyLUT::BlackbodyLUT() : lut(RESOLUTION)
+    BlackbodyLUT::BlackbodyLUT() : lut(Blackbody::TABLE_SIZE)
     {
-        std::vector<MFloatVector> blackbody_lut(RESOLUTION);
-        for (int i = 0; i < RESOLUTION; ++i)
-        {
-            float temp = float(MAX_TEMP) / float(RESOLUTION - 1) * float(i);
-            blackbody_lut[i] = linearTosRGB(blackbodyColorRGB(temp));
-        }
-        lut.updateFromData(blackbody_lut.data());
+        lut.updateFromData(Blackbody::LUT, Blackbody::LUT_NORMALIZER);
     }
 
     // === SlicedDisplay =======================================================
@@ -525,6 +518,7 @@ namespace MHWRender {
         change_set |= setup_channel(transparency_channel, data->transparency_channel, ChangeSet::TRANSPARENCY_CHANNEL);
         change_set |= setup_channel(temperature_channel, data->temperature_channel, ChangeSet::TEMPERATURE_CHANNEL);
         change_set |= setup_parameter(anisotropy, data->anisotropy, ChangeSet::GENERIC_ATTRIBUTE);
+        change_set |= setup_parameter(blackbody_intensity, data->blackbody_intensity, ChangeSet::GENERIC_ATTRIBUTE);
         change_set |= setup_parameter(emission_mode, data->emission_mode, ChangeSet::GENERIC_ATTRIBUTE);
 
         change_set |= setup_parameter(vdb_path, data->vdb_path, ChangeSet::VDB_FILE);
@@ -1039,7 +1033,7 @@ sampler3D temperature_sampler = sampler_state {
     Texture = <temperature_texture>;
 };
 
-#define MAX_LUT_TEMPERATURE 15001.0f
+float     blackbody_intensity = 1.0f;
 texture   blackbody_lut_texture;
 sampler1D blackbody_lut_sampler = sampler_state {
     Texture = <blackbody_lut_texture>;
@@ -1087,6 +1081,26 @@ float3 SRGBFromLinear(float3 color)
 float3 SampleColorRamp(sampler1D ramp_sampler, float texcoord)
 {
     return LinearFromSRGB(tex1Dlod(ramp_sampler, float4(texcoord, 0, 0, 0)).xyz);
+}
+
+#define SQR(x) ((x) * (x))
+float BlackbodyRadiance(float temperature)
+{
+    const float sigma = 5.670367e-8f; // Stefan-Boltzmann constant
+    float power = sigma * SQR(SQR(temperature));
+
+    // non-physically correct control to reduce the intensity
+    if (blackbody_intensity < 1.0f)
+       power = lerp(sigma, power, max(blackbody_intensity, 0.0f));
+
+    // convert power to spectral radiance
+    return power * (1e-6f / 3.14159265f);
+}
+
+float3 BlackbodyColor(float temperature)
+{
+    float texcoord = (temperature - BLACKBODY_LUT_MIN_TEMP) / (BLACKBODY_LUT_MAX_TEMP - BLACKBODY_LUT_MIN_TEMP);
+    return SampleColorRamp(blackbody_lut_sampler, texcoord) * BLACKBODY_LUT_NORMALIZER;
 }
 
 #define MAXV(v) max(max(v.x, v.y), v.z)
@@ -1183,14 +1197,11 @@ float3 SampleEmissionTexture(float3 pos_model, float lod_scale_model)
             return float3(0, 0, 0);
 
         float temperature = SampleTemperatureTexture(pos_model, lod_scale_model);
-        float3 blackbody_color = SampleColorRamp(blackbody_lut_sampler, temperature / MAX_LUT_TEMPERATURE);
+        if (temperature <= 0)
+            return float3(0, 0, 0);
 
-        float strength = 1;
-        float physicalIntensity = 1;
-        float exposure = -20;
-        //blackbody_color *= lerp(1.0f, pow(temperature/100.0, 4) * 5.67 * pow(2.0f, exposure), physicalIntensity);
-
-        res *= blackbody_color * strength;
+        float3 blackbody = BlackbodyColor(temperature) * BlackbodyRadiance(temperature);
+        res *= blackbody;
     }
 
     return res;
@@ -1369,7 +1380,11 @@ technique Main < int isTransparent = 1; >
             return;
 
         // Load volume shader from effect file.
-        m_volume_shader.reset(shader_manager->getEffectsBufferShader(s_effect_code.c_str(), unsigned(s_effect_code.size()), "Main", 0, 0, false, preDrawCallback));
+        MShaderCompileMacro macros[] = { {"BLACKBODY_LUT_MIN_TEMP", format("^1sf", Blackbody::TEMPERATURE_MIN)},
+                                         {"BLACKBODY_LUT_MAX_TEMP", format("^1sf", Blackbody::TEMPERATURE_MAX)},
+                                         {"BLACKBODY_LUT_NORMALIZER",   format("^1sf", Blackbody::LUT_NORMALIZER)} };
+        constexpr int macro_count = sizeof(macros) / sizeof(MShaderCompileMacro);
+        m_volume_shader.reset(shader_manager->getEffectsBufferShader(s_effect_code.c_str(), unsigned(s_effect_code.size()), "Main", macros, macro_count, false, preDrawCallback));
         if (!m_volume_shader) {
             LOG_ERROR("Cannot compile cgfx.");
             CGcontext context = cgCreateContext();
@@ -1694,6 +1709,7 @@ technique Main < int isTransparent = 1; >
         CHECK_MSTATUS(m_volume_shader->setParameter("emission_color_source", int(data.emission_channel.color_source)));
         CHECK_MSTATUS(m_volume_shader->setParameter("emission_mode", int(data.emission_mode)));
         CHECK_MSTATUS(m_volume_shader->setParameter("temperature", data.temperature_channel.intensity));
+        CHECK_MSTATUS(m_volume_shader->setParameter("blackbody_intensity", data.blackbody_intensity));
         CHECK_MSTATUS(m_volume_shader->setParameter("shadow_gain", data.shadow_gain));
         CHECK_MSTATUS(m_volume_shader->setParameter("shadow_sample_count", data.shadow_sample_count));
         CHECK_MSTATUS(m_volume_shader->setParameter("per_slice_gamma", data.per_slice_gamma));
