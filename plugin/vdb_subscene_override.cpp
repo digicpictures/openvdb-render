@@ -215,12 +215,53 @@ namespace MHWRender {
             volume_sampler.sampleGridWithBoxFilter(*grid, extents, &pb);
     }
 
+    // === ChannelAssignment ===================================================
+
     struct ChannelAssignment
     {
         const char *param_prefix;
         VolumeChannel::Ptr channel_ptr;
         ChannelAssignment(const char *param_prefix_) : param_prefix(param_prefix_) {}
+        void assignToShader(MShaderInstance* shader_instance) const;
     };
+
+    namespace {
+
+        MFloatVector inline mayavecFromVec3f(const openvdb::Vec3f& vec)
+        {
+            return { vec.x(), vec.y(), vec.z() };
+        }
+
+        MFloatVector inline mayavecFromFloatRange(const FloatRange& float_range)
+        {
+            return { float_range.min, float_range.max };
+        }
+
+        MBoundingBox inline mayabboxFromBBoxd(const openvdb::BBoxd& bbox)
+        {
+            return { mayavecFromVec3f(bbox.min()), mayavecFromVec3f(bbox.max()) };
+        }
+
+    } // unnamed namespace
+
+    void ChannelAssignment::assignToShader(MShaderInstance* shader_instance) const
+    {
+        const bool use_texture = channel_ptr && channel_ptr->isValid();
+        CHECK_MSTATUS(shader_instance->setParameter(format("use_^1s_texture", param_prefix), use_texture));
+        if (!use_texture)
+            return;
+
+        MTextureAssignment texture_assignment;
+        texture_assignment.texture = channel_ptr->volume_texture.texture_ptr.get();
+        CHECK_MSTATUS(shader_instance->setParameter(format("^1s_texture", param_prefix), texture_assignment));
+        CHECK_MSTATUS(shader_instance->setParameter(format("^1s_value_range", param_prefix),
+                                                    mayavecFromFloatRange(channel_ptr->volume_texture.value_range)));
+
+        const auto grid_bbox_is = getIndexSpaceBoundingBox(channel_ptr->grid.get());
+        const auto grid_bbox_ws = channel_ptr->grid->transform().indexToWorld(grid_bbox_is);
+        CHECK_MSTATUS(shader_instance->setParameter(format("^1s_volume_size", param_prefix), mayavecFromVec3f(grid_bbox_ws.extents())));
+        CHECK_MSTATUS(shader_instance->setParameter(format("^1s_volume_origin", param_prefix), mayavecFromVec3f(grid_bbox_ws.min())));
+    }
 
     // === SamplerState ========================================================
 
@@ -940,25 +981,6 @@ namespace MHWRender {
     }
 
     // === Sliced display mode implementation ===================================
-
-    namespace {
-
-        MFloatVector inline mayavecFromVec3f(const openvdb::Vec3f& vec)
-        {
-            return { vec.x(), vec.y(), vec.z() };
-        }
-
-        MFloatVector inline mayavecFromFloatRange(const FloatRange& float_range)
-        {
-            return { float_range.min, float_range.max };
-        }
-
-        MBoundingBox inline mayabboxFromBBoxd(const openvdb::BBoxd& bbox)
-        {
-            return { mayavecFromVec3f(bbox.min()), mayavecFromVec3f(bbox.max()) };
-        }
-
-    } // unnamed namespace
 
     const std::string SlicedDisplay::s_effect_code = R"cgfx(
 float3 view_dir_world : ViewDirection < string Space = "World"; >;
@@ -1769,8 +1791,7 @@ technique Main < int isTransparent = 1; >
             {
                 if (!channel_assignment.channel_ptr)
                     continue;
-                texture_assignment.texture = channel_assignment.channel_ptr->volume_texture.texture_ptr.get();
-                CHECK_MSTATUS(m_volume_shader->setParameter(format("^1s_texture", channel_assignment.param_prefix), texture_assignment));
+                channel_assignment.assignToShader(m_volume_shader.get());
             }
         }
 
@@ -1806,53 +1827,34 @@ technique Main < int isTransparent = 1; >
             m_channel_cache.insert({ grid_name, channel });
         };
 
-        auto bind_texture_params = [&](ChannelAssignment& channel_assignment) {
-            auto& channel = channel_assignment.channel_ptr;
-            const bool use_texture = channel && channel->isValid();
-            CHECK_MSTATUS(m_volume_shader->setParameter(format("use_^1s_texture", channel_assignment.param_prefix), use_texture));
-            if (!use_texture)
-                return;
-
-            MTextureAssignment texture_assignment;
-            texture_assignment.texture = channel->volume_texture.texture_ptr.get();
-            CHECK_MSTATUS(m_volume_shader->setParameter(format("^1s_texture", channel_assignment.param_prefix), texture_assignment));
-            CHECK_MSTATUS(m_volume_shader->setParameter(format("^1s_value_range", channel_assignment.param_prefix),
-                                                        mayavecFromFloatRange(channel->volume_texture.value_range)));
-
-            const auto grid_bbox_is = getIndexSpaceBoundingBox(channel->grid.get());
-            const auto grid_bbox_ws = channel->grid->transform().indexToWorld(grid_bbox_is);
-            CHECK_MSTATUS(m_volume_shader->setParameter(format("^1s_volume_size", channel_assignment.param_prefix), mayavecFromVec3f(grid_bbox_ws.extents())));
-            CHECK_MSTATUS(m_volume_shader->setParameter(format("^1s_volume_origin", channel_assignment.param_prefix), mayavecFromVec3f(grid_bbox_ws.min())));
-        };
-
         if (vdb_file_changed || hasChange(data.change_set, ChangeSet::DENSITY_CHANNEL))
         {
             handle_channel_change(data.density_channel.name, m_density_channel.channel_ptr);
-            bind_texture_params(m_density_channel);
+            m_density_channel.assignToShader(m_volume_shader.get());
         }
 
         if (vdb_file_changed || hasChange(data.change_set, ChangeSet::SCATTERING_CHANNEL))
         {
             handle_channel_change(data.scattering_channel.name, m_scattering_channel.channel_ptr);
-            bind_texture_params(m_scattering_channel);
+            m_scattering_channel.assignToShader(m_volume_shader.get());
         }
 
         if (vdb_file_changed || hasChange(data.change_set, ChangeSet::TRANSPARENCY_CHANNEL))
         {
             handle_channel_change(data.transparency_channel.name, m_transparency_channel.channel_ptr);
-            bind_texture_params(m_transparency_channel);
+            m_transparency_channel.assignToShader(m_volume_shader.get());
         }
 
         if (vdb_file_changed || hasChange(data.change_set, ChangeSet::EMISSION_CHANNEL))
         {
             handle_channel_change(data.emission_channel.name, m_emission_channel.channel_ptr);
-            bind_texture_params(m_emission_channel);
+            m_emission_channel.assignToShader(m_volume_shader.get());
         }
 
         if (vdb_file_changed || hasChange(data.change_set, ChangeSet::TEMPERATURE_CHANNEL))
         {
             handle_channel_change(data.temperature_channel.name, m_temperature_channel.channel_ptr);
-            bind_texture_params(m_temperature_channel);
+            m_temperature_channel.assignToShader(m_volume_shader.get());
         }
 
         // Clean-up channel cache.
