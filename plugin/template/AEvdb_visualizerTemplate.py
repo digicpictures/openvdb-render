@@ -146,7 +146,7 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
                               changeCommand=lambda val: pm.setAttr(param_name, val), buttonCommand=lambda: AEvdb_visualizerTemplate.press_vdb_path(param_name))
 
     def create_max_slice_count(self, param_name):
-        pm.floatSliderButtonGrp("OpenVDBMaxSliceCount", label="Max slice count", buttonLabel="Update", 
+        pm.floatSliderButtonGrp("OpenVDBMaxSliceCount", label="Slice Count", buttonLabel="Update",
                                 field=True, columnWidth4=(144,70,0,20), columnAttach=(1,'right',5),
                                 minValue=4, maxValue=256, precision=0, step=1)
         self.update_max_slice_count(param_name)
@@ -294,8 +294,8 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
 
         self.addSeparator()
         self.callCustom(self.create_max_slice_count, self.update_max_slice_count, "maxSliceCount")
-        self.addControl("shadowGain",          label="Shadow ray gain")
-        self.addControl("shadowSampleCount",   label="Shadow ray sample count")
+        self.addControl("shadowGain",          label="Shadow Gain")
+        self.addControl("shadowSampleCount",   label="Shadow Sample Count")
         self.addControl("perSliceGamma",       label="Gamma Correction")
 
         self.endLayout()
