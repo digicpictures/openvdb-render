@@ -1084,7 +1084,7 @@ float3 SRGBFromLinear(float3 color)
     return pow(color, 1.0f/2.2f);
 }
 
-float3 sampleColorRamp(sampler1D ramp_sampler, float texcoord)
+float3 SampleColorRamp(sampler1D ramp_sampler, float texcoord)
 {
     return LinearFromSRGB(tex1Dlod(ramp_sampler, float4(texcoord, 0, 0, 0)).xyz);
 }
@@ -1121,7 +1121,7 @@ float3 SampleScatteringTexture(float3 pos_model, float lod_scale_model)
 
     float3 res = scattering_color;
     if (scattering_color_source == COLOR_SOURCE_RAMP)
-        res = sampleColorRamp(scattering_ramp_sampler, channel_value);
+        res = SampleColorRamp(scattering_ramp_sampler, channel_value);
     res *= scattering_intensity;
 
     if (use_scattering_texture)
@@ -1171,7 +1171,7 @@ float3 SampleEmissionTexture(float3 pos_model, float lod_scale_model)
 
     float3 res = emission_color;
     if (emission_color_source == COLOR_SOURCE_RAMP)
-        res = sampleColorRamp(emission_ramp_sampler, channel_value);
+        res = SampleColorRamp(emission_ramp_sampler, channel_value);
     res *= emission_intensity;
 
     if (use_emission_texture)
@@ -1183,7 +1183,7 @@ float3 SampleEmissionTexture(float3 pos_model, float lod_scale_model)
             return float3(0, 0, 0);
 
         float temperature = SampleTemperatureTexture(pos_model, lod_scale_model);
-        float3 blackbody_color = sampleColorRamp(blackbody_lut_sampler, temperature / MAX_LUT_TEMPERATURE);
+        float3 blackbody_color = SampleColorRamp(blackbody_lut_sampler, temperature / MAX_LUT_TEMPERATURE);
 
         float strength = 1;
         float physicalIntensity = 1;
