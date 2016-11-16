@@ -202,7 +202,7 @@ namespace {
         }
     };
 
-    constexpr int DEFAULT_MAX_SLICE_COUNT = 64;
+    constexpr int DEFAULT_MAX_SLICE_COUNT = 128;
 }
 
 VDBVisualizerData::VDBVisualizerData()
@@ -564,7 +564,7 @@ MStatus VDBVisualizerShape::initialize()
     s_max_slice_count = nAttr.create("maxSliceCount", "max_slice_count", MFnNumericData::kInt);
     nAttr.setDefault(DEFAULT_MAX_SLICE_COUNT);
     nAttr.setMin(4);
-    nAttr.setSoftMax(128);
+    nAttr.setSoftMax(256);
     addAttribute(s_max_slice_count);
 
     s_apply_max_slice_count = nAttr.create("applyMaxSliceCount", "apply_max_slice_count", MFnNumericData::kBoolean);
