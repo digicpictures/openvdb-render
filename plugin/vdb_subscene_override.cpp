@@ -1,5 +1,7 @@
 #include "vdb_subscene_override.h"
 
+#define _USE_MATH_DEFINES
+#include <cmath>
 #include <new>
 #include <random>
 #include <unordered_map>
@@ -401,6 +403,8 @@ namespace MHWRender {
         void updateSliceGeo(const VDBSubSceneOverrideData& data);
 
         MHWRender::MPxSubSceneOverride& m_parent;
+
+        static constexpr unsigned int MAX_LIGHT_COUNT = 16;
         ShaderPtr m_volume_shader;
 
         std::unordered_map<std::string, std::weak_ptr<VolumeChannel>> m_channel_cache;
@@ -982,17 +986,21 @@ namespace MHWRender {
 
     // === Sliced display mode implementation ===================================
 
-    const std::string SlicedDisplay::s_effect_code = R"cgfx(
-float3 view_dir_world : ViewDirection < string Space = "World"; >;
+    const std::string SlicedDisplay::s_effect_code = std::string(R"cgfx(
+float3 view_dir_world : ViewDirection;
 float3 view_pos_world;
-float4x4 world_mat : World < string UIWidget = "None"; >;
-float4x4 world_inverse_mat : WorldInverse < string UIWidget = "None"; >;
-float4x4 world_view_proj_mat : WorldViewProjection < string UIWidget = "None"; >;
+float4x4 world_mat : World;
+float3x3 world_mat_3x3 : World;
+float4x4 world_inverse_mat : WorldInverse;
+float3x3 world_inverse_mat_3x3 : WorldInverse;
+float4x4 world_view_proj_mat : WorldViewProjection;
 
 // The following sizes and positions are in model space.
 
-float3 volume_size < string UIWidget = "None"; >;
-float3 volume_origin < string UIWidget = "None"; >;
+float3 volume_size;
+float3 volume_origin;
+
+// Channels.
 
 float     density = 1.0f;
 bool      use_density_texture = true;
@@ -1065,6 +1073,7 @@ sampler1D blackbody_lut_sampler = sampler_state {
 };
 
 // Ramps.
+
 texture   scattering_ramp_texture;
 sampler1D scattering_ramp_sampler = sampler_state {
     Texture = <scattering_ramp_texture>;
@@ -1076,22 +1085,46 @@ sampler1D emission_ramp_sampler = sampler_state {
 };
 
 // Lights.
-#define MAX_POINT_LIGHTS 8
-int    point_light_count;
-float3 point_light_positions[MAX_POINT_LIGHTS];
-float3 point_light_colors[MAX_POINT_LIGHTS];
-float  point_light_intensities[MAX_POINT_LIGHTS];
 
-#define MAX_DIRECTIONAL_LIGHTS 8
-int    directional_light_count;
-float3 directional_light_directions[MAX_DIRECTIONAL_LIGHTS];
-float3 directional_light_colors[MAX_DIRECTIONAL_LIGHTS];
-float  directional_light_intensities[MAX_DIRECTIONAL_LIGHTS];
+#define LIGHT_FLAG_POINT_LIGHT       0
+#define LIGHT_FLAG_DIRECTIONAL_LIGHT 1
+#define LIGHT_FLAG_SPOTLIGHT         2
+#define LIGHT_FLAG_MASK_TYPE         3
+#define LIGHT_FLAG_CAST_SHADOWS      8
+
+int    light_count;
+int    light_flags[MAX_LIGHT_COUNT];
+float3 light_position[MAX_LIGHT_COUNT];
+float3 light_direction[MAX_LIGHT_COUNT];
+float3 light_color[MAX_LIGHT_COUNT];
+float  light_intensity[MAX_LIGHT_COUNT];
+float  light_decay_exponent[MAX_LIGHT_COUNT];
+float3 light_shadow_color[MAX_LIGHT_COUNT];
+float  light_cutoff_costheta1[MAX_LIGHT_COUNT];
+float  light_cutoff_costheta2[MAX_LIGHT_COUNT];
+float  light_dropoff[MAX_LIGHT_COUNT];
+
+// Other params.
 
 float shadow_gain = 0.2;
 int shadow_sample_count = 4;
 int max_slice_count;
 bool per_slice_gamma = false;
+
+#define DEBUG_COLOR float3(1.0, 0.5, 0.5)
+
+#define EPS 1e-7f
+#define EPS3 float3(EPS, EPS, EPS)
+
+float MaxComponent(float3 v)
+{
+    return max(max(v.x, v.y), v.z);
+}
+
+float MinComponent(float3 v)
+{
+    return min(min(v.x, v.y), v.z);
+}
 
 float3 LinearFromSRGB(float3 color)
 {
@@ -1109,6 +1142,7 @@ float3 SampleColorRamp(sampler1D ramp_sampler, float texcoord)
 }
 
 #define SQR(x) ((x) * (x))
+#define PI 3.14159265f
 float BlackbodyRadiance(float temperature)
 {
     const float sigma = 5.670367e-8f; // Stefan-Boltzmann constant
@@ -1119,7 +1153,7 @@ float BlackbodyRadiance(float temperature)
        power = lerp(sigma, power, max(blackbody_intensity, 0.0f));
 
     // convert power to spectral radiance
-    return power * (1e-6f / 3.14159265f);
+    return power * (1e-6f / PI);
 }
 
 float3 BlackbodyColor(float temperature)
@@ -1128,11 +1162,10 @@ float3 BlackbodyColor(float temperature)
     return SampleColorRamp(blackbody_lut_sampler, texcoord) * BLACKBODY_LUT_NORMALIZER;
 }
 
-#define MAXV(v) max(max(v.x, v.y), v.z)
 float CalcLOD(float distance_model, float3 size_model)
 {
     float3 distance_voxels = (distance_model / size_model) * float(max_slice_count - 1);
-    return max(0, log(MAXV(distance_voxels)) / log(2.f));
+    return max(0, log(MaxComponent(distance_voxels)) / log(2.f));
 }
 
 float SampleDensityTexture(float3 pos_model, float lod_scale_model)
@@ -1179,7 +1212,7 @@ float3 SampleTransparencyTexture(float3 pos_model, float lod_scale_model)
         res *= lerp(transparency_value_range.x, transparency_value_range.y, tex3Dlod(transparency_sampler, float4(tex_coords, lod)).r);
     }
 
-    return clamp(res, (float3)1e-7, (float3)1);
+    return clamp(res, float3(EPS, EPS, EPS), float3(1, 1, 1));
 }
 
 float SampleTemperatureTexture(float3 pos_model, float lod_scale_model)
@@ -1267,7 +1300,7 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
     int slice_idx = input.id >> 2;
     float2 pos_slice = input.pos.xy;
 
-    float3 view_dir_model = normalize(mul(world_inverse_mat, float4(view_dir_world, 0)).xyz);
+    float3 view_dir_model = normalize(mul(world_inverse_mat_3x3, view_dir_world));
     if (dot(DominantAxis(view_dir_model, float3(0, 0, 1)), view_dir_model) > 0)
         slice_idx = max_slice_count - 1 - slice_idx;
     float3 pos_dom = float3(pos_slice, float(slice_idx) / float(max_slice_count - 1));
@@ -1277,7 +1310,7 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
 
     return output;
 }
-
+)cgfx") + std::string(R"cgfx(
 // ======== FRAGMENT SHADER ========
 
 #define ONE_OVER_4PI 0.07957747f
@@ -1292,7 +1325,7 @@ float3 RayTransmittance(float3 from_world, float3 to_world)
 {
     float3 step_world = (to_world - from_world) / float(shadow_sample_count + 1);
     float  step_size_world = length(step_world);
-    float3 step_model = mul(float3x3(world_inverse_mat), step_world);
+    float3 step_model = mul(world_inverse_mat_3x3, step_world);
     float  step_size_model = length(step_model);
 
     float3 from_model = mul(world_inverse_mat, float4(from_world, 1)).xyz;
@@ -1306,6 +1339,111 @@ float3 RayTransmittance(float3 from_world, float3 to_world)
         pos_model += step_model;
     }
     return transmittance;
+}
+
+float3 StretchToVolumeSize(float3 dir_world)
+{
+    float3 dir_model = normalize(mul(world_inverse_mat_3x3, dir_world));
+    float len = MinComponent(abs(volume_size / dir_model));
+    return mul(world_mat_3x3, len * dir_model);
+}
+
+int LightType(int light_index)
+{
+    return light_flags[light_index] & LIGHT_FLAG_MASK_TYPE;
+}
+
+float3 ShadowFactor(int light_index, float3 shadow_ray_begin, float3 shadow_ray_end)
+{
+    float3 transmittance = RayTransmittance(shadow_ray_begin, shadow_ray_end);
+    return (float3(1, 1, 1) - transmittance) * (float3(1, 1, 1) - light_shadow_color[light_index]);
+}
+
+float3 LightLuminanceDirectional(int light_index, float3 pos_world, float3 direction_to_eye_world, float albedo)
+{
+    // Light luminance at source.
+    float3 lumi = light_color[light_index] * light_intensity[light_index];
+
+    // Albedo.
+    lumi *= albedo;
+
+    // Phase.
+    float3 direction_to_light = -light_direction[light_index];
+    float phase = HGPhase(dot(direction_to_eye_world, direction_to_light));
+    lumi *= phase;
+
+    // Bail if light casts no shadows or shadowing practically wouldn't affect the outcome.
+    if (!(light_flags[light_index] & LIGHT_FLAG_CAST_SHADOWS))
+        return lumi;
+
+    // Shadow.
+    //float  max_distance_world = MaxComponent(volume_size);
+    //float3 shadow_vector = 0.5f * max_distance_world * direction_to_light;
+    float3 shadow_vector = 0.5f * StretchToVolumeSize(direction_to_light);
+    lumi *= (float3(1, 1, 1) - ShadowFactor(light_index, pos_world, pos_world + shadow_vector));
+
+    return lumi;
+}
+
+float3 LightLuminancePointSpot(int light_index, float3 pos_world, float3 direction_to_eye_world, float albedo)
+{
+    // Light luminance at source.
+    float3 lumi = light_color[light_index] * light_intensity[light_index];
+
+    // Albedo.
+    lumi *= albedo;
+
+    // Phase.
+    float3 vector_to_light_world = light_position[light_index] - pos_world;
+    float  distance_to_light_world = max(length(vector_to_light_world), EPS3);
+    float3 direction_to_light_world = vector_to_light_world / distance_to_light_world;
+    float phase = HGPhase(dot(direction_to_eye_world, direction_to_light_world));
+    lumi *= phase;
+
+    // Decay.
+    lumi *= pow(distance_to_light_world, -light_decay_exponent[light_index]);
+
+    // Angular shadowing for spot lights.
+    if (LightType(light_index) == LIGHT_FLAG_SPOTLIGHT)
+    {
+        float costheta = dot(light_direction[light_index], -direction_to_light_world);
+
+        // Cone.
+        float cutoff1 = light_cutoff_costheta1[light_index];
+        float cutoff2 = light_cutoff_costheta2[light_index];
+        if (costheta < cutoff2)
+            return float3(0, 0, 0);
+        else if (costheta < cutoff1)
+            lumi *= (cutoff2 - costheta) / (cutoff2 - cutoff1);
+
+        // Dropoff.
+        lumi *= pow(costheta, light_dropoff[light_index]);
+    }
+
+    // Bail if light casts no shadows or shadowing practically wouldn't affect the outcome.
+    if (!(light_flags[light_index] & LIGHT_FLAG_CAST_SHADOWS))
+        return lumi;
+
+    // Shadow.
+    float3 shadow_vector = vector_to_light_world;
+    //float  max_distance_world = MaxComponent(volume_size);
+    float  max_distance_world = length(StretchToVolumeSize(distance_to_light_world));
+    if (distance_to_light_world > max_distance_world)
+        shadow_vector = direction_to_light_world * max_distance_world;
+    lumi *= (float3(1, 1, 1) - ShadowFactor(light_index, pos_world, pos_world + shadow_vector));
+
+    return lumi;
+}
+
+float3 LightLuminance(int light_index, float3 pos_world, float3 direction_to_eye_world, float albedo)
+{
+    int type = LightType(light_index);
+    if (type == LIGHT_FLAG_POINT_LIGHT || type == LIGHT_FLAG_SPOTLIGHT)
+        return LightLuminancePointSpot(light_index, pos_world, direction_to_eye_world, albedo);
+    else if (type == LIGHT_FLAG_DIRECTIONAL_LIGHT)
+        return LightLuminanceDirectional(light_index, pos_world, direction_to_eye_world, albedo);
+    else
+        return DEBUG_COLOR; // Unsupported light.
 }
 
 typedef VERT_OUTPUT FRAG_INPUT;
@@ -1322,49 +1460,38 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     float density = SampleDensityTexture(input.pos_model, 0);
     float3 transparency = SampleTransparencyTexture(input.pos_model, 0);
     float3 albedo = SampleScatteringTexture(input.pos_model, 0);
+    // Note: albedo is scattering / extinction. Intuitively light lumi should
+    //       be multiplied by scattering, but because
+    //         integral(exp(a*t)dt) = 1/a exp(a*t),
+    //       and light contribution from in-scattering is
+    //         integral_0^t(exp(-extinciton*t)*phase*light_radiance dt)
+    //       evaluating the integral will yeild a 1/extinction factor, assuming
+    //       piecewise constant phase and light radiance.
 
-    float3 incident_dir_world = normalize(view_pos_world - input.pos_world);
+    float3 direction_to_eye_world = normalize(view_pos_world - input.pos_world);
 
-    float3 view_dir_model = normalize(mul(world_inverse_mat, float4(view_dir_world, 0)).xyz);
+    float3 view_dir_model = normalize(mul(world_inverse_mat_3x3, view_dir_world));
     float3 slice_vector_model = DominantAxis(view_dir_model, float3(0, 0, 1)) * volume_size / float(max_slice_count - 1);
-    float3 slice_vector_world = mul(world_mat, float4(slice_vector_model, 0)).xyz;
-    float ray_distance = dot(slice_vector_world, slice_vector_world) / abs(dot(slice_vector_world, incident_dir_world));
+    float3 slice_vector_world = mul(world_mat_3x3, slice_vector_model);
+    float ray_distance = dot(slice_vector_world, slice_vector_world) / abs(dot(slice_vector_world, direction_to_eye_world));
 
-    float3x3 vol_scale_model = float3x3(volume_size.x, 0, 0,
-                                        0, volume_size.y, 0,
-                                        0, 0, volume_size.z);
-    float3x3 vol_scale_world = float3x3(world_mat) * vol_scale_model * float3x3(world_inverse_mat);
+    //float3x3 vol_scale_model = float3x3(volume_size.x, 0, 0,
+    //                                    0, volume_size.y, 0,
+    //                                    0, 0, volume_size.z);
+    //float3x3 vol_scale_world = world_mat_3x3 * vol_scale_model * world_inverse_mat_3x3;
 
     float3 lumi = float3(0, 0, 0);
 
-    // Loop through directional lights.
-    for (int i = 0; i < directional_light_count; ++i) {
-        float3 light_dir_world = directional_light_directions[i];
-        float  shadow_distance = length(mul(vol_scale_world, light_dir_world)) * 0.5f;
-        float3 shadow = RayTransmittance(input.pos_world, input.pos_world - light_dir_world * shadow_distance);
-        float3 light_radiance = directional_light_colors[i] * directional_light_intensities[i];
-        float3 incident_radiance = light_radiance * shadow;
-        float phase = HGPhase(dot(incident_dir_world, normalize(light_dir_world)));
-        // Divide by extinction coef (factored into albedo) because integral(exp(at)dt) = 1/a exp(at).
-        lumi += albedo * phase * incident_radiance;
-    }
+    // In-scattering from lights.
 
-    // Loop through point lights.
-    for (int i = 0; i < point_light_count; ++i) {
-        float3 light_pos_world = point_light_positions[i];
-        float3 shadow = RayTransmittance(input.pos_world, light_pos_world);
-        float3 light_radiance = point_light_colors[i] * point_light_intensities[i];
-        float3 incident_radiance = light_radiance * shadow;
-        float3 light_dir_world = normalize(light_pos_world - input.pos_world);
-        float phase = HGPhase(dot(incident_dir_world, light_dir_world));
-        // Divide by extinction coef (factored into albedo) because integral(exp(at)dt) = 1/a exp(at).
-        lumi += albedo * phase * incident_radiance;
-    }
+    for (int i = 0; i < light_count; ++i)
+        lumi += LightLuminance(i, input.pos_world, direction_to_eye_world, albedo);
 
     // This is wrong, but serves as an approximation for now.
     if (per_slice_gamma)
         lumi = SRGBFromLinear(lumi);
 
+    // Premultiply alpha.
     float3 transmittance = pow(transparency, density * ray_distance);
     float alpha = 1 - dot(transmittance, float3(1, 1, 1) / 3);
     lumi *= alpha;
@@ -1379,9 +1506,9 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     if (per_slice_gamma)
         emission = SRGBFromLinear(emission);
 
-    // Truncated series of (1 - exp(-dt)) / t; d = ray_distance, t = extinction.
     float3 extinction = density * -log(transparency);
     float3 x = -ray_distance * extinction;
+    // Truncated series of (1 - exp(-dt)) / t; d = ray_distance, t = extinction.
     float3 emission_factor = ray_distance * (1 - x * (0.5f + x * (1.0f/6.0f - x / 24.0f)));
     emission *= emission_factor;
     lumi += emission;
@@ -1402,7 +1529,21 @@ technique Main < int isTransparent = 1; >
         FragmentProgram = compile gp5fp VolumeFragmentShader();
     }
 }
-)cgfx";
+)cgfx");
+
+    namespace {
+        template <typename T>
+        MHWRender::MShaderCompileMacro makeMacroDef(const MString& name, const T& value)
+        {
+            return { name, format("^1s", value) };
+        };
+
+        template <>
+        MHWRender::MShaderCompileMacro makeMacroDef<float>(const MString& name, const float& value)
+        {
+            return { name, format("^1sf", value) };
+        }
+    } // unnamed namespace
 
     SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
         : m_parent(parent), m_enabled(false), m_selected(false), m_scattering_ramp(RAMP_RESOLUTION), m_emission_ramp(RAMP_RESOLUTION),
@@ -1414,12 +1555,14 @@ technique Main < int isTransparent = 1; >
             return;
 
         // Load volume shader from effect file.
-        MShaderCompileMacro macros[] = { {"BLACKBODY_LUT_MIN_TEMP", format("^1sf", Blackbody::TEMPERATURE_MIN)},
-                                         {"BLACKBODY_LUT_MAX_TEMP", format("^1sf", Blackbody::TEMPERATURE_MAX)},
-                                         {"BLACKBODY_LUT_NORMALIZER",   format("^1sf", Blackbody::LUT_NORMALIZER)} };
+        MHWRender::MShaderCompileMacro macros[] = { makeMacroDef("BLACKBODY_LUT_MIN_TEMP",   Blackbody::TEMPERATURE_MIN),
+                                                    makeMacroDef("BLACKBODY_LUT_MAX_TEMP",   Blackbody::TEMPERATURE_MAX),
+                                                    makeMacroDef("BLACKBODY_LUT_NORMALIZER", Blackbody::LUT_NORMALIZER),
+                                                    makeMacroDef("MAX_LIGHT_COUNT",          MAX_LIGHT_COUNT) };
         constexpr int macro_count = sizeof(macros) / sizeof(MShaderCompileMacro);
         m_volume_shader.reset(shader_manager->getEffectsBufferShader(s_effect_code.c_str(), unsigned(s_effect_code.size()), "Main", macros, macro_count, false, preDrawCallback));
-        if (!m_volume_shader) {
+        if (!m_volume_shader)
+        {
             LOG_ERROR("Cannot compile cgfx.");
             CGcontext context = cgCreateContext();
             for (auto shader_spec : { std::make_pair("VolumeVertexShader", "gp5vp"), std::make_pair("VolumeFragmentShader", "gp5fp") })
@@ -1601,111 +1744,152 @@ technique Main < int isTransparent = 1; >
         CHECK_MSTATUS(m_volume_shader->setParameter("volume_size", extents));
     }
 
+    namespace {
+        typedef std::array<float, 3> Float3;
+
+        template <typename ParamSpec>
+        void setLightParam(MHWRender::MLightParameterInformation* light_params, const ParamSpec& param_spec, float& output) {
+            MFloatArray float_array;
+            if (light_params->getParameter(param_spec, float_array) == MStatus::kSuccess)
+                output = float_array[0];
+        };
+
+        template <typename ParamSpec>
+        void setLightParam(MHWRender::MLightParameterInformation* light_params, const ParamSpec& param_spec, Float3& output) {
+            MFloatArray float_array;
+            if (light_params->getParameter(param_spec, float_array) == MStatus::kSuccess)
+                memcpy(&output, &float_array[0], 3 * sizeof(float));
+        };
+
+        float radiansFromDegrees(float degrees)
+        {
+            return float(M_PI) * degrees / 180.0f;
+        }
+
+        template <int N>
+        union Float3Array
+        {
+            std::array<float, 3 * N> float_array;
+            std::array<Float3, N> float3_array;
+        };
+    } // unnamed namespace
+
     void SlicedDisplay::preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& /*renderItemList*/, MHWRender::MShaderInstance* shader_instance)
     {
-        //{
-        //    context.getInternalTexture(MHWRender::MDrawContext::kDep)
-        //}
+        constexpr int LIGHT_FLAG_POINT_LIGHT       = 0;
+        constexpr int LIGHT_FLAG_DIRECTIONAL_LIGHT = 1;
+        constexpr int LIGHT_FLAG_SPOTLIGHT         = 2;
+        constexpr int LIGHT_FLAG_CAST_SHADOWS      = 8;
 
         // Set view position.
         {
             MStatus status;
-            auto view_pos = context.getTuple(MHWRender::MFrameContext::kViewPosition, &status);
+            const auto view_pos = context.getTuple(MHWRender::MFrameContext::kViewPosition, &status);
             CHECK_MSTATUS(status);
             CHECK_MSTATUS(shader_instance->setParameter("view_pos_world", MFloatVector(float(view_pos[0]), float(view_pos[1]), float(view_pos[2]))));
         }
 
         // Collect light data.
 
-        constexpr int MAX_POINT_LIGHTS = 8;
-        int point_light_count = 0;
-        std::array<float, 3*MAX_POINT_LIGHTS> point_light_positions;
-        std::array<float, 3*MAX_POINT_LIGHTS> point_light_colors;
-        std::array<float, MAX_POINT_LIGHTS>   point_light_intensities;
+        Float3Array<MAX_LIGHT_COUNT> light_position;
+        Float3Array<MAX_LIGHT_COUNT> light_direction;
+        Float3Array<MAX_LIGHT_COUNT> light_color;
+        Float3Array<MAX_LIGHT_COUNT> light_shadow_color;
+        std::array<int,   MAX_LIGHT_COUNT> light_flags;
+        std::array<float, MAX_LIGHT_COUNT> light_intensity;
+        std::array<float, MAX_LIGHT_COUNT> light_decay_exponent;
+        std::array<float, MAX_LIGHT_COUNT> light_cutoff_costheta1;
+        std::array<float, MAX_LIGHT_COUNT> light_cutoff_costheta2;
+        std::array<float, MAX_LIGHT_COUNT> light_dropoff;
 
-        constexpr int MAX_DIRECTIONAL_LIGHTS = 8;
-        int directional_light_count = 0;
-        std::array<float, 3*MAX_DIRECTIONAL_LIGHTS> directional_light_directions;
-        std::array<float, 3*MAX_DIRECTIONAL_LIGHTS> directional_light_colors;
-        std::array<float, MAX_DIRECTIONAL_LIGHTS>   directional_light_intensities;
+        using MHWRender::MLightParameterInformation;
 
-        const auto light_count = context.numberOfActiveLights();
-        for (unsigned int i = 0; i < light_count; ++i)
+        const auto light_count_total = std::min(context.numberOfActiveLights(), MAX_LIGHT_COUNT);
+        int shader_light_count = 0;
+        for (unsigned int i = 0; i < light_count_total; ++i)
         {
             MIntArray int_array;
             MFloatArray float_array;
 
             const auto light_params = context.getLightParameterInformation(i);
 
-            // Continue if light is not enabled.
+            // Proceed to next light if this light is not enabled.
             const auto status = light_params->getParameter(MLightParameterInformation::kLightEnabled, float_array);
             if (status != MS::kSuccess || float_array[0] != 1)
                 continue;
 
-            // Get additional info based on light type and save light data.
+            light_flags[shader_light_count] = 0;
+
+            // Light type.
             const auto light_type = light_params->lightType();
             if (light_type == "pointLight")
-            {
-                if (point_light_count == MAX_POINT_LIGHTS)
-                    continue;
-
-                // Position.
-                light_params->getParameter(MLightParameterInformation::kWorldPosition, float_array);
-                memcpy(point_light_positions.data() + 3 * point_light_count, &float_array[0], 3 * sizeof(float));
-
-                // Color.
-                light_params->getParameter(MLightParameterInformation::kColor, float_array);
-                memcpy(point_light_colors.data() + 3 * point_light_count, &float_array[0], 3 * sizeof(float));
-
-                // Intensity.
-                light_params->getParameter(MLightParameterInformation::kIntensity, float_array);
-                point_light_intensities[point_light_count] = float_array[0];
-
-                ++point_light_count;
-            }
+                light_flags[shader_light_count] |= LIGHT_FLAG_POINT_LIGHT;
             else if (light_type == "directionalLight")
-            {
-                if (directional_light_count == MAX_DIRECTIONAL_LIGHTS)
-                    continue;
-
-                // Direction.
-                light_params->getParameter(MLightParameterInformation::kWorldDirection, float_array);
-                memcpy(directional_light_directions.data() + 3 * directional_light_count, &float_array[0], 3 * sizeof(float));
-
-                // Color.
-                light_params->getParameter(MLightParameterInformation::kColor, float_array);
-                memcpy(directional_light_colors.data() + 3 * directional_light_count, &float_array[0], 3 * sizeof(float));
-
-                // Intensity.
-                light_params->getParameter(MLightParameterInformation::kIntensity, float_array);
-                directional_light_intensities[directional_light_count] = float_array[0];
-
-                ++directional_light_count;
-            }
+                light_flags[shader_light_count] |= LIGHT_FLAG_DIRECTIONAL_LIGHT;
+            else if (light_type == "spotLight")
+                light_flags[shader_light_count] |= LIGHT_FLAG_SPOTLIGHT;
             else
             {
-                std::stringstream ss;
-                ss << "unsupported light type: " << light_type;
-                LOG_ERROR(ss.str());
+                LOG_ERROR(format("unsupported light type ^1s", light_type).asChar());
                 continue;
             }
+
+            // Position.
+            setLightParam(light_params, MLightParameterInformation::kWorldPosition, light_position.float3_array[shader_light_count]);
+
+            // Direction.
+            setLightParam(light_params, MLightParameterInformation::kWorldDirection, light_direction.float3_array[shader_light_count]);
+
+            // Color.
+            setLightParam(light_params, MLightParameterInformation::kColor, light_color.float3_array[shader_light_count]);
+
+            // Intensity.
+            setLightParam(light_params, MLightParameterInformation::kIntensity, light_intensity[shader_light_count]);
+
+            // Exposure.
+            if (light_params->getParameter("exposure", float_array) == MStatus::kSuccess)
+                light_intensity[shader_light_count] *= std::pow(2.0f, float_array[0]);
+
+            // Shadow.
+            // ShadowOn attrib of point lights is buggy, cast shadows by default.
+            if (light_type == "pointLight")
+                light_flags[shader_light_count] |= LIGHT_FLAG_CAST_SHADOWS;
+            else if (light_params->getParameter(MLightParameterInformation::kShadowOn, int_array) == MStatus::kSuccess && int_array[0] == 1)
+                light_flags[shader_light_count] |= LIGHT_FLAG_CAST_SHADOWS;
+            setLightParam(light_params, MLightParameterInformation::kShadowColor, light_shadow_color.float3_array[shader_light_count]);
+
+            // Decay rate.
+            setLightParam(light_params, MLightParameterInformation::kDecayRate, light_decay_exponent[shader_light_count]);
+
+            // Spot light dropoff.
+            setLightParam(light_params, MLightParameterInformation::kDropoff, light_dropoff[shader_light_count]);
+
+            // Spot light cutoffs.
+            if (light_params->getParameter(MLightParameterInformation::kCosConeAngle, float_array) == MStatus::kSuccess)
+            {
+                light_cutoff_costheta1[shader_light_count] = float_array[0];
+                light_cutoff_costheta2[shader_light_count] = float_array[1];
+            }
+
+            shader_light_count++;
         }
 
         // Convert colors to linear color space.
-        LinearFromSRGB(point_light_colors.data(), point_light_colors.size());
-        LinearFromSRGB(directional_light_colors.data(), directional_light_colors.size());
+        LinearFromSRGB(light_color.float_array.data(), shader_light_count);
+        LinearFromSRGB(light_shadow_color.float_array.data(), shader_light_count);
 
         // Set shader params.
-
-        CHECK_MSTATUS(shader_instance->setParameter("point_light_count", point_light_count));
-        CHECK_MSTATUS(shader_instance->setArrayParameter("point_light_positions", point_light_positions.data(), point_light_count));
-        CHECK_MSTATUS(shader_instance->setArrayParameter("point_light_colors", point_light_colors.data(), point_light_count));
-        CHECK_MSTATUS(shader_instance->setArrayParameter("point_light_intensities", point_light_intensities.data(), point_light_count));
-
-        CHECK_MSTATUS(shader_instance->setParameter("directional_light_count", directional_light_count));
-        CHECK_MSTATUS(shader_instance->setArrayParameter("directional_light_directions", directional_light_directions.data(), directional_light_count));
-        CHECK_MSTATUS(shader_instance->setArrayParameter("directional_light_colors", directional_light_colors.data(), directional_light_count));
-        CHECK_MSTATUS(shader_instance->setArrayParameter("directional_light_intensities", directional_light_intensities.data(), directional_light_count));
+        CHECK_MSTATUS(shader_instance->setParameter("light_count", shader_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("light_flags", light_flags.data(), shader_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("light_position", light_position.float_array.data(), shader_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("light_direction", light_direction.float_array.data(), shader_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("light_color", light_color.float_array.data(), shader_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("light_intensity", light_intensity.data(), shader_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("light_shadow_color", light_shadow_color.float_array.data(), shader_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("light_decay_exponent", light_decay_exponent.data(), shader_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("light_cutoff_costheta1", light_cutoff_costheta1.data(), shader_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("light_cutoff_costheta2", light_cutoff_costheta2.data(), shader_light_count));
+        CHECK_MSTATUS(shader_instance->setArrayParameter("light_dropoff", light_dropoff.data(), shader_light_count));
     }
 
     bool SlicedDisplay::update(MHWRender::MSubSceneContainer& container, const VDBSubSceneOverrideData& data)
@@ -1786,7 +1970,6 @@ technique Main < int isTransparent = 1; >
             for (auto& channel : m_channel_cache)
                 channel.second.lock()->sample(m_volume_sampler, data.max_slice_count);
             // Rebind texture params.
-            MTextureAssignment texture_assignment;
             for (auto& channel_assignment : { m_density_channel, m_scattering_channel, m_transparency_channel, m_emission_channel, m_temperature_channel })
             {
                 if (!channel_assignment.channel_ptr)
