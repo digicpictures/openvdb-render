@@ -62,8 +62,8 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
     // Register subscene override for shape node.
     status = MHWRender::MDrawRegistry::registerSubSceneOverrideCreator(
         VDBVisualizerShape::drawDbClassification,
-        MHWRender::VDBSubSceneOverride::registrantId,
-        MHWRender::VDBSubSceneOverride::creator
+        VDBSubSceneOverride::registrantId,
+        VDBSubSceneOverride::creator
     );
     if (!status)
     {
@@ -137,7 +137,7 @@ PLUGIN_EXPORT MStatus uninitializePlugin(MObject obj)
     // Deregister subscene override
     status = MHWRender::MDrawRegistry::deregisterSubSceneOverrideCreator(
             VDBVisualizerShape::drawDbClassification,
-            MHWRender::VDBSubSceneOverride::registrantId
+            VDBSubSceneOverride::registrantId
     );
     if (!status)
     {
