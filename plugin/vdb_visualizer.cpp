@@ -16,6 +16,7 @@
 
 #include <maya/MArgDatabase.h>
 #include <maya/MDagPath.h>
+#include <maya/MDrawData.h>
 #include <maya/MFnDependencyNode.h>
 #include <maya/MFnEnumAttribute.h>
 #include <maya/MFnNumericAttribute.h>
@@ -921,7 +922,7 @@ void VDBVisualizerShape::postConstructor()
 
 VDBVisualizerShapeUI::VDBVisualizerShapeUI()
 {
-
+    m_bbox_verts.reserve(24);
 }
 
 VDBVisualizerShapeUI::~VDBVisualizerShapeUI()
@@ -1051,6 +1052,122 @@ bool VDBVisualizerShapeUI::select(MSelectInfo& selectInfo, MSelectionList& selec
 bool VDBVisualizerShapeUI::canDrawUV() const
 {
     return false;
+}
+
+void VDBVisualizerShapeUI::getDrawRequests(
+        const MDrawInfo& info,
+        bool objectAndActiveOnly,
+        MDrawRequestQueue& queue)
+{
+    const MBoundingBox bbox = surfaceShape()->boundingBox();
+
+    // Lambda for making a vertex of the bounding box using a point index.
+    const auto point_from_index = [&bbox](int point_index)
+    {
+        auto v = bbox.max() - bbox.min();
+        for (int i = 0; i < 3; ++i)
+            if (!(point_index & (1 << i)))
+                v[i] = 0;
+        return bbox.min() + v;
+    };
+
+    // Add bounding box line list vertices to the vector.
+    // The vector already has enough capacity (the ctor takes care of it).
+    m_bbox_verts.clear();
+    for (int point_index = 0; point_index < 8; ++point_index)
+        for (int dim = 0; dim < 3; ++dim)
+        {
+            const auto dim_mask = 1 << dim;
+
+            // Avoid duplicating lines.
+            if (point_index & dim_mask)
+                continue;
+
+            // Add line along dimension dim where one of the end points is
+            // the point defined by point_index.
+            m_bbox_verts.push_back(point_from_index(point_index));
+            m_bbox_verts.push_back(point_from_index(point_index ^ dim_mask));
+        }
+
+    // Create, set up and submit draw request.
+    MDrawRequest request = info.getPrototype(*this);
+
+    const M3dView::ColorTable activeColorTable = M3dView::kActiveColors;
+    const M3dView::ColorTable dormantColorTable = M3dView::kDormantColors;
+
+    constexpr int LEAD_COLOR = 18;
+    constexpr int ACTIVE_COLOR = 15;
+    constexpr int ACTIVE_AFFECTED_COLOR = 8;
+    constexpr int DORMANT_COLOR = 4;
+    constexpr int HILITE_COLOR = 17;
+    constexpr int DORMANT_VERTEX_COLOR = 8;
+    constexpr int ACTIVE_VERTEX_COLOR = 16;
+
+    const M3dView::DisplayStatus displayStatus = info.displayStatus();
+    switch (displayStatus)
+    {
+    case M3dView::kLead:
+        request.setColor(LEAD_COLOR, activeColorTable);
+        break;
+    case M3dView::kActive:
+        request.setColor(ACTIVE_COLOR, activeColorTable);
+        break;
+    case M3dView::kActiveAffected:
+        request.setColor(ACTIVE_AFFECTED_COLOR, activeColorTable);
+        break;
+    case M3dView::kDormant:
+        request.setColor(DORMANT_COLOR, dormantColorTable);
+        break;
+    case M3dView::kHilite:
+        request.setColor(HILITE_COLOR, activeColorTable);
+        break;
+    default:
+        break;
+    }
+
+    queue.add(request);
+}
+
+namespace {
+    struct GLDrawGuard
+    {
+        GLDrawGuard(M3dView& view);
+        ~GLDrawGuard();
+    private:
+        struct SavedState
+        {
+            bool light_on;
+        } m_saved_state;
+        M3dView& m_view;
+    };
+
+    GLDrawGuard::GLDrawGuard(M3dView& view) : m_view(view)
+    {
+        m_view.beginGL();
+        m_saved_state.light_on = glIsEnabled(GL_LIGHTING);
+    }
+    GLDrawGuard::~GLDrawGuard()
+    {
+        if (m_saved_state.light_on)
+            glEnable(GL_LIGHTING);
+        else
+            glDisable(GL_LIGHTING);
+        m_view.endGL();
+    }
+} // unnamed namespace
+
+void VDBVisualizerShapeUI::draw(
+        const MDrawRequest& request,
+        M3dView& view) const
+{
+    GLDrawGuard draw_guard(view);
+
+    glDisable(GL_LIGHTING);
+
+    glBegin(GL_LINES);
+    for (const auto& v : m_bbox_verts)
+        glVertex3f(v.x, v.y, v.z);
+    glEnd();
 }
 
 namespace {

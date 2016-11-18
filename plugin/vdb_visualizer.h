@@ -28,6 +28,17 @@ public:
             MPointArray& worldSpaceSelectPts) const;
 
     virtual bool canDrawUV() const;
+
+    virtual void getDrawRequests(
+            const MDrawInfo & info,
+            bool objectAndActiveOnly,
+            MDrawRequestQueue & requests);
+    virtual void draw(
+            const MDrawRequest & request,
+            M3dView & view) const;
+
+private:
+    std::vector<MFloatVector> m_bbox_verts;
 };
 
 class VDBVisualizerShape : public MPxSurfaceShape {
