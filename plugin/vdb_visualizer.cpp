@@ -15,17 +15,17 @@
 #include "../util/node_ids.h"
 
 #include <maya/MArgDatabase.h>
-#include <maya/MFnNumericAttribute.h>
-#include <maya/MFnTypedAttribute.h>
-#include <maya/MFnEnumAttribute.h>
-#include <maya/MFnUnitAttribute.h>
-#include <maya/MRampAttribute.h>
-#include <maya/MTime.h>
-#include <maya/MPointArray.h>
-#include <maya/MSelectionList.h>
 #include <maya/MDagPath.h>
-#include <maya/MFnStringData.h>
 #include <maya/MFnDependencyNode.h>
+#include <maya/MFnEnumAttribute.h>
+#include <maya/MFnNumericAttribute.h>
+#include <maya/MFnStringData.h>
+#include <maya/MFnTypedAttribute.h>
+#include <maya/MFnUnitAttribute.h>
+#include <maya/MPointArray.h>
+#include <maya/MRampAttribute.h>
+#include <maya/MSelectionList.h>
+#include <maya/MTime.h>
 #include <maya/MViewport2Renderer.h>
 
 #include <array>
