@@ -730,7 +730,7 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
         {
             m_vdb_data.shadow_gain =         MPlug(tmo, s_shadow_gain).asFloat();
             m_vdb_data.shadow_sample_count = MPlug(tmo, s_shadow_sample_count).asInt();
-            m_vdb_data.per_slice_gamma =     MPlug(tmo, s_per_slice_gamma).asFloat();
+            m_vdb_data.per_slice_gamma =     MPlug(tmo, s_per_slice_gamma).asBool();
         }
 
         if (m_vdb_data.display_mode >= DISPLAY_POINT_CLOUD)
