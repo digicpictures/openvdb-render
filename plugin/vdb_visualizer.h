@@ -39,6 +39,7 @@ public:
 
 private:
     std::vector<MFloatVector> m_bbox_verts;
+    std::vector<MFloatVector> m_cross_verts;
 };
 
 class VDBVisualizerShape : public MPxSurfaceShape {

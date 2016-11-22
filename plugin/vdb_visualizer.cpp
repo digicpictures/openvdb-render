@@ -923,6 +923,7 @@ void VDBVisualizerShape::postConstructor()
 VDBVisualizerShapeUI::VDBVisualizerShapeUI()
 {
     m_bbox_verts.reserve(24);
+    m_cross_verts.reserve(8);
 }
 
 VDBVisualizerShapeUI::~VDBVisualizerShapeUI()
@@ -1054,14 +1055,27 @@ bool VDBVisualizerShapeUI::canDrawUV() const
     return false;
 }
 
+namespace {
+    constexpr int DRAW_REQUEST_BBOX = 0;
+    constexpr int DRAW_REQUEST_CROSS = 1;
+} // unnamed namespace
+
 void VDBVisualizerShapeUI::getDrawRequests(
         const MDrawInfo& info,
-        bool objectAndActiveOnly,
+        bool /*objectAndActiveOnly*/,
         MDrawRequestQueue& queue)
 {
+    {
+        static bool warning_displayed = false;
+        if (!warning_displayed)
+        {
+            std::cerr << "openvdb_render: viewport 1.0 rendering is not supported.\n";
+            warning_displayed = true;
+        }
+    }
+
     const MBoundingBox bbox = surfaceShape()->boundingBox();
 
-    // Lambda for making a vertex of the bounding box using a point index.
     const auto point_from_index = [&bbox](int point_index)
     {
         auto v = bbox.max() - bbox.min();
@@ -1071,7 +1085,7 @@ void VDBVisualizerShapeUI::getDrawRequests(
         return bbox.min() + v;
     };
 
-    // Add bounding box line list vertices to the vector.
+    // Calculate bounding box line list vertices.
     // The vector already has enough capacity (the ctor takes care of it).
     m_bbox_verts.clear();
     for (int point_index = 0; point_index < 8; ++point_index)
@@ -1089,8 +1103,18 @@ void VDBVisualizerShapeUI::getDrawRequests(
             m_bbox_verts.push_back(point_from_index(point_index ^ dim_mask));
         }
 
-    // Create, set up and submit draw request.
-    MDrawRequest request = info.getPrototype(*this);
+    // Calculate cross line list vertices.
+    // The vector already has enough capacity (the ctor takes care of it).
+    m_cross_verts.clear();
+    for (int i = 0; i < 4; i += 2)
+    {
+        m_cross_verts.push_back(point_from_index(i));
+        m_cross_verts.push_back(point_from_index(i^7));
+    }
+
+    // Draw request for the bounding box.
+
+    MDrawRequest bbox_draw_request = info.getPrototype(*this);
 
     const M3dView::ColorTable activeColorTable = M3dView::kActiveColors;
     const M3dView::ColorTable dormantColorTable = M3dView::kDormantColors;
@@ -1107,25 +1131,32 @@ void VDBVisualizerShapeUI::getDrawRequests(
     switch (displayStatus)
     {
     case M3dView::kLead:
-        request.setColor(LEAD_COLOR, activeColorTable);
+        bbox_draw_request.setColor(LEAD_COLOR, activeColorTable);
         break;
     case M3dView::kActive:
-        request.setColor(ACTIVE_COLOR, activeColorTable);
+        bbox_draw_request.setColor(ACTIVE_COLOR, activeColorTable);
         break;
     case M3dView::kActiveAffected:
-        request.setColor(ACTIVE_AFFECTED_COLOR, activeColorTable);
+        bbox_draw_request.setColor(ACTIVE_AFFECTED_COLOR, activeColorTable);
         break;
     case M3dView::kDormant:
-        request.setColor(DORMANT_COLOR, dormantColorTable);
+        bbox_draw_request.setColor(DORMANT_COLOR, dormantColorTable);
         break;
     case M3dView::kHilite:
-        request.setColor(HILITE_COLOR, activeColorTable);
+        bbox_draw_request.setColor(HILITE_COLOR, activeColorTable);
         break;
     default:
         break;
     }
 
-    queue.add(request);
+    bbox_draw_request.setToken(DRAW_REQUEST_BBOX);
+    queue.add(bbox_draw_request);
+
+    // Draw request for the red cross.
+    MDrawRequest cross_draw_request = info.getPrototype(*this);
+    cross_draw_request.setColor(MColor(1, 0, 0));
+    cross_draw_request.setToken(DRAW_REQUEST_CROSS);
+    queue.add(cross_draw_request);
 }
 
 namespace {
@@ -1144,7 +1175,7 @@ namespace {
     GLDrawGuard::GLDrawGuard(M3dView& view) : m_view(view)
     {
         m_view.beginGL();
-        m_saved_state.light_on = glIsEnabled(GL_LIGHTING);
+        m_saved_state.light_on = (glIsEnabled(GL_LIGHTING) == GL_TRUE);
     }
     GLDrawGuard::~GLDrawGuard()
     {
@@ -1164,10 +1195,20 @@ void VDBVisualizerShapeUI::draw(
 
     glDisable(GL_LIGHTING);
 
-    glBegin(GL_LINES);
-    for (const auto& v : m_bbox_verts)
-        glVertex3f(v.x, v.y, v.z);
-    glEnd();
+    if (request.token() == DRAW_REQUEST_BBOX)
+    {
+        glBegin(GL_LINES);
+        for (const auto& v : m_bbox_verts)
+            glVertex3f(v.x, v.y, v.z);
+        glEnd();
+    }
+    else if (request.token() == DRAW_REQUEST_CROSS)
+    {
+        glBegin(GL_LINES);
+        for (const auto& v : m_cross_verts)
+            glVertex3f(v.x, v.y, v.z);
+        glEnd();
+    }
 }
 
 namespace {
