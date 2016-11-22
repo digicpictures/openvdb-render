@@ -30,11 +30,11 @@ class channelController:
         self.endLayout()
 
     def create_float_ramp(self, channel, node_name):
-        self.addControl('%sInputMin' % channel, label='Input Min')
-        self.addControl('%sInputMax' % channel, label='Input Max')
         pm.mel.eval('source AEaddRampControl.mel; AEaddRampControl("%s.%sFloatRamp")' % (node_name, channel))
+        self.addControl('%sInputMin' % channel, label='Ramp Input Min')
+        self.addControl('%sInputMax' % channel, label='Ramp Input Max')
 
     def create_rgb_ramp(self, channel, node_name):
-        self.addControl('%sInputMin' % channel, label='Input Min')
-        self.addControl('%sInputMax' % channel, label='Input Max')
         pm.mel.eval('source AEaddRampControl.mel; AEaddRampControl("%s.%sRgbRamp")' % (node_name, channel))
+        self.addControl('%sInputMin' % channel, label='Ramp Input Min')
+        self.addControl('%sInputMax' % channel, label='Ramp Input Max')
