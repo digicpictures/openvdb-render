@@ -1358,7 +1358,7 @@ float3 ShadowFactor(int light_index, float3 shadow_ray_begin, float3 shadow_ray_
     return (float3(1, 1, 1) - transmittance) * (float3(1, 1, 1) - light_shadow_color[light_index]);
 }
 
-float3 LightLuminanceDirectional(int light_index, float3 pos_world, float3 direction_to_eye_world, float albedo)
+float3 LightLuminanceDirectional(int light_index, float3 pos_world, float3 direction_to_eye_world, float3 albedo)
 {
     // Light luminance at source.
     float3 lumi = light_color[light_index] * light_intensity[light_index];
@@ -1384,7 +1384,7 @@ float3 LightLuminanceDirectional(int light_index, float3 pos_world, float3 direc
     return lumi;
 }
 
-float3 LightLuminancePointSpot(int light_index, float3 pos_world, float3 direction_to_eye_world, float albedo)
+float3 LightLuminancePointSpot(int light_index, float3 pos_world, float3 direction_to_eye_world, float3 albedo)
 {
     // Light luminance at source.
     float3 lumi = light_color[light_index] * light_intensity[light_index];
@@ -1434,7 +1434,7 @@ float3 LightLuminancePointSpot(int light_index, float3 pos_world, float3 directi
     return lumi;
 }
 
-float3 LightLuminance(int light_index, float3 pos_world, float3 direction_to_eye_world, float albedo)
+float3 LightLuminance(int light_index, float3 pos_world, float3 direction_to_eye_world, float3 albedo)
 {
     int type = LightType(light_index);
     if (type == LIGHT_FLAG_POINT_LIGHT || type == LIGHT_FLAG_SPOTLIGHT)
