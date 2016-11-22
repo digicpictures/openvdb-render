@@ -83,6 +83,8 @@ public:
         }
     }
 
+    const float getInputMin() const { return m_input_min; }
+    const float getInputMax() const { return m_input_max; }
     const std::vector<MFloatVector>& getRgbRamp() const { return m_rgb_ramp; }
 private:
     int m_channel_mode_override;

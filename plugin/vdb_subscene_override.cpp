@@ -228,6 +228,11 @@ struct ChannelAssignment
 
 namespace {
 
+    MFloatVector inline mayavecFromVec2f(const openvdb::Vec2f& vec)
+    {
+        return { vec.x(), vec.y() };
+    }
+
     MFloatVector inline mayavecFromVec3f(const openvdb::Vec3f& vec)
     {
         return { vec.x(), vec.y(), vec.z() };
@@ -298,6 +303,7 @@ public:
     void updateFromData(const MFloatVector* colors, const float normalizer = 1.0f);
     void assignSamplerToShader(MHWRender::MShaderInstance* shader_instance, const MString& sampler_param);
     void assignTextureToShader(MHWRender::MShaderInstance* shader_instance, const MString& texture_param) const;
+    void assignDomainToShader(MHWRender::MShaderInstance* shader_instance, const MString& domain_param) const;
 
     operator bool() const { return m_texture.get() != nullptr; }
 
@@ -306,7 +312,9 @@ private:
 
     int m_resolution;
     std::vector<uint8_t> m_staging;
+
     TexturePtr m_texture;
+    openvdb::Vec2f m_domain;
     const SamplerState m_ramp_sampler_state;
 };
 
@@ -343,6 +351,11 @@ void RGBRampTexture::assignTextureToShader(MHWRender::MShaderInstance* shader_in
     CHECK_MSTATUS(shader_instance->setParameter(texture_param, ta));
 }
 
+void RGBRampTexture::assignDomainToShader(MHWRender::MShaderInstance* shader_instance, const MString& domain_param) const
+{
+    CHECK_MSTATUS(shader_instance->setParameter(domain_param, mayavecFromVec2f(m_domain)));
+}
+
 void RGBRampTexture::fillStagingVector(const MFloatVector *colors, const float normalizer)
 {
     for (int i = 0; i < m_resolution; ++i)
@@ -360,11 +373,15 @@ void RGBRampTexture::updateFromGradient(const Gradient& gradient)
     if (!m_texture)
         return;
 
+    // Update texture.
     const auto& sample_vector = gradient.getRgbRamp();
     if (sample_vector.size() < m_resolution)
         return;
     fillStagingVector(sample_vector.data());
     m_texture->update(m_staging.data(), false);
+
+    // Update domain.
+    m_domain = openvdb::Vec2d(gradient.getInputMin(), gradient.getInputMax());
 }
 
 void RGBRampTexture::updateFromData(const MFloatVector* colors, const float normalizer)
@@ -1073,11 +1090,13 @@ sampler1D blackbody_lut_sampler = sampler_state {
 
 // Ramps.
 
+float2    scattering_ramp_domain = float2(0, 1);
 texture   scattering_ramp_texture;
 sampler1D scattering_ramp_sampler = sampler_state {
     Texture = <scattering_ramp_texture>;
 };
 
+float2    emission_ramp_domain = float2(0, 1);
 texture   emission_ramp_texture;
 sampler1D emission_ramp_sampler = sampler_state {
     Texture = <emission_ramp_texture>;
@@ -1114,6 +1133,11 @@ bool per_slice_gamma = false;
 
 #define EPS 1e-7f
 #define EPS3 float3(EPS, EPS, EPS)
+
+float unlerp(float a, float b, float x)
+{
+    return (x - a) / (b - a);
+}
 
 float MaxComponent(float3 v)
 {
@@ -1192,7 +1216,7 @@ float3 SampleScatteringTexture(float3 pos_model, float lod_scale_model)
 
     float3 res = scattering_color;
     if (scattering_color_source == COLOR_SOURCE_RAMP)
-        res = SampleColorRamp(scattering_ramp_sampler, channel_value);
+        res = SampleColorRamp(scattering_ramp_sampler, unlerp(scattering_ramp_domain.x, scattering_ramp_domain.y, channel_value));
     res *= scattering_intensity;
 
     if (use_scattering_texture)
@@ -1242,7 +1266,7 @@ float3 SampleEmissionTexture(float3 pos_model, float lod_scale_model)
 
     float3 res = emission_color;
     if (emission_color_source == COLOR_SOURCE_RAMP)
-        res = SampleColorRamp(emission_ramp_sampler, channel_value);
+        res = SampleColorRamp(emission_ramp_sampler, unlerp(emission_ramp_domain.x, emission_ramp_domain.y, channel_value));
     res *= emission_intensity;
 
     if (use_emission_texture)
@@ -1942,8 +1966,10 @@ bool SlicedDisplay::update(MHWRender::MSubSceneContainer& container, const VDBSu
     // Update ramps.
     m_scattering_ramp.updateFromGradient(data.scattering_channel.gradient);
     m_scattering_ramp.assignTextureToShader(m_volume_shader.get(), "scattering_ramp_texture");
+    m_scattering_ramp.assignDomainToShader(m_volume_shader.get(), "scattering_ramp_domain");
     m_emission_ramp.updateFromGradient(data.emission_channel.gradient);
     m_emission_ramp.assignTextureToShader(m_volume_shader.get(), "emission_ramp_texture");
+    m_emission_ramp.assignDomainToShader(m_volume_shader.get(), "emission_ramp_domain");
 
     // Bail if nothing has changed which affects the volume textures.
     if (data.change_set == ChangeSet::GRADIENT)
