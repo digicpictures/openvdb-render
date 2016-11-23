@@ -1,7 +1,8 @@
 #pragma once
 
-#include <maya/MPxSubSceneOverride.h>
+#include <array>
 #include <memory>
+#include <maya/MPxSubSceneOverride.h>
 
 #include "vdb_visualizer.h"
 #include "vdb_subscene_utils.hpp"

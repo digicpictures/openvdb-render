@@ -95,7 +95,7 @@ set_target_properties(${PLUGIN_NAME} PROPERTIES PREFIX "")
 if (WIN32)
     set_target_properties(${PLUGIN_NAME} PROPERTIES SUFFIX ".mll")
 endif ()
-target_link_libraries(${PLUGIN_NAME} ${MAYA_LIBS} GLEW GL OpenVDB cg)
+target_link_libraries(${PLUGIN_NAME} ${MAYA_LIBS} GL OpenVDB cg)
 
 cotire(${PLUGIN_NAME})
 

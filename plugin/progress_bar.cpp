@@ -1,5 +1,7 @@
 #include "progress_bar.h"
 
+#include <maya/MGlobal.h>
+
 #include "vdb_maya_utils.hpp"
 
 ProgressBar::ProgressBar(const MString& msg, const uint32_t max_progress, const bool is_interruptible)

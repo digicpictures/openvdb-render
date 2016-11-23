@@ -180,7 +180,7 @@ private:
 constexpr float LINEAR_FROM_SRGB_EXPONENT = 2.2f;
 inline void LinearFromSRGB(float* data, size_t n)
 {
-    for (int i = 0; i < n; ++i)
+    for (size_t i = 0; i < n; ++i)
         data[i] = std::pow(data[i], LINEAR_FROM_SRGB_EXPONENT);
 }
 

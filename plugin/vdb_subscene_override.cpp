@@ -298,7 +298,7 @@ private:
 class RGBRampTexture
 {
 public:
-    RGBRampTexture(int resolution, const MFloatVector* colors = nullptr);
+    RGBRampTexture(size_t resolution, const MFloatVector* colors = nullptr);
     void updateFromGradient(const Gradient& gradient);
     void updateFromData(const MFloatVector* colors, const float normalizer = 1.0f);
     void assignSamplerToShader(MHWRender::MShaderInstance* shader_instance, const MString& sampler_param);
@@ -310,7 +310,7 @@ public:
 private:
     void fillStagingVector(const MFloatVector* colors, const float normalizer = 1.0f);
 
-    int m_resolution;
+    size_t m_resolution;
     std::vector<uint8_t> m_staging;
 
     TexturePtr m_texture;
@@ -318,7 +318,7 @@ private:
     const SamplerState m_ramp_sampler_state;
 };
 
-RGBRampTexture::RGBRampTexture(int resolution, const MFloatVector *colors)
+RGBRampTexture::RGBRampTexture(size_t resolution, const MFloatVector *colors)
     : m_resolution(resolution), m_staging(4 * resolution, 0),
     m_ramp_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexClamp)
 {
@@ -358,7 +358,7 @@ void RGBRampTexture::assignDomainToShader(MHWRender::MShaderInstance* shader_ins
 
 void RGBRampTexture::fillStagingVector(const MFloatVector *colors, const float normalizer)
 {
-    for (int i = 0; i < m_resolution; ++i)
+    for (size_t i = 0; i < m_resolution; ++i)
     {
         auto srgb_color = SRGBFromLinear(colors[i] / normalizer);
         m_staging[4 * i + 0] = uint8_t(srgb_color.x * 255);
@@ -420,7 +420,7 @@ private:
 
     MHWRender::MPxSubSceneOverride& m_parent;
 
-    static constexpr unsigned int MAX_LIGHT_COUNT = 16;
+    static const unsigned int MAX_LIGHT_COUNT;
     ShaderPtr m_volume_shader;
 
     std::unordered_map<std::string, std::weak_ptr<VolumeChannel>> m_channel_cache;
@@ -432,7 +432,7 @@ private:
     VolumeSampler m_volume_sampler;
 
     // Must be the same as Gradient resolution.
-    static constexpr int RAMP_RESOLUTION = 128;
+    static const unsigned int RAMP_RESOLUTION;
     RGBRampTexture m_scattering_ramp;
     RGBRampTexture m_emission_ramp;
 
@@ -448,6 +448,8 @@ private:
     static void preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& renderItemList, MHWRender::MShaderInstance* shaderInstance);
     static const std::string s_effect_code;
 };
+const unsigned int SlicedDisplay::MAX_LIGHT_COUNT = 16;
+const unsigned int SlicedDisplay::RAMP_RESOLUTION = 128;
 
 // === VDBSubSceneOverrideData ====================================================
 
@@ -1569,9 +1571,11 @@ namespace {
 } // unnamed namespace
 
 SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
-    : m_parent(parent), m_enabled(false), m_selected(false), m_scattering_ramp(RAMP_RESOLUTION), m_emission_ramp(RAMP_RESOLUTION),
-    m_density_channel("density"), m_scattering_channel("scattering"), m_transparency_channel("transparency"), m_emission_channel("emission"), m_temperature_channel("temperature"),
-    m_volume_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexBorder)
+    : m_parent(parent),
+    m_density_channel("density"), m_scattering_channel("scattering"), m_emission_channel("emission"), m_transparency_channel("transparency"), m_temperature_channel("temperature"),
+    m_scattering_ramp(RAMP_RESOLUTION), m_emission_ramp(RAMP_RESOLUTION),
+    m_volume_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexBorder),
+    m_enabled(false), m_selected(false)
 {
     const MHWRender::MShaderManager* shader_manager = get_shader_manager();
     if (!shader_manager)
@@ -1754,9 +1758,9 @@ void SlicedDisplay::updateSliceGeo(const VDBSubSceneOverrideData& data)
 void SlicedDisplay::updateBBox(const MBoundingBox& bbox)
 {
     const auto extents = bbox.max() - bbox.min();
-    constexpr auto vertex_count = 8;
+    constexpr size_t vertex_count = 8;
     MFloatVector* positions = static_cast<MFloatVector*>(m_bbox_renderable.position_buffer->acquire(vertex_count, true));
-    for (unsigned int i = 0; i < vertex_count; ++i) {
+    for (size_t i = 0; i < vertex_count; ++i) {
         positions[i] = bbox.min() + MVector((i & 1) * extents.x, ((i & 2) >> 1) * extents.y, ((i & 4) >> 2) * extents.z);
     }
     m_bbox_renderable.position_buffer->commit(positions);

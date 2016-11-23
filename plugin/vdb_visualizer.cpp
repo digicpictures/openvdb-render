@@ -209,12 +209,15 @@ namespace {
 VDBVisualizerData::VDBVisualizerData()
     : bbox(MPoint(-1.0, -1.0, -1.0), MPoint(1.0, 1.0, 1.0)),
     vdb_file(nullptr),
+    update_trigger(-1),
+    display_mode(DISPLAY_AXIS_ALIGNED_BBOX),
     point_size(std::numeric_limits<float>::infinity()),
     point_jitter(std::numeric_limits<float>::infinity()),
     point_skip(-1),
-    update_trigger(-1),
     max_slice_count(-1),
-    display_mode(DISPLAY_AXIS_ALIGNED_BBOX)
+    shadow_gain(-1),
+    shadow_sample_count(-1),
+    per_slice_gamma(false)
 {
 }
 
@@ -257,7 +260,7 @@ MStatus VDBVisualizerShape::compute(const MPlug& plug, MDataBlock& dataBlock)
 
     if (plug == s_out_vdb_path)
     {
-        MayaPathSpec vdb_path_spec = dataBlock.inputValue(s_vdb_path).asString().asChar();
+        auto vdb_path_spec = MayaPathSpec(dataBlock.inputValue(s_vdb_path).asString().asChar());
         std::string vdb_path = vdb_path_spec.getPath();
 
         if (vdb_path_spec.hasFrameField())
@@ -958,7 +961,7 @@ bool VDBVisualizerShapeUI::select(MSelectInfo& selectInfo, MSelectionList& selec
         return { static_cast<float>(x_pos), static_cast<float>(y_pos) };
     };
 
-    const std::array<MPoint, 8> world_points = {
+    const std::array<MPoint, 8> world_points = {{
             min,                          // 000
             MPoint(min.x, max.y, min.z),  // 010
             MPoint(min.x, max.y, max.z),  // 011
@@ -967,7 +970,7 @@ bool VDBVisualizerShapeUI::select(MSelectInfo& selectInfo, MSelectionList& selec
             MPoint(max.x, max.y, min.z),  // 110
             max,                          // 111
             MPoint(max.x, min.y, max.z)   // 101
-    };
+    }};
 
     typedef openvdb::Vec2f Point2D;
     Point2D points[8];
@@ -975,11 +978,11 @@ bool VDBVisualizerShapeUI::select(MSelectInfo& selectInfo, MSelectionList& selec
     for (int i = 0; i < 8; ++i)
         points[i] = convert_world_to_screen(world_points[i]);
 
-    static const std::array<std::pair<int, int>, 12> line_array = {
+    static const std::array<std::pair<int, int>, 12> line_array = {{
             std::make_pair(0, 1), std::make_pair(1, 2), std::make_pair(2, 3), std::make_pair(3, 0),
             std::make_pair(4, 5), std::make_pair(5, 6), std::make_pair(6, 7), std::make_pair(7, 4),
             std::make_pair(0, 4), std::make_pair(1, 5), std::make_pair(2, 6), std::make_pair(3, 7)
-    };
+    }};
 
     for (auto line : line_array)
     {
@@ -994,23 +997,17 @@ bool VDBVisualizerShapeUI::select(MSelectInfo& selectInfo, MSelectionList& selec
         }
     }
 
-    // No lines intersect the selection rectangle.
-    // Check if the selection rectangle is within the projected bbox (enough to check a single point).
-    auto vec2f_from_pair = [](const std::pair<float, float>& in) -> Point2D {
-        return { in.first, in.second };
-    };
-
     typedef std::vector<Point2D> Polygon2D;
     auto is_point_inside_polygon = [](const Point2D& test_point, const Polygon2D& polygon)
     {
-        auto cross2d = [](const auto& v1, const auto& v2)
+        auto cross2d = [](const Point2D& v1, const Point2D& v2)
         {
             return v1.x() * v2.y() - v1.y() * v2.x();
         };
 
         const auto& last_point = polygon.back();
         const bool leftOfLastEdge = cross2d(polygon[0] - last_point, test_point - last_point) >= 0;
-        for (int point_idx = 0; point_idx < polygon.size() - 1; ++point_idx)
+        for (size_t point_idx = 0; point_idx < polygon.size() - 1; ++point_idx)
         {
             const auto& v1 = polygon[point_idx];
             const auto& v2 = polygon[point_idx + 1];
@@ -1124,8 +1121,6 @@ void VDBVisualizerShapeUI::getDrawRequests(
     constexpr int ACTIVE_AFFECTED_COLOR = 8;
     constexpr int DORMANT_COLOR = 4;
     constexpr int HILITE_COLOR = 17;
-    constexpr int DORMANT_VERTEX_COLOR = 8;
-    constexpr int ACTIVE_VERTEX_COLOR = 16;
 
     const M3dView::DisplayStatus displayStatus = info.displayStatus();
     switch (displayStatus)
