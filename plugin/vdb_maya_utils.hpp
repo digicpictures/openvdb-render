@@ -4,6 +4,7 @@
 
 #include <openvdb/openvdb.h>
 
+#include <maya/MFileObject.h>
 #include <maya/MFloatVector.h>
 #include <maya/MBoundingBox.h>
 #include <maya/MMatrix.h>
@@ -141,6 +142,9 @@ inline MString format(const MString& format, Args&&... args)
 
 class MayaPathSpec
 {
+private:
+    static inline std::string resolvePath(const std::string& path);
+
 public:
     MayaPathSpec(const std::string& path_spec) : m_path_spec(path_spec)
     {
@@ -155,7 +159,7 @@ public:
 
     bool hasFrameField() const { return m_field_begin != std::string::npos; }
 
-    std::string getPath() const { return m_path_spec; }
+    std::string getPath() const { return resolvePath(m_path_spec); }
     std::string getPath(int frame_num) const
     {
         assert(hasFrameField());
@@ -167,7 +171,7 @@ public:
 
         std::string path = m_path_spec;
         path.replace(m_field_begin, m_field_length, ss.str());
-        return path;
+        return resolvePath(path);
     }
 
 private:
@@ -176,6 +180,16 @@ private:
 
     static constexpr char FIELD_CHAR = '#';
 };
+inline std::string MayaPathSpec::resolvePath(const std::string& path)
+{
+    bool resolved_file_exists;
+    const auto resolved_path = MFileObject::getResolvedFullName(path.c_str(), resolved_file_exists, MFileObject::kDirMap).asChar();
+    if (!resolved_file_exists)
+        return path;
+
+    return resolved_path;
+
+}
 
 constexpr float LINEAR_FROM_SRGB_EXPONENT = 2.2f;
 inline void LinearFromSRGB(float* data, size_t n)
