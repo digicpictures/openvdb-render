@@ -92,15 +92,15 @@ inline bool read_transformed_bounding_box(openvdb::GridBase::ConstPtr grid, MBou
 }
 
 openvdb::CoordBBox inline
-getIndexSpaceBoundingBox(const openvdb::GridBase* grid)
+getIndexSpaceBoundingBox(const openvdb::GridBase& grid)
 {
-    const auto file_bbox_min = openvdb::Coord(grid->metaValue<openvdb::Vec3i>("file_bbox_min"));
+    const auto file_bbox_min = openvdb::Coord(grid.metaValue<openvdb::Vec3i>("file_bbox_min"));
     if (file_bbox_min.x() == std::numeric_limits<int>::max() ||
         file_bbox_min.y() == std::numeric_limits<int>::max() ||
         file_bbox_min.z() == std::numeric_limits<int>::max()) {
         return {};
     }
-    const auto file_bbox_max = openvdb::Coord(grid->metaValue<openvdb::Vec3i>("file_bbox_max"));
+    const auto file_bbox_max = openvdb::Coord(grid.metaValue<openvdb::Vec3i>("file_bbox_max"));
     if (file_bbox_max.x() == std::numeric_limits<int>::min() ||
         file_bbox_max.y() == std::numeric_limits<int>::min() ||
         file_bbox_max.z() == std::numeric_limits<int>::min()) {

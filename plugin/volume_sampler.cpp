@@ -1,174 +1,178 @@
 #include "volume_sampler.h"
 
 #include <algorithm>
-#include <random>
-
-#include <maya/MHWGeometry.h>
-#include <maya/MShaderManager.h>
-#include <maya/MTextureManager.h>
 
 #include <openvdb/tools/Dense.h>
 #include <openvdb/tools/GridTransformer.h>
 #include <openvdb/tools/Interpolation.h>
 #include <openvdb/tools/ValueTransformer.h>
 #include <openvdb/tree/LeafManager.h>
-#include <openvdb/Exceptions.h>
+#include <openvdb/Types.h>
 
 #include <tbb/parallel_for.h>
 
 #include "progress_bar.h"
 #include "vdb_maya_utils.hpp"
 
-using namespace MHWRender;
-using namespace openvdb;
+void VolumeSampler::sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output)
+{
+    assert(output);
+
+    // Calculate number of LOD levels.
+    const auto grid_extents = getIndexSpaceBoundingBox(grid).extents().asVec3d();
+    const auto num_levels = size_t(openvdb::math::Ceil(std::log2(maxComponentValue(grid_extents))));
+
+    if (num_levels > 1)
+    {
+        // Create and sample MultiResGrid.
+        openvdb::tools::MultiResGrid<openvdb::FloatTree> multires(num_levels, grid);
+        sampleMultiResGrid(multires, texture_extents, output);
+    }
+    else
+    {
+        // Use box filter.
+        sampleGridWithBoxFilter(grid, texture_extents, output);
+    }
+}
 
 namespace {
 
-    MHWRender::MTextureManager* getTextureManager()
+    template <typename T>
+    struct ValueRange
     {
-        return MHWRender::MRenderer::theRenderer()->getTextureManager();
+        T min, max;
+        ValueRange() noexcept : min(std::numeric_limits<T>::max()), max(std::numeric_limits<T>::min()) {}
+        ValueRange(T min_, T max_) noexcept : min(min_), max(max_) {}
+        void update(T value) { min = std::min(min, value); max = std::max(max, value); }
+        void update(const ValueRange<T>& value_range) { min = std::min(min, value_range.min); max = std::max(max, value_range.max); }
+        ValueRange merge(const ValueRange<T>& value_range) { return{ std::min(min, value_range.min), std::max(max, value_range.max) }; }
+    };
+    typedef ValueRange<float> FloatRange;
+
+    void setHeader(const FloatRange& value_range, const openvdb::BBoxd& bbox, VolumeBufferHeader& output)
+    {
+        output.value_range[0] = value_range.min;
+        output.value_range[1] = value_range.max;
+        const auto& extents = bbox.extents();
+        output.size[0] = float(extents.x());
+        output.size[1] = float(extents.y());
+        output.size[2] = float(extents.z());
+        const auto& origin = bbox.min();
+        output.origin[0] = float(origin.x());
+        output.origin[1] = float(origin.y());
+        output.origin[2] = float(origin.z());
+    }
+
+    template <typename SamplingFunc>
+    void sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func, ProgressBar *progress_bar, float *out_voxel_array, FloatRange& out_value_range)
+    {
+        const auto domain = openvdb::CoordBBox(openvdb::Coord(), extents - openvdb::Coord(1, 1, 1));
+        const auto num_voxels = domain.volume();
+
+        // Initialize progress bar.
+        if (progress_bar)
+            progress_bar->setMaxProgress(num_voxels);
+
+        // Sample on a lattice.
+        typedef tbb::enumerable_thread_specific<FloatRange> PerThreadRange;
+        PerThreadRange per_thread_ranges;
+        const auto stride = openvdb::Vec3i(1, extents.x(), extents.x() * extents.y());
+        tbb::atomic<bool> cancelled;
+        cancelled = false;
+        tbb::parallel_for(domain, [&sampling_func, &stride, progress_bar = progress_bar, &cancelled,
+            &per_thread_ranges, output = out_voxel_array](const openvdb::CoordBBox& bbox) {
+            const auto local_extents = bbox.extents();
+            const auto progress_step = local_extents.x() * local_extents.y();
+
+            // Loop through local bbox.
+            PerThreadRange::reference this_thread_range = per_thread_ranges.local();
+            for (auto z = bbox.min().z(); z <= bbox.max().z(); ++z) {
+                for (auto y = bbox.min().y(); y <= bbox.max().y(); ++y) {
+                    for (auto x = bbox.min().x(); x <= bbox.max().x(); ++x) {
+                        if (cancelled)
+                            return;
+                        const auto domain_index = openvdb::Vec3i(x, y, z);
+                        const auto linear_index = domain_index.dot(stride);
+                        const auto sample_value = sampling_func(domain_index);
+                        output[linear_index] = sample_value;
+                        this_thread_range.update(sample_value);
+                    }
+                }
+
+                // Report progress.
+                if (progress_bar)
+                {
+                    if (progress_bar->isCancelled())
+                        cancelled = true;
+                    progress_bar->addProgress(progress_step);
+                }
+            }
+        });
+        if (cancelled)
+            return;
+
+        // Merge per-thread value ranges.
+        out_value_range = FloatRange();
+        for (const FloatRange& per_thread_range : per_thread_ranges) {
+            out_value_range.update(per_thread_range);
+        }
+
+        // Remap sample values to [0, 1].
+        typedef tbb::blocked_range<size_t> tbb_range;
+        tbb::parallel_for(tbb_range(0, num_voxels),
+            [buffer = out_voxel_array, &out_value_range](const tbb_range& range) {
+            for (auto i = range.begin(); i < range.end(); ++i) {
+                buffer[i] = unlerp(out_value_range.min, out_value_range.max, buffer[i]);
+            }
+        });
+
+        if (progress_bar)
+            progress_bar->setProgress(100);
     }
 
 } // unnamed namespace
 
-void VolumeSampler::sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, ProgressBar *progress_bar)
+void VolumeSampler::sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output)
 {
-    if (!m_texture)
-        return;
+    assert(output);
 
+    // Set up sampling func.
     const auto sampler = openvdb::tools::GridSampler<openvdb::FloatGrid, openvdb::tools::BoxSampler>(grid);
-    const auto world_bbox = grid.transform().indexToWorld(getIndexSpaceBoundingBox(&grid));
+    const auto bbox_world = grid.transform().indexToWorld(getIndexSpaceBoundingBox(grid));
     const auto domain_extents = texture_extents.asVec3d();
-    auto sampling_func = [&sampler, &world_bbox, &domain_extents](const openvdb::Vec3d& domain_index) {
-        const auto sample_pos_ws = (domain_index + 0.5) / domain_extents * world_bbox.extents() + world_bbox.min();
+    auto sampling_func = [&sampler, &bbox_world, &domain_extents](const openvdb::Vec3d& domain_index) {
+        const auto sample_pos_ws = (domain_index + 0.5) / domain_extents * bbox_world.extents() + bbox_world.min();
         return sampler.wsSample(sample_pos_ws);
     };
-    sampleVolume(texture_extents, sampling_func, progress_bar);
+
+    FloatRange value_range;
+    sampleVolume(texture_extents, sampling_func, m_progress_bar, output.voxel_array, value_range);
+    setHeader(value_range, bbox_world, *output.header);
 }
 
-void VolumeSampler::sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents, ProgressBar *progress_bar)
+void VolumeSampler::sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output)
 {
-    if (!m_texture)
-        return;
+    assert(output);
 
     // Calculate LOD level.
-    const auto index_bbox = getIndexSpaceBoundingBox(multires.grid(0).get());
+    const auto index_bbox = getIndexSpaceBoundingBox(*multires.grid(0));
     const auto grid_extents = index_bbox.extents().asVec3d();
     const auto coarse_voxel_size = grid_extents / texture_extents.asVec3d();
     const auto max_levels = openvdb::math::Ceil(std::log2(maxComponentValue(grid_extents)));
     const auto lod_level = clamp(std::log2(maxComponentValue(coarse_voxel_size)), 0, max_levels);
 
-    const auto world_bbox = multires.grid(0)->transform().indexToWorld(index_bbox);
+    // Set up sampling func.
+    const auto bbox_world = multires.grid(0)->transform().indexToWorld(index_bbox);
     const auto domain_extents = texture_extents.asVec3d();
-    auto sampling_func = [&multires, lod_level, &world_bbox, &domain_extents](const openvdb::Vec3d& domain_index) {
-        const auto sample_pos_ws = (domain_index + 0.5) / domain_extents * world_bbox.extents() + world_bbox.min();
+    auto sampling_func = [&multires, lod_level, &bbox_world, &domain_extents](const openvdb::Vec3d& domain_index) {
+        const auto sample_pos_ws = (domain_index + 0.5) / domain_extents * bbox_world.extents() + bbox_world.min();
         const auto sample_pos_is = multires.transform().worldToIndex(sample_pos_ws);
         return multires.sampleValue<1>(sample_pos_is, lod_level);
     };
-    sampleVolume(texture_extents, sampling_func, progress_bar);
-}
 
-template <typename SamplingFunc>
-void VolumeSampler::sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func, ProgressBar *progress_bar)
-{
-    if (!m_texture)
-        return;
-
-    const auto domain = openvdb::CoordBBox(openvdb::Coord(), extents - openvdb::Coord(1, 1, 1));
-    m_buffer.resize(domain.volume());
-
-    // Initialize progress bar.
-    if (progress_bar)
-        progress_bar->setMaxProgress(m_buffer.size());
-
-    // Sample on a lattice.
-    typedef tbb::enumerable_thread_specific<FloatRange> PerThreadRange;
-    PerThreadRange per_thread_ranges;
-    const auto stride = openvdb::Vec3i(1, extents.x(), extents.x() * extents.y());
-    tbb::atomic<bool> cancelled;
-    cancelled = false;
-    tbb::parallel_for(domain, [&sampling_func, &stride, progress_bar, &cancelled,
-                               &per_thread_ranges, output = m_buffer.data()](const CoordBBox& bbox) {
-        const auto local_extents = bbox.extents();
-        const auto progress_step = local_extents.x() * local_extents.y();
-
-        // Loop through local bbox.
-        PerThreadRange::reference this_thread_range = per_thread_ranges.local();
-        for (auto z = bbox.min().z(); z <= bbox.max().z(); ++z) {
-            for (auto y = bbox.min().y(); y <= bbox.max().y(); ++y) {
-                for (auto x = bbox.min().x(); x <= bbox.max().x(); ++x) {
-                    if (cancelled)
-                        return;
-                    const auto domain_index = openvdb::Vec3i(x, y, z);
-                    const auto linear_index = domain_index.dot(stride);
-                    const auto sample_value = sampling_func(domain_index);
-                    output[linear_index] = sample_value;
-                    this_thread_range.update(sample_value);
-                }
-            }
-
-            // Report progress.
-            if (progress_bar)
-            {
-                if (progress_bar->isCancelled())
-                    cancelled = true;
-                progress_bar->addProgress(progress_step);
-            }
-        }
-    });
-    if (cancelled)
-        return;
-
-    // Merge per-thread value ranges.
     FloatRange value_range;
-    for (const FloatRange& per_thread_range : per_thread_ranges) {
-        value_range.update(per_thread_range);
-    }
-
-    // Remap sample values to [0, 1].
-    typedef tbb::blocked_range<size_t> tbb_range;
-    tbb::parallel_for(tbb_range(0, m_buffer.size()),
-                      [buffer = m_buffer.data(), &value_range](const tbb_range& range) {
-        for (auto i = range.begin(); i < range.end(); ++i) {
-            buffer[i] = unlerp(value_range.min, value_range.max, buffer[i]);
-        }
-    });
-
-    if (progress_bar)
-        progress_bar->setProgress(100);
-
-    // Update the attached texture.
-    bool inplace_updateable = false;
-    if (m_texture->texture_ptr)
-    {
-        MHWRender::MTextureDescription desc;
-        m_texture->texture_ptr->textureDescription(desc);
-        inplace_updateable = int(desc.fWidth) == extents.x() &&
-                             int(desc.fHeight) == extents.y() &&
-                             int(desc.fDepth) == extents.z();
-    }
-
-    if (inplace_updateable)
-        m_texture->texture_ptr->update(m_buffer.data(), true);
-    else
-        m_texture->texture_ptr.reset(acquireVolumeTexture(extents, m_buffer.data()));
-
-    m_texture->value_range = value_range;
+    sampleVolume(texture_extents, sampling_func, m_progress_bar, output.voxel_array, value_range);
+    setHeader(value_range, bbox_world, *output.header);
 }
 
-MHWRender::MTexture*
-VolumeSampler::acquireVolumeTexture(const openvdb::Coord& texture_extents, const float* pixel_data)
-{
-    MHWRender::MTextureDescription texture_desc;
-    texture_desc.fWidth = texture_extents.x();
-    texture_desc.fHeight = texture_extents.y();
-    texture_desc.fDepth = texture_extents.z();
-    texture_desc.fBytesPerRow = 4 * texture_desc.fWidth;
-    texture_desc.fBytesPerSlice = texture_desc.fBytesPerRow * texture_desc.fHeight;
-    texture_desc.fMipmaps = 0;
-    texture_desc.fArraySlices = 1;
-    texture_desc.fFormat = kR32_FLOAT;
-    texture_desc.fTextureType = kVolumeTexture;
-    texture_desc.fEnvMapType = kEnvNone;
-    return getTextureManager()->acquireTexture("", texture_desc, pixel_data, true);
-}
+const size_t VolumeBufferHandle::VOXEL_ARRAY_OFFSET = sizeof(VolumeBufferHeader) / sizeof(float);

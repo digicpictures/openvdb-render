@@ -2,7 +2,10 @@
 
 #include <array>
 #include <memory>
+
 #include <maya/MPxSubSceneOverride.h>
+#include <maya/MPxCommand.h>
+#include <maya/MSyntax.h>
 
 #include "vdb_visualizer.h"
 #include "vdb_subscene_utils.hpp"
@@ -50,4 +53,16 @@ private:
     sampler_mem_area m_attenuation_sampler;
 
     std::unique_ptr<SlicedDisplay> m_sliced_display;
+};
+
+class VDBVolumeCacheMemonyLimitCmd : public MPxCommand
+{
+public:
+    VDBVolumeCacheMemonyLimitCmd() {}
+    ~VDBVolumeCacheMemonyLimitCmd() {}
+
+    static void* creator() { return new VDBVolumeCacheMemonyLimitCmd(); }
+    static MSyntax create_syntax();
+
+    MStatus doIt(const MArgList& args);
 };

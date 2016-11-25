@@ -1,7 +1,20 @@
 import pymel.core as pm
+import maya.cmds
 import re, os
 
 from channelController import channelController
+
+
+class CacheLimit:
+    def __init__(self):
+        self.limit = 1
+
+    def get(self):
+        return self.limit
+
+    def set(self, new_limit):
+        self.limit = new_limit
+
 
 class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
     def delete_ui(self, ui):
@@ -146,19 +159,37 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
                               changeCommand=lambda val: pm.setAttr(param_name, val), buttonCommand=lambda: AEvdb_visualizerTemplate.press_vdb_path(param_name))
 
     def create_max_slice_count(self, param_name):
-        pm.floatSliderButtonGrp("OpenVDBMaxSliceCount", label="Slice Count", buttonLabel="Update",
+        pm.floatSliderButtonGrp("VDBVisualizerMaxSliceCount", label="Slice Count", buttonLabel="Update",
                                 field=True, columnWidth4=(144,70,0,20), columnAttach=(1,'right',5),
-                                minValue=4, maxValue=256, precision=0, step=1)
+                                minValue=4, maxValue=256, precision=0, step=1, sliderStep=1, fieldStep=1)
         self.update_max_slice_count(param_name)
 
     def update_max_slice_count(self, param_name):
         max_slice_count = pm.getAttr(param_name)
         node_name = param_name.split(".")[0]
         update_command_mel = 'vdb_visualizer_update_max_slice_count -n "%s";' % node_name
-        pm.floatSliderButtonGrp("OpenVDBMaxSliceCount", edit=True, value=max_slice_count,
+        pm.floatSliderButtonGrp("VDBVisualizerMaxSliceCount", edit=True, value=max_slice_count,
                                 changeCommand=lambda val: pm.setAttr(param_name, val),
                                 buttonCommand=lambda: pm.mel.eval(update_command_mel))
 
+    def create_volume_cache_limit_slider(self, param_name):
+        pm.floatSliderButtonGrp("VDBVisualizerVolumeCacheLimit", label="Volume Cache Limit (GB)", buttonLabel="Update",
+                                field=True, columnWidth4=(144,70,0,20), columnAttach=(1,'right',5),
+                                minValue=0, maxValue=10, precision=0, step=1, sliderStep=1, fieldStep=1)
+        self.update_volume_cache_limit_slider(param_name)
+
+    def update_volume_cache_limit_slider(self, param_name):
+        cache_limit = CacheLimit()
+
+        def button_command():
+            maya.cmds.vdb_visualizer_volume_cache_limit(edit=True, value=cache_limit.get())
+            maya.cmds.vdb_visualizer_volume_cache_limit()
+
+        control = pm.floatSliderButtonGrp("VDBVisualizerVolumeCacheLimit", edit=True,
+                                          value=maya.cmds.vdb_visualizer_volume_cache_limit(query=True),
+                                          changeCommand=lambda val: cache_limit.set(round(val)),
+                                          buttonCommand=button_command)
+        control.dragCommand(lambda val: control.setValue(round(val)))
 
     def create_channel_stats(self, param_name):
         pm.text("OpenVDBChannelStats", label=pm.getAttr(param_name), align="left")
@@ -297,6 +328,9 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.addControl("shadowGain",          label="Shadow Gain")
         self.addControl("shadowSampleCount",   label="Shadow Sample Count")
         self.addControl("perSliceGamma",       label="Gamma Correction")
+
+        self.addSeparator()
+        self.callCustom(self.create_volume_cache_limit_slider, self.update_volume_cache_limit_slider, "")
 
         self.endLayout()
 

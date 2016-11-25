@@ -2,10 +2,12 @@
 
 #define _USE_MATH_DEFINES
 #include <cmath>
+#include <map>
 #include <new>
 #include <random>
 #include <unordered_map>
 
+#include <maya/MArgList.h>
 #include <maya/MDrawContext.h>
 #include <maya/MGlobal.h>
 #include <maya/MHwGeometryUtilities.h>
@@ -22,7 +24,6 @@
 #include "volume_sampler.h"
 #include "vdb_maya_utils.hpp"
 #include "vdb_visualizer_data.h"
-
 
 namespace {
     // We have to options to code shaders, either cgfx, which is deprecated since 2012
@@ -110,7 +111,7 @@ technique Main
     }
 
 #define LOG_ERROR(msg) log_error(msg, __FILE__, __LINE__)
-    inline void log_error(const std::string& msg, const char *file_name, int line_no)
+    inline void log_error(const char *msg, const char *file_name, int line_no)
     {
 #if _DEBUG
         std::cerr << "openvdb_render error: " << file_name << ": line " << line_no << ": " << msg << std::endl;
@@ -118,9 +119,12 @@ technique Main
         std::cerr << "openvdb_render error: " << msg << std::endl;
 #endif
     }
+    inline void log_error(const MString& msg, const char *file_name, int line_no)
+    {
+        log_error(msg.asChar(), file_name, line_no);
+    }
 
 } // unnamed namespace
-
 
 // === Renderable ==========================================================
 
@@ -142,95 +146,95 @@ void Renderable::update(MHWRender::MPxSubSceneOverride& subscene_override, const
     CHECK_MSTATUS(subscene_override.setGeometryForRenderItem(*render_item, vertex_buffer_array, *index_buffer, &bbox));
 }
 
-// === VolumeChannel =======================================================
+// === VDBVolumeSpec =======================================================
 
-struct VolumeChannel
+struct VDBVolumeSpec
 {
-    typedef std::shared_ptr<VolumeChannel> Ptr;
-    typedef std::shared_ptr<const VolumeChannel> ConstPtr;
+    std::string vdb_file_name;
+    std::string vdb_file_tag; // To get different hash for different file versions.
+    std::string vdb_grid_name;
+    openvdb::Coord texture_size;
 
-    openvdb::FloatGrid::ConstPtr grid;
-    openvdb::tools::MultiResGrid<openvdb::FloatTree>::ConstPtr multires;
-    VolumeTexture volume_texture;
-
-    VolumeChannel() {}
-    VolumeChannel(VolumeChannel&&) = default;
-    VolumeChannel& operator=(VolumeChannel&&) = default;
-    bool isValid() const { return grid.get() != nullptr; }
-    void loadGrid(openvdb::io::File* vdb_file, const std::string& channel_name);
-    void sample(VolumeSampler& volume_sampler, int slice_count);
+    VDBVolumeSpec() {}
+    VDBVolumeSpec(const std::string& vdb_file_name_, const std::string& vdb_file_tag_, const std::string& vdb_grid_name_, openvdb::Coord texture_size_)
+        : vdb_file_name(vdb_file_name_), vdb_file_tag(vdb_file_tag_), vdb_grid_name(vdb_grid_name_), texture_size(texture_size_) {}
 };
 
-namespace {
-    openvdb::FloatGrid::ConstPtr loadFloatGrid(openvdb::io::File* vdb_file, const std::string& grid_name)
+namespace
+{
+
+    template<typename T> void hash_combine(size_t& seed, T const& v)
     {
-        if (!vdb_file || !vdb_file->isOpen()) {
-            return nullptr;
-        }
-
-        openvdb::GridBase::ConstPtr grid_base_ptr;
-        try {
-            grid_base_ptr = vdb_file->readGrid(grid_name);
-        }
-        catch (const openvdb::Exception& e) {
-            std::stringstream ss;
-            ss << "Error reading grid " << grid_name << ": " << e.what();
-            LOG_ERROR(ss.str());
-            return nullptr;
-        }
-
-        auto grid_ptr = openvdb::gridConstPtrCast<openvdb::FloatGrid>(grid_base_ptr);
-        if (!grid_ptr) {
-            LOG_ERROR("Grid is not a FloatGrid.");
-            return nullptr;
-        }
-
-        return grid_ptr;
+        seed ^= std::hash<T>{}(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
     }
+
 } // unnamed namespace
 
-void VolumeChannel::loadGrid(openvdb::io::File* vdb_file, const std::string& channel_name)
+namespace std
 {
-    // Load grid.
-    grid = loadFloatGrid(vdb_file, channel_name);
-    if (!grid)
-        return;
+    template <> struct hash<VDBVolumeSpec>
+    {
+        typedef VDBVolumeSpec argument_type;
+        typedef std::size_t result_type;
+        result_type operator()(argument_type const& spec) const
+        {
+            result_type res = std::hash<std::string>{}(spec.vdb_file_name);
+            hash_combine(res, spec.vdb_file_tag);
+            hash_combine(res, spec.vdb_grid_name);
+            hash_combine(res, spec.texture_size.x());
+            hash_combine(res, spec.texture_size.y());
+            hash_combine(res, spec.texture_size.z());
+            return res;
+        }
+    };
 
-    // Create multires grid.
-    const auto grid_extents = getIndexSpaceBoundingBox(grid.get()).extents().asVec3d();
-    const auto num_levels = size_t(openvdb::math::Ceil(std::log2(maxComponentValue(grid_extents))));
-    if (num_levels > 1)
-        multires.reset(new openvdb::tools::MultiResGrid<openvdb::FloatTree>(num_levels, *grid.get()));
-    else
-        multires.reset();
+    bool operator==(const VDBVolumeSpec& lhs, const VDBVolumeSpec& rhs)
+    {
+        return lhs.vdb_file_name == rhs.vdb_file_name &&
+               lhs.vdb_file_tag == rhs.vdb_file_tag &&
+               lhs.vdb_grid_name == rhs.vdb_grid_name &&
+               lhs.texture_size == rhs.texture_size;
+    }
 }
 
-void VolumeChannel::sample(VolumeSampler& volume_sampler, int slice_count)
-{
-    ProgressBar pb("vdb_visualizer: sampling grid");
-    const auto extents = openvdb::Coord(slice_count, slice_count, slice_count);
-    volume_sampler.attachTexture(&volume_texture);
-    if (multires)
-        volume_sampler.sampleMultiResGrid(*multires, extents, &pb);
-    else
-        volume_sampler.sampleGridWithBoxFilter(*grid, extents, &pb);
-}
+// === VolumeTexture =======================================================
 
-// === ChannelAssignment ===================================================
-
-struct ChannelAssignment
+struct VolumeTexture
 {
-    const char *param_prefix;
-    VolumeChannel::Ptr channel_ptr;
-    ChannelAssignment(const char *param_prefix_) : param_prefix(param_prefix_) {}
-    void assignToShader(MHWRender::MShaderInstance* shader_instance) const;
+    TexturePtr texture_ptr;
+    MFloatVector value_range;
+    MFloatVector volume_size;
+    MFloatVector volume_origin;
+    openvdb::Coord extents;
+
+    VolumeTexture() : texture_ptr(nullptr) {}
+    VolumeTexture(const VolumeTexture&) = delete;
+    VolumeTexture& operator=(const VolumeTexture&) = delete;
+    VolumeTexture(VolumeTexture&&) = default;
+    VolumeTexture& operator=(VolumeTexture&&) = default;
+
+    void acquireBuffer(const openvdb::Coord& texture_extents, const VolumeBufferHandle& volume_buffer);
+    void clear() { texture_ptr.reset(); }
+    bool isValid() const { return texture_ptr.get() != nullptr; }
+    MHWRender::MTextureAssignment& getTextureAssignment()
+    {
+        m_texture_assignment.texture = texture_ptr.get();
+        return m_texture_assignment;
+    }
+private:
+    MHWRender::MTextureAssignment m_texture_assignment;
 };
 
 namespace {
 
-    MFloatVector inline mayavecFromVec2f(const openvdb::Vec2f& vec)
+    MFloatVector inline mayavecFromArray2(float *a)
     {
-        return { vec.x(), vec.y() };
+        return {a[0], a[1]};
+    }
+
+    MFloatVector inline mayavecFromArray3(float *a)
+    {
+        return {a[0], a[1], a[2]};
     }
 
     MFloatVector inline mayavecFromVec3f(const openvdb::Vec3f& vec)
@@ -238,35 +242,376 @@ namespace {
         return { vec.x(), vec.y(), vec.z() };
     }
 
-    MFloatVector inline mayavecFromFloatRange(const FloatRange& float_range)
+} // unnamed namespace
+
+void VolumeTexture::acquireBuffer(const openvdb::Coord& texture_extents, const VolumeBufferHandle& volume_buffer)
+{
+    if (!volume_buffer)
     {
-        return { float_range.min, float_range.max };
+        clear();
+        return;
     }
 
-    MBoundingBox inline mayabboxFromBBoxd(const openvdb::BBoxd& bbox)
+    // Set metadata.
+    value_range = mayavecFromArray2(volume_buffer.header->value_range);
+    volume_size = mayavecFromArray3(volume_buffer.header->size);
+    volume_origin = mayavecFromArray3(volume_buffer.header->origin);
+
+    // If texture size didn't change, texture data can be updated in place.
+    if (extents == texture_extents)
     {
-        return { mayavecFromVec3f(bbox.min()), mayavecFromVec3f(bbox.max()) };
+        texture_ptr->update(volume_buffer.voxel_array, true);
+        extents = texture_extents;
+        return;
     }
+
+    // Otherwise a new texture has to be created.
+    MHWRender::MTextureDescription texture_desc;
+    texture_desc.fWidth = texture_extents.x();
+    texture_desc.fHeight = texture_extents.y();
+    texture_desc.fDepth = texture_extents.z();
+    texture_desc.fBytesPerRow = 4 * texture_desc.fWidth;
+    texture_desc.fBytesPerSlice = texture_desc.fBytesPerRow * texture_desc.fHeight;
+    texture_desc.fMipmaps = 0;
+    texture_desc.fArraySlices = 1;
+    texture_desc.fFormat = MHWRender::kR32_FLOAT;
+    texture_desc.fTextureType = MHWRender::kVolumeTexture;
+    texture_desc.fEnvMapType = MHWRender::kEnvNone;
+    texture_ptr.reset(get_texture_manager()->acquireTexture("", texture_desc, volume_buffer.voxel_array, true));
+    extents = texture_extents;
+}
+
+// === VolumeCache =========================================================
+
+class VolumeCache
+{
+public:
+    static VolumeCache& instance();
+    void getVolume(const VDBVolumeSpec& spec, VolumeTexture& output);
+    void setMemoryLimitBytes(size_t mem_limit_bytes);
+    size_t getMemoryLimitBytes() const { return sizeof(float) * m_mem_limit_floats; }
+    size_t getAllocatedBytes() const { return sizeof(float) * m_buffer.size(); }
+
+private:
+    struct BufferRange
+    {
+        size_t begin;
+        size_t end;
+        BufferRange(size_t begin_, size_t end_) : begin(begin_), end(end_) {}
+    };
+
+    // Objects are stored contiguously in a float vector.
+    std::vector<float> m_buffer;
+    size_t m_mem_limit_floats;
+    // FIFO cache eviction policy is used for its simplicity. The m_buffer_head
+    // wraps around effectively creating a ring buffer, but objects are always
+    // laid out linearly; m_buffer_head will wrap prematurely if the next object
+    // doesn't fit into m_buffer.
+    size_t m_buffer_head;
+    // Associates VDBVolumeSpec values to ranges in m_buffer.
+    // This makes the cache addressable by VDBVolumeSpec.
+    typedef std::unordered_map<VDBVolumeSpec, BufferRange> BufferMap;
+    BufferMap m_buffer_map;
+    // m_allocation_map associates buffer range offsets ('begin') to buffer
+    // map keys, so that old allocations overlapping a new one
+    // can be deleted. The map needs to be ordered.
+    std::map<size_t, VDBVolumeSpec> m_allocation_map;
+
+    VolumeCache();
+    openvdb::FloatGrid::ConstPtr loadGrid(const VDBVolumeSpec& spec);
+    void sampleGrid(const VDBVolumeSpec& spec, const openvdb::FloatGrid& grid, const VolumeBufferHandle& output);
+    VolumeBufferHandle allocate(const VDBVolumeSpec& spec);
+    void clearRange(const BufferRange& range);
+    void growBuffer(size_t minimum_buffer_size_floats);
+
+    static const size_t DEFAULT_LIMIT_FLOATS;
+    static const size_t DEFAULT_SIZE_FLOATS;
+    static const size_t GROW_AMOUNT_FLOATS;
+};
+
+namespace {
+
+    class VDBFile
+    {
+    public:
+        VDBFile(const std::string& file_name) : m_vdb_file(file_name) { m_vdb_file.open(false); }
+        ~VDBFile() { m_vdb_file.close(); }
+        operator bool() const { return m_vdb_file.isOpen(); }
+        openvdb::FloatGrid::ConstPtr loadFloatGrid(const std::string& grid_name);
+
+    private:
+        openvdb::io::File m_vdb_file;
+    };
+
+    openvdb::FloatGrid::ConstPtr VDBFile::loadFloatGrid(const std::string& grid_name)
+    {
+        if (!m_vdb_file.isOpen())
+            return nullptr;
+
+        openvdb::GridBase::ConstPtr grid_base_ptr;
+        try
+        {
+            grid_base_ptr = m_vdb_file.readGrid(grid_name);
+        }
+        catch (const openvdb::Exception&)
+        {
+            return nullptr;
+        }
+
+        auto grid_ptr = openvdb::gridConstPtrCast<openvdb::FloatGrid>(grid_base_ptr);
+        if (!grid_ptr)
+        {
+            LOG_ERROR(format("Grid '^1s' is not a FloatGrid.", grid_name));
+            return nullptr;
+        }
+
+        return grid_ptr;
+    }
+
+    size_t voxel_count(const openvdb::Coord extents)
+    {
+        return extents.x() * extents.y() * extents.z();
+    }
+
+    constexpr size_t FLOATS_PER_MEGABYTE = 1024 * 1024 / sizeof(float);
 
 } // unnamed namespace
 
-void ChannelAssignment::assignToShader(MHWRender::MShaderInstance* shader_instance) const
+const size_t VolumeCache::DEFAULT_LIMIT_FLOATS = 1024 * FLOATS_PER_MEGABYTE;
+const size_t VolumeCache::DEFAULT_SIZE_FLOATS = 256 * FLOATS_PER_MEGABYTE;
+const size_t VolumeCache::GROW_AMOUNT_FLOATS = 256 * FLOATS_PER_MEGABYTE;
+
+VolumeCache& VolumeCache::instance()
 {
-    const bool use_texture = channel_ptr && channel_ptr->isValid();
-    CHECK_MSTATUS(shader_instance->setParameter(format("use_^1s_texture", param_prefix), use_texture));
+    static VolumeCache volume_cache;
+    return volume_cache;
+}
+
+VolumeCache::VolumeCache() : m_mem_limit_floats(DEFAULT_LIMIT_FLOATS), m_buffer_head(0)
+{
+    // Don't allocate anything in the ctor to avoid unnecessary consumption of memory (e.g. batch mode).
+}
+
+openvdb::FloatGrid::ConstPtr VolumeCache::loadGrid(const VDBVolumeSpec& spec)
+{
+    // Open VDB file or bail.
+    auto vdb_file = VDBFile(spec.vdb_file_name);
+    if (!vdb_file)
+        return nullptr;
+
+    return vdb_file.loadFloatGrid(spec.vdb_grid_name);
+}
+
+void VolumeCache::sampleGrid(const VDBVolumeSpec& spec, const openvdb::FloatGrid& grid, const VolumeBufferHandle& output)
+{
+    // Set up volume sampler.
+    ProgressBar progress_bar(format("vdb_visualizer: sampling grid ^1s", spec.vdb_grid_name));
+    VolumeSampler volume_sampler;
+    volume_sampler.attachProgressBar(&progress_bar);
+
+    // Sample grid.
+    volume_sampler.sampleGrid(grid, spec.texture_size, output);
+}
+
+void VolumeCache::getVolume(const VDBVolumeSpec& spec, VolumeTexture& output)
+{
+    // Check if in cache.
+    auto it = m_buffer_map.find(spec);
+    if (it != m_buffer_map.end())
+    {
+        // Load from cache.
+        output.acquireBuffer(spec.texture_size, VolumeBufferHandle(m_buffer.data() + it->second.begin));
+        return;
+    }
+
+    // Not in cache; try to load the grid.
+    const auto grid = loadGrid(spec);
+    if (!grid)
+    {
+        output.clear();
+        return;
+    }
+
+    // Allocate space, return if not succesful.
+    VolumeBufferHandle volume_buffer = allocate(spec);
+    if (!volume_buffer)
+    {
+        output.clear();
+        return;
+    }
+
+    // Sample grid and update texture.
+    sampleGrid(spec, *grid, volume_buffer);
+    output.acquireBuffer(spec.texture_size, volume_buffer);
+
+    // Clear buffer if caching is disabled.
+    if (m_mem_limit_floats == 0)
+        m_buffer.clear();
+}
+
+void VolumeCache::setMemoryLimitBytes(size_t mem_limit_bytes)
+{
+    m_mem_limit_floats = mem_limit_bytes / sizeof(float);
+
+    // Shrink buffer if requested.
+    if (m_mem_limit_floats < m_buffer.size())
+    {
+        clearRange(BufferRange(m_mem_limit_floats, m_buffer.size()));
+        m_buffer.resize(mem_limit_bytes);
+        m_buffer.shrink_to_fit();
+    }
+
+    // Reset head if current positions will become invalid.
+    if (m_buffer_head >= m_mem_limit_floats)
+        m_buffer_head = 0;
+}
+
+VolumeBufferHandle VolumeCache::allocate(const VDBVolumeSpec& spec)
+{
+    const size_t item_size_floats = VolumeBufferHandle::VOXEL_ARRAY_OFFSET + voxel_count(spec.texture_size);
+
+    if (m_mem_limit_floats == 0)
+    {
+        // Caching is disabled. Use buffer for this request, but perform no accounting.
+        m_buffer.resize(item_size_floats);
+        m_buffer.shrink_to_fit();
+        return VolumeBufferHandle(m_buffer.data());
+    }
+    else if (item_size_floats > m_mem_limit_floats)
+        return {};
+
+    // If this allocation would exceed the memory limit, reset the head index.
+    // Otherwise grow the buffer if needed.
+    {
+        const auto allocation_end = m_buffer_head + item_size_floats;
+        if (m_buffer.size() < allocation_end)
+            growBuffer(allocation_end);
+    }
+
+    // Allocate buffer range.
+    const size_t buffer_begin = m_buffer_head;
+    const size_t buffer_end = buffer_begin + item_size_floats;
+    const auto buffer_range = BufferRange(buffer_begin, buffer_end);
+    m_buffer_head += item_size_floats;
+
+    // Throw away old allocations which overlap [buffer_begin, buffer_end).
+    clearRange(buffer_range);
+
+    // Update maps.
+    const auto allocation = m_buffer_map.emplace(spec, buffer_range).first;
+    m_allocation_map.emplace(buffer_begin, spec);
+    return VolumeBufferHandle(m_buffer.data() + buffer_begin);
+}
+
+void VolumeCache::growBuffer(size_t minimum_buffer_size_floats)
+{
+    // Reset head if requested size exceeds the limit.
+    if (minimum_buffer_size_floats > m_mem_limit_floats)
+    {
+        m_buffer_head = 0;
+        return;
+    }
+
+    size_t new_size_floats = m_buffer.size() + GROW_AMOUNT_FLOATS;
+    new_size_floats = std::max(minimum_buffer_size_floats, new_size_floats);
+    new_size_floats = std::min(m_mem_limit_floats, new_size_floats);
+
+    // Bail if buffer size is large enough already.
+    if (new_size_floats <= m_buffer.size())
+        return;
+
+    // Try to resize or reset head if failed.
+    try
+    {
+        m_buffer.resize(new_size_floats);
+    }
+    catch (const std::bad_alloc&)
+    {
+        m_buffer_head = 0;
+    }
+}
+
+void VolumeCache::clearRange(const BufferRange& range_to_clear)
+{
+    // Find first range which begins strictly after the given range.begin.
+    auto erase_it  = m_allocation_map.upper_bound(range_to_clear.begin);
+    // Start erasing at the previous range if it contains range_to_clear.begin.
+    if (erase_it != m_allocation_map.begin())
+    {
+        auto prev_it = erase_it;
+        --prev_it;
+        const auto prev_range_it = m_buffer_map.find(prev_it->second);
+        assert(prev_range_it != m_buffer_map.end());
+        const auto& prev_range = prev_range_it->second;
+        if (prev_range.begin <= range_to_clear.begin && range_to_clear.begin < prev_range.end)
+            erase_it = prev_it;
+    }
+    // The first range to keep is the first one which begins on or after range.end.
+    auto erase_end = m_allocation_map.lower_bound(range_to_clear.end);
+
+    while (erase_it != erase_end)
+    {
+        m_buffer_map.erase(erase_it->second);
+        erase_it = m_allocation_map.erase(erase_it);
+    }
+}
+
+// === VolumeParam =========================================================
+
+class VolumeParam
+{
+public:
+    VolumeParam(const char *shader_param_prefix = nullptr, MHWRender::MShaderInstance *shader_instance = nullptr);
+    void setParamPrefix(const char *param_prefix);
+    void setShaderInstance(MHWRender::MShaderInstance *shader_instance) { m_shader_instance = shader_instance; }
+    void setVolume(const VDBVolumeSpec& volume_spec);
+
+private:
+    MString use_texture_param;
+    MString texture_param;
+    MString value_range_param;
+    MString volume_size_param;
+    MString volume_origin_param;
+    MHWRender::MShaderInstance *m_shader_instance;
+    VolumeTexture m_volume_texture;
+
+    void assign();
+};
+
+VolumeParam::VolumeParam(const char *shader_param_prefix, MHWRender::MShaderInstance *shader_instance)
+{
+    setParamPrefix(shader_param_prefix);
+    setShaderInstance(shader_instance);
+}
+
+void VolumeParam::setParamPrefix(const char *param_prefix)
+{
+    if (!param_prefix)
+        return;
+    use_texture_param = format("use_^1s_texture", param_prefix);
+    texture_param = format("^1s_texture", param_prefix);
+    value_range_param = format("^1s_value_range", param_prefix);
+    volume_size_param = format("^1s_volume_size", param_prefix);
+    volume_origin_param = format("^1s_volume_origin", param_prefix);
+}
+
+void VolumeParam::setVolume(const VDBVolumeSpec& volume_spec)
+{
+    VolumeCache::instance().getVolume(volume_spec, m_volume_texture);
+    assign();
+}
+
+void VolumeParam::assign()
+{
+    const bool use_texture = m_volume_texture.isValid();
+    CHECK_MSTATUS(m_shader_instance->setParameter(use_texture_param, use_texture));
     if (!use_texture)
         return;
 
-    MHWRender::MTextureAssignment texture_assignment;
-    texture_assignment.texture = channel_ptr->volume_texture.texture_ptr.get();
-    CHECK_MSTATUS(shader_instance->setParameter(format("^1s_texture", param_prefix), texture_assignment));
-    CHECK_MSTATUS(shader_instance->setParameter(format("^1s_value_range", param_prefix),
-                                                mayavecFromFloatRange(channel_ptr->volume_texture.value_range)));
-
-    const auto grid_bbox_is = getIndexSpaceBoundingBox(channel_ptr->grid.get());
-    const auto grid_bbox_ws = channel_ptr->grid->transform().indexToWorld(grid_bbox_is);
-    CHECK_MSTATUS(shader_instance->setParameter(format("^1s_volume_size", param_prefix), mayavecFromVec3f(grid_bbox_ws.extents())));
-    CHECK_MSTATUS(shader_instance->setParameter(format("^1s_volume_origin", param_prefix), mayavecFromVec3f(grid_bbox_ws.min())));
+    CHECK_MSTATUS(m_shader_instance->setParameter(texture_param, m_volume_texture.getTextureAssignment()));
+    CHECK_MSTATUS(m_shader_instance->setParameter(value_range_param, m_volume_texture.value_range));
+    CHECK_MSTATUS(m_shader_instance->setParameter(volume_size_param, m_volume_texture.volume_size));
+    CHECK_MSTATUS(m_shader_instance->setParameter(volume_origin_param, m_volume_texture.volume_origin));
 }
 
 // === SamplerState ========================================================
@@ -298,7 +643,7 @@ private:
 class RGBRampTexture
 {
 public:
-    RGBRampTexture(size_t resolution, const MFloatVector* colors = nullptr);
+    RGBRampTexture(unsigned int resolution, const MFloatVector* colors = nullptr);
     void updateFromGradient(const Gradient& gradient);
     void updateFromData(const MFloatVector* colors, const float normalizer = 1.0f);
     void assignSamplerToShader(MHWRender::MShaderInstance* shader_instance, const MString& sampler_param);
@@ -310,7 +655,7 @@ public:
 private:
     void fillStagingVector(const MFloatVector* colors, const float normalizer = 1.0f);
 
-    size_t m_resolution;
+    unsigned int m_resolution;
     std::vector<uint8_t> m_staging;
 
     TexturePtr m_texture;
@@ -318,7 +663,7 @@ private:
     const SamplerState m_ramp_sampler_state;
 };
 
-RGBRampTexture::RGBRampTexture(size_t resolution, const MFloatVector *colors)
+RGBRampTexture::RGBRampTexture(unsigned int resolution, const MFloatVector *colors)
     : m_resolution(resolution), m_staging(4 * resolution, 0),
     m_ramp_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexClamp)
 {
@@ -351,6 +696,15 @@ void RGBRampTexture::assignTextureToShader(MHWRender::MShaderInstance* shader_in
     CHECK_MSTATUS(shader_instance->setParameter(texture_param, ta));
 }
 
+namespace {
+
+    MFloatVector inline mayavecFromVec2f(const openvdb::Vec2f& vec)
+    {
+        return { vec.x(), vec.y() };
+    }
+
+} // unnamed namespace
+
 void RGBRampTexture::assignDomainToShader(MHWRender::MShaderInstance* shader_instance, const MString& domain_param) const
 {
     CHECK_MSTATUS(shader_instance->setParameter(domain_param, mayavecFromVec2f(m_domain)));
@@ -358,7 +712,7 @@ void RGBRampTexture::assignDomainToShader(MHWRender::MShaderInstance* shader_ins
 
 void RGBRampTexture::fillStagingVector(const MFloatVector *colors, const float normalizer)
 {
-    for (size_t i = 0; i < m_resolution; ++i)
+    for (unsigned int i = 0; i < m_resolution; ++i)
     {
         auto srgb_color = SRGBFromLinear(colors[i] / normalizer);
         m_staging[4 * i + 0] = uint8_t(srgb_color.x * 255);
@@ -423,13 +777,11 @@ private:
     static const unsigned int MAX_LIGHT_COUNT;
     ShaderPtr m_volume_shader;
 
-    std::unordered_map<std::string, std::weak_ptr<VolumeChannel>> m_channel_cache;
-    ChannelAssignment m_density_channel;
-    ChannelAssignment m_scattering_channel;
-    ChannelAssignment m_emission_channel;
-    ChannelAssignment m_transparency_channel;
-    ChannelAssignment m_temperature_channel;
-    VolumeSampler m_volume_sampler;
+    VolumeParam m_density_channel;
+    VolumeParam m_scattering_channel;
+    VolumeParam m_emission_channel;
+    VolumeParam m_transparency_channel;
+    VolumeParam m_temperature_channel;
 
     // Must be the same as Gradient resolution.
     static const unsigned int RAMP_RESOLUTION;
@@ -530,6 +882,7 @@ void VDBSubSceneOverrideData::clear()
 }
 
 namespace {
+
     ChangeSet setup_channel(ChannelParams& target, const ChannelParams& source, ChangeSet channel_mask)
     {
         if (target.name != source.name)
@@ -552,6 +905,7 @@ namespace {
             return ChangeSet::NO_CHANGES;
         }
     }
+
 } // unnamed namespace
 
 bool VDBSubSceneOverrideData::update(const VDBVisualizerData* data, const MObject& obj)
@@ -1500,11 +1854,6 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     float3 slice_vector_world = mul(world_mat_3x3, slice_vector_model);
     float ray_distance = dot(slice_vector_world, slice_vector_world) / abs(dot(slice_vector_world, direction_to_eye_world));
 
-    //float3x3 vol_scale_model = float3x3(volume_size.x, 0, 0,
-    //                                    0, volume_size.y, 0,
-    //                                    0, 0, volume_size.z);
-    //float3x3 vol_scale_world = world_mat_3x3 * vol_scale_model * world_inverse_mat_3x3;
-
     float3 lumi = float3(0, 0, 0);
 
     // In-scattering from lights.
@@ -1557,6 +1906,7 @@ technique Main < int isTransparent = 1; >
 )cgfx");
 
 namespace {
+
     template <typename T>
     MHWRender::MShaderCompileMacro makeMacroDef(const MString& name, const T& value)
     {
@@ -1568,6 +1918,7 @@ namespace {
     {
         return { name, format("^1sf", value) };
     }
+
 } // unnamed namespace
 
 SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
@@ -1604,6 +1955,12 @@ SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
     }
     m_volume_shader->setIsTransparent(true);
 
+    m_density_channel.setShaderInstance(m_volume_shader.get());
+    m_scattering_channel.setShaderInstance(m_volume_shader.get());
+    m_emission_channel.setShaderInstance(m_volume_shader.get());
+    m_transparency_channel.setShaderInstance(m_volume_shader.get());
+    m_temperature_channel.setShaderInstance(m_volume_shader.get());
+
     // Create sampler state for textures.
     for (MString param : { "density_sampler", "scattering_sampler", "transparency_sampler", "emission_sampler", "temperature_sampler" })
         m_volume_sampler_state.assign(m_volume_shader.get(), param);
@@ -1627,8 +1984,10 @@ void SlicedDisplay::enable(bool enable)
 }
 
 namespace {
+
     const char *SLICES_RENDER_ITEM_NAME = "vdb_volume_slices";
     const char *SELECTION_BBOX_RENDER_ITEM_NAME = "vdb_volume_slices_bbox";
+
 } // unnamed namespace
 
 bool SlicedDisplay::initRenderItems(MHWRender::MSubSceneContainer& container, const VDBSubSceneOverrideData& data)
@@ -1772,6 +2131,7 @@ void SlicedDisplay::updateBBox(const MBoundingBox& bbox)
 }
 
 namespace {
+
     typedef std::array<float, 3> Float3;
 
     template <typename ParamSpec>
@@ -1799,6 +2159,7 @@ namespace {
         std::array<float, 3 * N> float_array;
         std::array<Float3, N> float3_array;
     };
+
 } // unnamed namespace
 
 void SlicedDisplay::preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& /*renderItemList*/, MHWRender::MShaderInstance* shader_instance)
@@ -1979,102 +2340,89 @@ bool SlicedDisplay::update(MHWRender::MSubSceneContainer& container, const VDBSu
     if (data.change_set == ChangeSet::GRADIENT)
         return true;
 
-    const bool vdb_file_changed        = hasChange(data.change_set, ChangeSet::VDB_FILE);
-    const bool max_slice_count_changed = hasChange(data.change_set, ChangeSet::MAX_SLICE_COUNT);
+    //const bool vdb_file_changed        = hasChange(data.change_set, ChangeSet::VDB_FILE);
+    //const bool max_slice_count_changed = hasChange(data.change_set, ChangeSet::MAX_SLICE_COUNT);
 
-    // Needs to come before updateBBox: updateBBox updates the slices renderable too,
-    // but at first run updateSliceGeo populates geo buffers.
-    if (max_slice_count_changed)
-        updateSliceGeo(data);
-
-    // Update file-level bbox and invalidate channel cache if a new file is loaded.
-    if (vdb_file_changed) {
-        updateBBox(data.bbox);
-        m_slices_renderable.update(m_parent, data.bbox);
-        m_channel_cache.clear();
-    }
-
-    // Should come after channel cache is cleared.
-    if (max_slice_count_changed)
-    {
-        // Resample all channels.
-        for (auto& channel : m_channel_cache)
-            channel.second.lock()->sample(m_volume_sampler, data.max_slice_count);
-        // Rebind texture params.
-        for (auto& channel_assignment : { m_density_channel, m_scattering_channel, m_transparency_channel, m_emission_channel, m_temperature_channel })
-        {
-            if (!channel_assignment.channel_ptr)
-                continue;
-            channel_assignment.assignToShader(m_volume_shader.get());
-        }
-    }
-
-    // Update channels.
-
-    auto handle_channel_change = [&](const std::string& grid_name, VolumeChannel::Ptr& channel) {
-        if (grid_name.empty())
-        {
-            channel.reset();
-            return;
-        }
-
-        auto it = m_channel_cache.find(grid_name);
-        if (it != m_channel_cache.end())
-        {
-            // Use cached channel.
-            channel = it->second.lock();
-            return;
-        }
-
-        // Create new channel if we don't have an exclusively owned one already.
-        if (channel.use_count() != 1)
-            channel.reset(new VolumeChannel());
-
-        // Load VDB grid, bail on error.
-        channel->loadGrid(data.vdb_file, grid_name);
-        if (!channel->isValid())
-            return;
-
-        // Sample VDB grid.
-        channel->sample(m_volume_sampler, data.max_slice_count);
-        // Insert channel into cache.
-        m_channel_cache.insert({ grid_name, channel });
-    };
-
-    if (vdb_file_changed || hasChange(data.change_set, ChangeSet::DENSITY_CHANNEL))
-    {
-        handle_channel_change(data.density_channel.name, m_density_channel.channel_ptr);
-        m_density_channel.assignToShader(m_volume_shader.get());
-    }
-
-    if (vdb_file_changed || hasChange(data.change_set, ChangeSet::SCATTERING_CHANNEL))
-    {
-        handle_channel_change(data.scattering_channel.name, m_scattering_channel.channel_ptr);
-        m_scattering_channel.assignToShader(m_volume_shader.get());
-    }
-
-    if (vdb_file_changed || hasChange(data.change_set, ChangeSet::TRANSPARENCY_CHANNEL))
-    {
-        handle_channel_change(data.transparency_channel.name, m_transparency_channel.channel_ptr);
-        m_transparency_channel.assignToShader(m_volume_shader.get());
-    }
-
-    if (vdb_file_changed || hasChange(data.change_set, ChangeSet::EMISSION_CHANNEL))
-    {
-        handle_channel_change(data.emission_channel.name, m_emission_channel.channel_ptr);
-        m_emission_channel.assignToShader(m_volume_shader.get());
-    }
-
-    if (vdb_file_changed || hasChange(data.change_set, ChangeSet::TEMPERATURE_CHANNEL))
-    {
-        handle_channel_change(data.temperature_channel.name, m_temperature_channel.channel_ptr);
-        m_temperature_channel.assignToShader(m_volume_shader.get());
-    }
-
-    // Clean-up channel cache.
-    for (auto it = m_channel_cache.cbegin(); it != m_channel_cache.cend(); ++it)
-        if (it->second.expired() || !it->second.lock()->isValid())
-            it = m_channel_cache.erase(it);
+    const auto extents = openvdb::Coord(data.max_slice_count, data.max_slice_count, data.max_slice_count);
+    m_density_channel.setVolume({ data.vdb_path, data.vdb_file->getUniqueTag(), data.density_channel.name, extents });
+    m_scattering_channel.setVolume({ data.vdb_path, data.vdb_file->getUniqueTag(), data.scattering_channel.name, extents });
+    m_emission_channel.setVolume({ data.vdb_path, data.vdb_file->getUniqueTag(), data.emission_channel.name, extents });
+    m_transparency_channel.setVolume({ data.vdb_path, data.vdb_file->getUniqueTag(), data.transparency_channel.name, extents });
+    m_temperature_channel.setVolume({ data.vdb_path, data.vdb_file->getUniqueTag(), data.temperature_channel.name, extents });
 
     return true;
+}
+
+MSyntax VDBVolumeCacheMemonyLimitCmd::create_syntax()
+{
+    MSyntax syntax;
+    syntax.enableQuery();
+    syntax.enableEdit();
+    syntax.addFlag("v", "value", MSyntax::kLong);
+    return syntax;
+}
+
+MStatus VDBVolumeCacheMemonyLimitCmd::doIt(const MArgList& args)
+{
+    MStatus status;
+    MArgParser parser(syntax(), args);
+
+    // Set volume cache memory limit.
+    if (parser.isEdit())
+    {
+        // Set volume cache limit to the given value in gigabytes.
+        const int new_limit_gigabytes = parser.flagArgumentInt("value", 0);
+        if (status != MStatus::kSuccess || new_limit_gigabytes < 0)
+        {
+            MGlobal::displayError("[openvdb] Argument to 'value' has to be a non-negative integer.");
+            return MS::kFailure;
+        }
+
+        VolumeCache::instance().setMemoryLimitBytes(size_t(new_limit_gigabytes) << 30);
+        return MS::kSuccess;
+    }
+
+    // Get volume cache memory limit.
+    if (parser.isQuery())
+    {
+        // Return volume cache limit in gigabytes.
+        const size_t limit_bytes = VolumeCache::instance().getMemoryLimitBytes();
+        MPxCommand::setResult(unsigned(limit_bytes / (1 << 30)));
+        return MS::kSuccess;
+    }
+
+    // Default: query cache statistics.
+    const auto pretty_string_size = [](size_t size) -> std::string
+    {
+        static const std::array<char, 3> prefixes = { 'G', 'M', 'K' };
+
+        std::stringstream ss;
+        ss << std::setprecision(2) << std::setiosflags(std::ios_base::fixed);
+
+        for (size_t i = 0; i < prefixes.size(); ++i)
+        {
+            size_t prefix_size = 1LL << (10 * (prefixes.size() - i));
+            if (size < prefix_size)
+                continue;
+
+            ss << double(size) / double(prefix_size) << prefixes[i] << "B";
+            return ss.str();
+        }
+
+        ss << double(size) << "B";
+        return ss.str();
+    };
+
+    const size_t limit = VolumeCache::instance().getMemoryLimitBytes();
+    if (limit == 0)
+    {
+        MGlobal::displayInfo("openvdb_render: volume caching is off");
+        return MS::kSuccess;
+    }
+
+    const size_t alloc = VolumeCache::instance().getAllocatedBytes();
+    MGlobal::displayInfo(format("openvdb_render: volume cache allocated/total: ^1s/^2s",
+                         pretty_string_size(alloc),
+                         pretty_string_size(limit)));
+    return MS::kSuccess;
 }

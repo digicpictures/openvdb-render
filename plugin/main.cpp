@@ -84,7 +84,16 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
                                     VDBVisualizerUpdateMaxSliceCountCmd::create_syntax);
     if (!status)
     {
-        status.perror("[openvdb] Error registering the VDBVisualizerUpdateMaxSliceCountCmd Command.");
+        status.perror("[openvdb] Error registering the 'vdb_visualizer_update_max_slice_count' command.");
+        return status;
+    }
+
+    status = plugin.registerCommand("vdb_visualizer_volume_cache_limit",
+                                    VDBVolumeCacheMemonyLimitCmd::creator,
+                                    VDBVolumeCacheMemonyLimitCmd::create_syntax);
+    if (!status)
+    {
+        status.perror("[openvdb] Error registering the 'vdb_visualizer_volume_cache_limit' command.");
         return status;
     }
 
@@ -153,7 +162,14 @@ PLUGIN_EXPORT MStatus uninitializePlugin(MObject obj)
     status = plugin.deregisterCommand("vdb_visualizer_update_max_slice_count");
     if (!status)
     {
-        status.perror("[openvdb] Error deregistering the VDBVisualizerUpdateMaxSliceCountCmd Command.");
+        status.perror("[openvdb] Error deregistering the vdb_visualizer_update_max_slice_count command.");
+        return status;
+    }
+
+    status = plugin.deregisterCommand("vdb_visualizer_volume_cache_limit");
+    if (!status)
+    {
+        status.perror("[openvdb] Error deregistering the vdb_visualizer_volume_cache_limit command.");
         return status;
     }
 
