@@ -1171,6 +1171,8 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
         bounding_box->enable(false);
         if (data->display_mode == DISPLAY_POINT_CLOUD)
         {
+            m_sliced_display->enable(false);
+
             try {
                 if (!data->vdb_file->isOpen())
                     data->vdb_file->open(false);
@@ -1183,9 +1185,7 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
                 data->emission_grid = nullptr;
                 return;
             }
-
             point_cloud->enable(data->is_visible);
-            m_sliced_display->enable(false);
 
             const openvdb::Vec3d voxel_size = data->attenuation_grid->voxelSize();
 
@@ -1363,6 +1363,10 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
 
             m_sliced_display->enable(data->is_visible);
             m_sliced_display->update(container, *data);
+        }
+        else
+        {
+            m_sliced_display->enable(false);
         }
     }
 
