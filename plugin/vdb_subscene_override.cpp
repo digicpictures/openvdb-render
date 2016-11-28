@@ -8,6 +8,7 @@
 #include <unordered_map>
 
 #include <maya/MArgList.h>
+#include <maya/MArgParser.h>
 #include <maya/MDrawContext.h>
 #include <maya/MGlobal.h>
 #include <maya/MHwGeometryUtilities.h>
@@ -498,8 +499,8 @@ VolumeBufferHandle VolumeCache::allocate(const VDBVolumeSpec& spec)
     clearRange(buffer_range);
 
     // Update maps.
-    const auto allocation = m_buffer_map.emplace(spec, buffer_range).first;
-    m_allocation_map.emplace(buffer_begin, spec);
+    m_buffer_map.insert(std::make_pair(spec, buffer_range)).first;
+    m_allocation_map.insert(std::make_pair(buffer_begin, spec));
     return VolumeBufferHandle(m_buffer.data() + buffer_begin);
 }
 
@@ -2394,7 +2395,7 @@ MStatus VDBVolumeCacheMemonyLimitCmd::doIt(const MArgList& args)
     // Default: query cache statistics.
     const auto pretty_string_size = [](size_t size) -> std::string
     {
-        static const std::array<char, 3> prefixes = { 'G', 'M', 'K' };
+        static const std::array<char, 3> prefixes = {{ 'G', 'M', 'K' }};
 
         std::stringstream ss;
         ss << std::setprecision(2) << std::setiosflags(std::ios_base::fixed);

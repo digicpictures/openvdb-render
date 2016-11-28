@@ -2,7 +2,7 @@
 
 #include <new>
 
-#include <openvdb/Types.h>
+#include <openvdb/openvdb.h>
 #include <openvdb/tools/MultiResGrid.h>
 
 #include "vdb_subscene_utils.hpp"
