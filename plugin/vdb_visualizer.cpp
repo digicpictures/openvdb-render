@@ -1066,7 +1066,7 @@ void VDBVisualizerShapeUI::getDrawRequests(
         static bool warning_displayed = false;
         if (!warning_displayed)
         {
-            std::cerr << "openvdb_render: viewport 1.0 rendering is not supported.\n";
+            MGlobal::displayWarning("[openvdb] viewport 1.0 rendering is not supported.");
             warning_displayed = true;
         }
     }
