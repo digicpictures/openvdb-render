@@ -47,11 +47,11 @@ public:
     void attachProgressBar(ProgressBar *progress_bar) { m_progress_bar = progress_bar; }
 
     // Sample grid. Use MultiResGrid filtering only if texture_extents is coarser than the grid, otherwise use box filter.
-    void sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output);
+    bool sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output);
     // Sample a single grid using simple box filter.
-    void sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output);
+    bool sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output);
     // Sample a MultiResGrid. Filtering is done by the built-in sampling mechanism of MultiResGrid.
-    void sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output);
+    bool sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output);
 
 private:
     ProgressBar *m_progress_bar;

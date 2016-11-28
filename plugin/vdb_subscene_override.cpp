@@ -259,7 +259,7 @@ void VolumeTexture::acquireBuffer(const openvdb::Coord& texture_extents, const V
     volume_origin = mayavecFromArray3(volume_buffer.header->origin);
 
     // If texture size didn't change, texture data can be updated in place.
-    if (extents == texture_extents)
+    if (extents == texture_extents && texture_ptr.get() != nullptr)
     {
         texture_ptr->update(volume_buffer.voxel_array, true);
         extents = texture_extents;
@@ -320,7 +320,7 @@ private:
 
     VolumeCache();
     openvdb::FloatGrid::ConstPtr loadGrid(const VDBVolumeSpec& spec);
-    void sampleGrid(const VDBVolumeSpec& spec, const openvdb::FloatGrid& grid, const VolumeBufferHandle& output);
+    bool sampleGrid(const VDBVolumeSpec& spec, const openvdb::FloatGrid& grid, const VolumeBufferHandle& output);
     VolumeBufferHandle allocate(const VDBVolumeSpec& spec);
     void clearRange(const BufferRange& range);
     void growBuffer(size_t minimum_buffer_size_floats);
@@ -403,7 +403,7 @@ openvdb::FloatGrid::ConstPtr VolumeCache::loadGrid(const VDBVolumeSpec& spec)
     return vdb_file.loadFloatGrid(spec.vdb_grid_name);
 }
 
-void VolumeCache::sampleGrid(const VDBVolumeSpec& spec, const openvdb::FloatGrid& grid, const VolumeBufferHandle& output)
+bool VolumeCache::sampleGrid(const VDBVolumeSpec& spec, const openvdb::FloatGrid& grid, const VolumeBufferHandle& output)
 {
     // Set up volume sampler.
     ProgressBar progress_bar(format("vdb_visualizer: sampling grid ^1s", spec.vdb_grid_name));
@@ -411,7 +411,7 @@ void VolumeCache::sampleGrid(const VDBVolumeSpec& spec, const openvdb::FloatGrid
     volume_sampler.attachProgressBar(&progress_bar);
 
     // Sample grid.
-    volume_sampler.sampleGrid(grid, spec.texture_size, output);
+    return volume_sampler.sampleGrid(grid, spec.texture_size, output);
 }
 
 void VolumeCache::getVolume(const VDBVolumeSpec& spec, VolumeTexture& output)
@@ -441,8 +441,25 @@ void VolumeCache::getVolume(const VDBVolumeSpec& spec, VolumeTexture& output)
         return;
     }
 
-    // Sample grid and update texture.
-    sampleGrid(spec, *grid, volume_buffer);
+    // Sample grid, return if not succesful (i.e. user cancelled the sampling procedure).
+    const auto status = sampleGrid(spec, *grid, volume_buffer);
+    if (!status)
+    {
+        output.clear();
+
+        // Delete this allocation.
+
+        const auto buffer_range_it = m_buffer_map.find(spec);
+        if (buffer_range_it == m_buffer_map.end())
+            // If caching is disabled, the allocation hasn't been recorded, so just return.
+            return;
+
+        m_allocation_map.erase(buffer_range_it->second.begin);
+        m_buffer_map.erase(buffer_range_it);
+        return;
+    }
+
+    // Update texture.
     output.acquireBuffer(spec.texture_size, volume_buffer);
 
     // Clear buffer if caching is disabled.

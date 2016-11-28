@@ -14,7 +14,7 @@
 #include "progress_bar.h"
 #include "vdb_maya_utils.hpp"
 
-void VolumeSampler::sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output)
+bool VolumeSampler::sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output)
 {
     assert(output);
 
@@ -26,12 +26,12 @@ void VolumeSampler::sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Co
     {
         // Create and sample MultiResGrid.
         openvdb::tools::MultiResGrid<openvdb::FloatTree> multires(num_levels, grid);
-        sampleMultiResGrid(multires, texture_extents, output);
+        return sampleMultiResGrid(multires, texture_extents, output);
     }
     else
     {
         // Use box filter.
-        sampleGridWithBoxFilter(grid, texture_extents, output);
+        return sampleGridWithBoxFilter(grid, texture_extents, output);
     }
 }
 
@@ -64,7 +64,7 @@ namespace {
     }
 
     template <typename SamplingFunc>
-    void sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func, ProgressBar *progress_bar, float *out_voxel_array, FloatRange& out_value_range)
+    bool sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func, ProgressBar *progress_bar, float *out_voxel_array, FloatRange& out_value_range)
     {
         const auto domain = openvdb::CoordBBox(openvdb::Coord(), extents - openvdb::Coord(1, 1, 1));
         const auto num_voxels = domain.volume();
@@ -109,7 +109,7 @@ namespace {
             }
         });
         if (cancelled)
-            return;
+            return false;
 
         // Merge per-thread value ranges.
         out_value_range = FloatRange();
@@ -128,11 +128,13 @@ namespace {
 
         if (progress_bar)
             progress_bar->setProgress(100);
+
+        return true;
     }
 
 } // unnamed namespace
 
-void VolumeSampler::sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output)
+bool VolumeSampler::sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output)
 {
     assert(output);
 
@@ -146,11 +148,12 @@ void VolumeSampler::sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, cons
     };
 
     FloatRange value_range;
-    sampleVolume(texture_extents, sampling_func, m_progress_bar, output.voxel_array, value_range);
+    const auto res = sampleVolume(texture_extents, sampling_func, m_progress_bar, output.voxel_array, value_range);
     setHeader(value_range, bbox_world, *output.header);
+    return res;
 }
 
-void VolumeSampler::sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output)
+bool VolumeSampler::sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output)
 {
     assert(output);
 
@@ -171,8 +174,9 @@ void VolumeSampler::sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvd
     };
 
     FloatRange value_range;
-    sampleVolume(texture_extents, sampling_func, m_progress_bar, output.voxel_array, value_range);
+    const auto res = sampleVolume(texture_extents, sampling_func, m_progress_bar, output.voxel_array, value_range);
     setHeader(value_range, bbox_world, *output.header);
+    return res;
 }
 
 const size_t VolumeBufferHandle::VOXEL_ARRAY_OFFSET = sizeof(VolumeBufferHeader) / sizeof(float);
