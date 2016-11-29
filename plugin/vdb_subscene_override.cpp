@@ -378,7 +378,7 @@ namespace {
 
 } // unnamed namespace
 
-const size_t VolumeCache::DEFAULT_LIMIT_FLOATS = 1024 * FLOATS_PER_MEGABYTE;
+const size_t VolumeCache::DEFAULT_LIMIT_FLOATS = 2 * 1024 * FLOATS_PER_MEGABYTE;
 const size_t VolumeCache::DEFAULT_SIZE_FLOATS = 256 * FLOATS_PER_MEGABYTE;
 const size_t VolumeCache::GROW_AMOUNT_FLOATS = 256 * FLOATS_PER_MEGABYTE;
 
