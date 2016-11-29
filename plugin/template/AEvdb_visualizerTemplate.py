@@ -190,7 +190,7 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
                                           changeCommand=lambda val: cache_limit.set(round(val)),
                                           buttonCommand=button_command)
         control.dragCommand(lambda val: control.setValue(round(val)))
-    
+
     def create_voxel_type_menu(self, param_name):
         def change_command(item):
             maya.cmds.vdb_visualizer_volume_cache(edit=True, voxelType=item)
@@ -206,6 +206,38 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
     def update_voxel_type_menu(self, param_name):
         menu = pm.optionMenuGrp("VDBVisualizerVolumeCacheVoxelType", edit=True).menu()
         menu.setValue(maya.cmds.vdb_visualizer_volume_cache(query=True, voxelType=True))
+
+    def create_gamma_menu(self, param_name):
+        def change_command(item):
+            if item == "Viewport Gamma":
+                viewport_gamma = 1
+                shader_gamma = False
+            elif item == "Shader Gamma":
+                viewport_gamma = 0
+                shader_gamma = True
+            else:
+                viewport_gamma = 0
+                shader_gamma = False
+            pm.setAttr("hardwareRenderingGlobals.gammaCorrectionEnable", viewport_gamma)
+            pm.setAttr(param_name, shader_gamma)
+
+        menu = pm.optionMenuGrp("VDBVisualizerGammaMode",
+                               label="Gamma Correction",
+                               changeCommand=change_command).menu()
+        menu.addItems(["No Gamma", "Shader Gamma", "Viewport Gamma"])
+        menu.setWidth(154)
+        self.update_gamma_menu(param_name)
+
+    def update_gamma_menu(self, param_name):
+        menu = pm.optionMenuGrp("VDBVisualizerGammaMode", edit=True).menu()
+        viewport_gamma = pm.getAttr("hardwareRenderingGlobals.gammaCorrectionEnable")
+        shader_gamma = pm.getAttr(param_name)
+        if viewport_gamma:
+            menu.setValue("Viewport Gamma")
+        elif shader_gamma:
+            menu.setValue("Shader Gamma")
+        else:
+            menu.setValue("No Gamma")
 
     def create_channel_stats(self, param_name):
         pm.text("OpenVDBChannelStats", label=pm.getAttr(param_name), align="left")
@@ -343,7 +375,7 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.callCustom(self.create_max_slice_count, self.update_max_slice_count, "maxSliceCount")
         self.addControl("shadowGain",          label="Shadow Gain")
         self.addControl("shadowSampleCount",   label="Shadow Sample Count")
-        self.addControl("perSliceGamma",       label="Gamma Correction")
+        self.callCustom(self.create_gamma_menu, self.update_gamma_menu, "perSliceGamma")
 
         self.addSeparator()
         self.callCustom(self.create_volume_cache_limit_slider, self.update_volume_cache_limit_slider, "dummy_attr_1")
