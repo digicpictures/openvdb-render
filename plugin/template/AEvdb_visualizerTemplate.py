@@ -7,7 +7,7 @@ from channelController import channelController
 
 class CacheLimit:
     def __init__(self):
-        self.limit = 1
+        self.limit = maya.cmds.vdb_visualizer_volume_cache_limit(query=True)
 
     def get(self):
         return self.limit
@@ -186,7 +186,7 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
             maya.cmds.vdb_visualizer_volume_cache_limit()
 
         control = pm.floatSliderButtonGrp("VDBVisualizerVolumeCacheLimit", edit=True,
-                                          value=maya.cmds.vdb_visualizer_volume_cache_limit(query=True),
+                                          value=cache_limit.get(),
                                           changeCommand=lambda val: cache_limit.set(round(val)),
                                           buttonCommand=button_command)
         control.dragCommand(lambda val: control.setValue(round(val)))
