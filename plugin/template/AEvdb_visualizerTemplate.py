@@ -7,7 +7,7 @@ from channelController import channelController
 
 class CacheLimit:
     def __init__(self):
-        self.limit = maya.cmds.vdb_visualizer_volume_cache_limit(query=True)
+        self.limit = maya.cmds.vdb_visualizer_volume_cache(query=True, limit=True)
 
     def get(self):
         return self.limit
@@ -182,14 +182,26 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         cache_limit = CacheLimit()
 
         def button_command():
-            maya.cmds.vdb_visualizer_volume_cache_limit(edit=True, value=cache_limit.get())
-            maya.cmds.vdb_visualizer_volume_cache_limit()
+            maya.cmds.vdb_visualizer_volume_cache(edit=True, limit=cache_limit.get())
+            maya.cmds.vdb_visualizer_volume_cache(limit=True)
 
         control = pm.floatSliderButtonGrp("VDBVisualizerVolumeCacheLimit", edit=True,
                                           value=cache_limit.get(),
                                           changeCommand=lambda val: cache_limit.set(round(val)),
                                           buttonCommand=button_command)
         control.dragCommand(lambda val: control.setValue(round(val)))
+    
+    def create_voxel_type_menu(self, param_name):
+        def change_command(item):
+            maya.cmds.vdb_visualizer_volume_cache(edit=True, voxelType=item)
+            maya.cmds.vdb_visualizer_volume_cache(voxelType=True)
+
+        menu = pm.optionMenuGrp(label="Volume Cache Precision", changeCommand=change_command).menu()
+        menu.addItems(["half", "float"])
+        menu.setWidth(70)
+
+    def update_voxel_type_menu(self, param_name):
+        pass
 
     def create_channel_stats(self, param_name):
         pm.text("OpenVDBChannelStats", label=pm.getAttr(param_name), align="left")
@@ -330,7 +342,8 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.addControl("perSliceGamma",       label="Gamma Correction")
 
         self.addSeparator()
-        self.callCustom(self.create_volume_cache_limit_slider, self.update_volume_cache_limit_slider, "")
+        self.callCustom(self.create_volume_cache_limit_slider, self.update_volume_cache_limit_slider, "dummy_attr_1")
+        self.callCustom(self.create_voxel_type_menu, self.update_voxel_type_menu, "dummy_attr_2")
 
         self.endLayout()
 

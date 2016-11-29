@@ -55,13 +55,15 @@ private:
     std::unique_ptr<SlicedDisplay> m_sliced_display;
 };
 
-class VDBVolumeCacheMemonyLimitCmd : public MPxCommand
+class VDBVolumeCacheCmd : public MPxCommand
 {
 public:
-    VDBVolumeCacheMemonyLimitCmd() {}
-    ~VDBVolumeCacheMemonyLimitCmd() {}
+    VDBVolumeCacheCmd() {}
+    ~VDBVolumeCacheCmd() {}
 
-    static void* creator() { return new VDBVolumeCacheMemonyLimitCmd(); }
+    static const char *COMMAND_STRING;
+
+    static void* creator() { return new VDBVolumeCacheCmd(); }
     static MSyntax create_syntax();
 
     MStatus doIt(const MArgList& args);

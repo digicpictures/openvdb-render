@@ -207,6 +207,7 @@ struct VolumeTexture
     MFloatVector volume_size;
     MFloatVector volume_origin;
     openvdb::Coord extents;
+    MHWRender::MRasterFormat raster_format;
 
     VolumeTexture() : texture_ptr(nullptr) {}
     VolumeTexture(const VolumeTexture&) = delete;
@@ -214,7 +215,8 @@ struct VolumeTexture
     VolumeTexture(VolumeTexture&&) = default;
     VolumeTexture& operator=(VolumeTexture&&) = default;
 
-    void acquireBuffer(const openvdb::Coord& texture_extents, const VolumeBufferHandle& volume_buffer);
+    template <typename RealType>
+    void acquireBuffer(const openvdb::Coord& texture_extents, const VolumeBufferHandle<RealType>& volume_buffer);
     void clear() { texture_ptr.reset(); }
     bool isValid() const { return texture_ptr.get() != nullptr; }
     MHWRender::MTextureAssignment& getTextureAssignment()
@@ -228,12 +230,14 @@ private:
 
 namespace {
 
-    MFloatVector inline mayavecFromArray2(float *a)
+    template <typename RealType>
+    MFloatVector inline mayavecFromArray2(RealType *a)
     {
         return {a[0], a[1]};
     }
 
-    MFloatVector inline mayavecFromArray3(float *a)
+    template <typename RealType>
+    MFloatVector inline mayavecFromArray3(RealType *a)
     {
         return {a[0], a[1], a[2]};
     }
@@ -243,9 +247,25 @@ namespace {
         return { vec.x(), vec.y(), vec.z() };
     }
 
+    template <typename VoxelType>
+    struct VoxelTypeTraits {};
+
+    template <>
+    struct VoxelTypeTraits<float>
+    {
+        enum { RASTER_FORMAT = MHWRender::kR32_FLOAT };
+    };
+
+    template <>
+    struct VoxelTypeTraits<half>
+    {
+        enum { RASTER_FORMAT = MHWRender::kR16_FLOAT };
+    };
+
 } // unnamed namespace
 
-void VolumeTexture::acquireBuffer(const openvdb::Coord& texture_extents, const VolumeBufferHandle& volume_buffer)
+template <typename RealType>
+void VolumeTexture::acquireBuffer(const openvdb::Coord& texture_extents, const VolumeBufferHandle<RealType>& volume_buffer)
 {
     if (!volume_buffer)
     {
@@ -257,12 +277,13 @@ void VolumeTexture::acquireBuffer(const openvdb::Coord& texture_extents, const V
     value_range = mayavecFromArray2(volume_buffer.header->value_range);
     volume_size = mayavecFromArray3(volume_buffer.header->size);
     volume_origin = mayavecFromArray3(volume_buffer.header->origin);
+    const auto new_raster_format = MHWRender::MRasterFormat(VoxelTypeTraits<RealType>::RASTER_FORMAT);
 
-    // If texture size didn't change, texture data can be updated in place.
-    if (extents == texture_extents && texture_ptr.get() != nullptr)
+    // If texture raster format and size didn't change, texture data can be updated in place
+    // (if there is an actual texture owned by this instance).
+    if (raster_format == new_raster_format && extents == texture_extents && texture_ptr.get() != nullptr)
     {
         texture_ptr->update(volume_buffer.voxel_array, true);
-        extents = texture_extents;
         return;
     }
 
@@ -271,15 +292,17 @@ void VolumeTexture::acquireBuffer(const openvdb::Coord& texture_extents, const V
     texture_desc.fWidth = texture_extents.x();
     texture_desc.fHeight = texture_extents.y();
     texture_desc.fDepth = texture_extents.z();
-    texture_desc.fBytesPerRow = 4 * texture_desc.fWidth;
+    texture_desc.fBytesPerRow = sizeof(RealType) * texture_desc.fWidth;
     texture_desc.fBytesPerSlice = texture_desc.fBytesPerRow * texture_desc.fHeight;
     texture_desc.fMipmaps = 0;
     texture_desc.fArraySlices = 1;
-    texture_desc.fFormat = MHWRender::kR32_FLOAT;
+    texture_desc.fFormat = new_raster_format;
     texture_desc.fTextureType = MHWRender::kVolumeTexture;
     texture_desc.fEnvMapType = MHWRender::kEnvNone;
     texture_ptr.reset(get_texture_manager()->acquireTexture("", texture_desc, volume_buffer.voxel_array, true));
+
     extents = texture_extents;
+    raster_format = new_raster_format;
 }
 
 // === VolumeCache =========================================================
@@ -288,12 +311,20 @@ class VolumeCache
 {
 public:
     static VolumeCache& instance();
+
     void getVolume(const VDBVolumeSpec& spec, VolumeTexture& output);
+
+    enum class VoxelType { FLOAT, HALF };
+    VoxelType getVoxelType() const { return m_voxel_type; }
+    void setVoxelType(VoxelType voxel_type);
+
     void setMemoryLimitBytes(size_t mem_limit_bytes);
-    size_t getMemoryLimitBytes() const { return sizeof(float) * m_mem_limit_floats; }
-    size_t getAllocatedBytes() const { return sizeof(float) * m_buffer.size(); }
+    size_t getMemoryLimitBytes() const { return m_mem_limit_bytes; }
+    size_t getAllocatedBytes() const { return m_buffer.size(); }
 
 private:
+    VoxelType m_voxel_type;
+
     struct BufferRange
     {
         size_t begin;
@@ -301,9 +332,10 @@ private:
         BufferRange(size_t begin_, size_t end_) : begin(begin_), end(end_) {}
     };
 
-    // Objects are stored contiguously in a float vector.
-    std::vector<float> m_buffer;
-    size_t m_mem_limit_floats;
+    size_t m_mem_limit_bytes;
+
+    // Objects are stored contiguously in a vector.
+    std::vector<uint8_t> m_buffer;
     // FIFO cache eviction policy is used for its simplicity. The m_buffer_head
     // wraps around effectively creating a ring buffer, but objects are always
     // laid out linearly; m_buffer_head will wrap prematurely if the next object
@@ -320,14 +352,19 @@ private:
 
     VolumeCache();
     openvdb::FloatGrid::ConstPtr loadGrid(const VDBVolumeSpec& spec);
-    bool sampleGrid(const VDBVolumeSpec& spec, const openvdb::FloatGrid& grid, const VolumeBufferHandle& output);
-    VolumeBufferHandle allocate(const VDBVolumeSpec& spec);
     void clearRange(const BufferRange& range);
-    void growBuffer(size_t minimum_buffer_size_floats);
+    void growBuffer(size_t minimum_buffer_size_bytes);
 
-    static const size_t DEFAULT_LIMIT_FLOATS;
-    static const size_t DEFAULT_SIZE_FLOATS;
-    static const size_t GROW_AMOUNT_FLOATS;
+    template <typename RealType>
+    void getVolume(const VDBVolumeSpec& spec, VolumeTexture& output);
+    template <typename RealType>
+    VolumeBufferHandle<RealType> allocate(const VDBVolumeSpec& spec);
+    template <typename RealType>
+    bool sampleGrid(const VDBVolumeSpec& spec, const openvdb::FloatGrid& grid, const VolumeBufferHandle<RealType>& output);
+
+    static const size_t DEFAULT_LIMIT_BYTES;
+    static const size_t DEFAULT_SIZE_BYTES;
+    static const size_t GROW_AMOUNT_BYTES;
 };
 
 namespace {
@@ -374,13 +411,15 @@ namespace {
         return extents.x() * extents.y() * extents.z();
     }
 
-    constexpr size_t FLOATS_PER_MEGABYTE = 1024 * 1024 / sizeof(float);
+    constexpr size_t KILOBYTE = 1024;
+    constexpr size_t MEGABYTE = 1024 * KILOBYTE;
+    constexpr size_t GIGABYTE = 1024 * MEGABYTE;
 
 } // unnamed namespace
 
-const size_t VolumeCache::DEFAULT_LIMIT_FLOATS = 2 * 1024 * FLOATS_PER_MEGABYTE;
-const size_t VolumeCache::DEFAULT_SIZE_FLOATS = 256 * FLOATS_PER_MEGABYTE;
-const size_t VolumeCache::GROW_AMOUNT_FLOATS = 256 * FLOATS_PER_MEGABYTE;
+const size_t VolumeCache::DEFAULT_LIMIT_BYTES = 2 * GIGABYTE;
+const size_t VolumeCache::DEFAULT_SIZE_BYTES = 256 * MEGABYTE;
+const size_t VolumeCache::GROW_AMOUNT_BYTES = 256 * MEGABYTE;
 
 VolumeCache& VolumeCache::instance()
 {
@@ -388,7 +427,20 @@ VolumeCache& VolumeCache::instance()
     return volume_cache;
 }
 
-VolumeCache::VolumeCache() : m_mem_limit_floats(DEFAULT_LIMIT_FLOATS), m_buffer_head(0)
+void VolumeCache::setVoxelType(VoxelType voxel_type)
+{
+    if (m_voxel_type != voxel_type)
+    {
+        m_buffer_head = 0;
+        m_buffer.clear();
+        m_buffer_map.clear();
+        m_allocation_map.clear();
+    }
+
+    m_voxel_type = voxel_type;
+}
+
+VolumeCache::VolumeCache() : m_voxel_type(VoxelType::HALF), m_mem_limit_bytes(DEFAULT_LIMIT_BYTES), m_buffer_head(0)
 {
     // Don't allocate anything in the ctor to avoid unnecessary consumption of memory (e.g. batch mode).
 }
@@ -403,11 +455,12 @@ openvdb::FloatGrid::ConstPtr VolumeCache::loadGrid(const VDBVolumeSpec& spec)
     return vdb_file.loadFloatGrid(spec.vdb_grid_name);
 }
 
-bool VolumeCache::sampleGrid(const VDBVolumeSpec& spec, const openvdb::FloatGrid& grid, const VolumeBufferHandle& output)
+template <typename RealType>
+bool VolumeCache::sampleGrid(const VDBVolumeSpec& spec, const openvdb::FloatGrid& grid, const VolumeBufferHandle<RealType>& output)
 {
     // Set up volume sampler.
     ProgressBar progress_bar(format("vdb_visualizer: sampling grid ^1s", spec.vdb_grid_name));
-    VolumeSampler volume_sampler;
+    VolumeSampler<RealType> volume_sampler;
     volume_sampler.attachProgressBar(&progress_bar);
 
     // Sample grid.
@@ -416,12 +469,21 @@ bool VolumeCache::sampleGrid(const VDBVolumeSpec& spec, const openvdb::FloatGrid
 
 void VolumeCache::getVolume(const VDBVolumeSpec& spec, VolumeTexture& output)
 {
+    if (m_voxel_type == VoxelType::HALF)
+        getVolume<half>(spec, output);
+    else if (m_voxel_type == VoxelType::FLOAT)
+        getVolume<float>(spec, output);
+}
+
+template <typename RealType>
+void VolumeCache::getVolume(const VDBVolumeSpec& spec, VolumeTexture& output)
+{
     // Check if in cache.
     auto it = m_buffer_map.find(spec);
     if (it != m_buffer_map.end())
     {
         // Load from cache.
-        output.acquireBuffer(spec.texture_size, VolumeBufferHandle(m_buffer.data() + it->second.begin));
+        output.acquireBuffer(spec.texture_size, VolumeBufferHandle<RealType>(m_buffer.data() + it->second.begin));
         return;
     }
 
@@ -434,7 +496,7 @@ void VolumeCache::getVolume(const VDBVolumeSpec& spec, VolumeTexture& output)
     }
 
     // Allocate space, return if not succesful.
-    VolumeBufferHandle volume_buffer = allocate(spec);
+    VolumeBufferHandle<RealType> volume_buffer = allocate<RealType>(spec);
     if (!volume_buffer)
     {
         output.clear();
@@ -442,7 +504,7 @@ void VolumeCache::getVolume(const VDBVolumeSpec& spec, VolumeTexture& output)
     }
 
     // Sample grid, return if not succesful (i.e. user cancelled the sampling procedure).
-    const auto status = sampleGrid(spec, *grid, volume_buffer);
+    const auto status = sampleGrid<RealType>(spec, *grid, volume_buffer);
     if (!status)
     {
         output.clear();
@@ -460,57 +522,58 @@ void VolumeCache::getVolume(const VDBVolumeSpec& spec, VolumeTexture& output)
     }
 
     // Update texture.
-    output.acquireBuffer(spec.texture_size, volume_buffer);
+    output.acquireBuffer<RealType>(spec.texture_size, volume_buffer);
 
     // Clear buffer if caching is disabled.
-    if (m_mem_limit_floats == 0)
+    if (m_mem_limit_bytes == 0)
         m_buffer.clear();
 }
 
 void VolumeCache::setMemoryLimitBytes(size_t mem_limit_bytes)
 {
-    m_mem_limit_floats = mem_limit_bytes / sizeof(float);
+    m_mem_limit_bytes = mem_limit_bytes;
 
     // Shrink buffer if requested.
-    if (m_mem_limit_floats < m_buffer.size())
+    if (m_mem_limit_bytes < m_buffer.size())
     {
-        clearRange(BufferRange(m_mem_limit_floats, m_buffer.size()));
+        clearRange(BufferRange(m_mem_limit_bytes, m_buffer.size()));
         m_buffer.resize(mem_limit_bytes);
         m_buffer.shrink_to_fit();
     }
 
     // Reset head if current positions will become invalid.
-    if (m_buffer_head >= m_mem_limit_floats)
+    if (m_buffer_head >= m_mem_limit_bytes)
         m_buffer_head = 0;
 }
 
-VolumeBufferHandle VolumeCache::allocate(const VDBVolumeSpec& spec)
+template <typename RealType>
+VolumeBufferHandle<RealType> VolumeCache::allocate(const VDBVolumeSpec& spec)
 {
-    const size_t item_size_floats = VolumeBufferHandle::VOXEL_ARRAY_OFFSET + voxel_count(spec.texture_size);
+    const size_t item_size_bytes = sizeof(VolumeBufferHeader<RealType>) + voxel_count(spec.texture_size) * sizeof(RealType);
 
-    if (m_mem_limit_floats == 0)
+    if (m_mem_limit_bytes == 0)
     {
         // Caching is disabled. Use buffer for this request, but perform no accounting.
-        m_buffer.resize(item_size_floats);
+        m_buffer.resize(item_size_bytes);
         m_buffer.shrink_to_fit();
-        return VolumeBufferHandle(m_buffer.data());
+        return { m_buffer.data() };
     }
-    else if (item_size_floats > m_mem_limit_floats)
+    else if (item_size_bytes > m_mem_limit_bytes)
         return {};
 
     // If this allocation would exceed the memory limit, reset the head index.
     // Otherwise grow the buffer if needed.
     {
-        const auto allocation_end = m_buffer_head + item_size_floats;
+        const auto allocation_end = m_buffer_head + item_size_bytes;
         if (m_buffer.size() < allocation_end)
             growBuffer(allocation_end);
     }
 
     // Allocate buffer range.
     const size_t buffer_begin = m_buffer_head;
-    const size_t buffer_end = buffer_begin + item_size_floats;
+    const size_t buffer_end = buffer_begin + item_size_bytes;
     const auto buffer_range = BufferRange(buffer_begin, buffer_end);
-    m_buffer_head += item_size_floats;
+    m_buffer_head += item_size_bytes;
 
     // Throw away old allocations which overlap [buffer_begin, buffer_end).
     clearRange(buffer_range);
@@ -518,30 +581,30 @@ VolumeBufferHandle VolumeCache::allocate(const VDBVolumeSpec& spec)
     // Update maps.
     m_buffer_map.insert(std::make_pair(spec, buffer_range)).first;
     m_allocation_map.insert(std::make_pair(buffer_begin, spec));
-    return VolumeBufferHandle(m_buffer.data() + buffer_begin);
+    return { m_buffer.data() + buffer_begin };
 }
 
-void VolumeCache::growBuffer(size_t minimum_buffer_size_floats)
+void VolumeCache::growBuffer(size_t minimum_buffer_size_bytes)
 {
     // Reset head if requested size exceeds the limit.
-    if (minimum_buffer_size_floats > m_mem_limit_floats)
+    if (minimum_buffer_size_bytes > m_mem_limit_bytes)
     {
         m_buffer_head = 0;
         return;
     }
 
-    size_t new_size_floats = m_buffer.size() + GROW_AMOUNT_FLOATS;
-    new_size_floats = std::max(minimum_buffer_size_floats, new_size_floats);
-    new_size_floats = std::min(m_mem_limit_floats, new_size_floats);
+    size_t new_size_bytes = m_buffer.size() + GROW_AMOUNT_BYTES;
+    new_size_bytes = std::max(minimum_buffer_size_bytes, new_size_bytes);
+    new_size_bytes = std::min(m_mem_limit_bytes, new_size_bytes);
 
     // Bail if buffer size is large enough already.
-    if (new_size_floats <= m_buffer.size())
+    if (new_size_bytes <= m_buffer.size())
         return;
 
     // Try to resize or reset head if failed.
     try
     {
-        m_buffer.resize(new_size_floats);
+        m_buffer.resize(new_size_bytes);
     }
     catch (const std::bad_alloc&)
     {
@@ -2375,76 +2438,150 @@ bool SlicedDisplay::update(MHWRender::MSubSceneContainer& container, const VDBSu
     return true;
 }
 
-MSyntax VDBVolumeCacheMemonyLimitCmd::create_syntax()
+MSyntax VDBVolumeCacheCmd::create_syntax()
 {
     MSyntax syntax;
     syntax.enableQuery();
     syntax.enableEdit();
-    syntax.addFlag("v", "value", MSyntax::kLong);
+    syntax.addFlag("h", "help", MSyntax::kNoArg);
+    syntax.addFlag("l", "limit", MSyntax::kLong);
+    syntax.makeFlagQueryWithFullArgs("limit", true);
+    syntax.addFlag("vt", "voxelType", MSyntax::kString);
+    syntax.makeFlagQueryWithFullArgs("voxelType", true);
     return syntax;
 }
 
-MStatus VDBVolumeCacheMemonyLimitCmd::doIt(const MArgList& args)
+namespace
+{
+    MString getVoxelTypeString()
+    {
+        const auto voxel_type = VolumeCache::instance().getVoxelType();
+        if (voxel_type == VolumeCache::VoxelType::HALF)
+            return "half";
+        else if (voxel_type == VolumeCache::VoxelType::FLOAT)
+            return "float";
+        else
+            return "unknown";
+    }
+
+} // unnamed namespace
+
+MStatus VDBVolumeCacheCmd::doIt(const MArgList& args)
 {
     MStatus status;
     MArgParser parser(syntax(), args);
 
-    // Set volume cache memory limit.
-    if (parser.isEdit())
+    const auto display_error = [](const MString& message)
     {
-        // Set volume cache limit to the given value in gigabytes.
-        const int new_limit_gigabytes = parser.flagArgumentInt("value", 0);
-        if (status != MStatus::kSuccess || new_limit_gigabytes < 0)
-        {
-            MGlobal::displayError("[openvdb] Argument to 'value' has to be a non-negative integer.");
-            return MS::kFailure;
-        }
-
-        VolumeCache::instance().setMemoryLimitBytes(size_t(new_limit_gigabytes) << 30);
-        return MS::kSuccess;
-    }
-
-    // Get volume cache memory limit.
-    if (parser.isQuery())
-    {
-        // Return volume cache limit in gigabytes.
-        const size_t limit_bytes = VolumeCache::instance().getMemoryLimitBytes();
-        MPxCommand::setResult(unsigned(limit_bytes / (1 << 30)));
-        return MS::kSuccess;
-    }
-
-    // Default: query cache statistics.
-    const auto pretty_string_size = [](size_t size) -> std::string
-    {
-        static const std::array<char, 3> prefixes = {{ 'G', 'M', 'K' }};
-
-        std::stringstream ss;
-        ss << std::setprecision(2) << std::setiosflags(std::ios_base::fixed);
-
-        for (size_t i = 0; i < prefixes.size(); ++i)
-        {
-            size_t prefix_size = 1LL << (10 * (prefixes.size() - i));
-            if (size < prefix_size)
-                continue;
-
-            ss << double(size) / double(prefix_size) << prefixes[i] << "B";
-            return ss.str();
-        }
-
-        ss << double(size) << "B";
-        return ss.str();
+        MGlobal::displayError(format("[openvdb] command ^1s: ^2s", COMMAND_STRING, message));
     };
 
-    const size_t limit = VolumeCache::instance().getMemoryLimitBytes();
-    if (limit == 0)
+    if (parser.isEdit())
     {
-        MGlobal::displayInfo("openvdb_render: volume caching is off");
+        if (parser.isFlagSet("limit"))
+        {
+            // Set volume cache limit to the given value in gigabytes.
+            const int new_limit_gigabytes = parser.flagArgumentInt("limit", 0, &status);
+            if (status != MStatus::kSuccess || new_limit_gigabytes < 0)
+            {
+                display_error("In edit mode argument to 'limit' has to be a non-negative integer representing gigabytes.");
+                return MS::kFailure;
+            }
+
+            VolumeCache::instance().setMemoryLimitBytes(size_t(new_limit_gigabytes) << 30);
+        }
+
+        if (parser.isFlagSet("voxelType"))
+        {
+            const auto voxel_type_str = parser.flagArgumentString("voxelType", 0, &status);
+            if (status != MStatus::kSuccess)
+            {
+                display_error("In edit mode the 'voxelType' flag requires a string argument, either 'half' or 'float'.");
+                return MS::kFailure;
+            }
+
+            if (voxel_type_str == "half")
+                VolumeCache::instance().setVoxelType(VolumeCache::VoxelType::HALF);
+            else if (voxel_type_str == "float")
+                VolumeCache::instance().setVoxelType(VolumeCache::VoxelType::FLOAT);
+            else
+            {
+                display_error("In edit mode argument to 'voxelType' has to be either 'half' or 'float'.");
+                return MS::kFailure;
+            }
+        }
+
+        return MS::kSuccess;
+    }
+    else if (parser.isQuery())
+    {
+        if (parser.isFlagSet("limit"))
+        {
+            // Return volume cache limit in gigabytes.
+            const size_t limit_bytes = VolumeCache::instance().getMemoryLimitBytes();
+            MPxCommand::setResult(unsigned(limit_bytes / (1 << 30)));
+            return MS::kSuccess;
+        }
+        else if (parser.isFlagSet("voxelType"))
+        {
+            // Return the voxel type as string.
+            MPxCommand::setResult(getVoxelTypeString());
+            return MS::kSuccess;
+        }
+
+        display_error("In query mode either 'limit' or 'voxelType' flag has to be specified.");
+        return MS::kFailure;
+    }
+
+    // Neither edit nor query mode: display info.
+
+    if (parser.isFlagSet("voxelType"))
+    {
+        // Display voxel type.
+        MGlobal::displayInfo(format("[openvdb] volume cache voxel type is '^1s'.", getVoxelTypeString()));
+        return MS::kSuccess;
+    }
+    else if (parser.isFlagSet("limit"))
+    {
+        // Display allocated bytes and cache limit.
+        const auto pretty_string_size = [](size_t size) -> std::string
+        {
+            static const std::array<char, 3> prefixes = { { 'G', 'M', 'K' } };
+
+            std::stringstream ss;
+            ss << std::setprecision(2) << std::setiosflags(std::ios_base::fixed);
+
+            for (size_t i = 0; i < prefixes.size(); ++i)
+            {
+                size_t prefix_size = 1LL << (10 * (prefixes.size() - i));
+                if (size < prefix_size)
+                    continue;
+
+                ss << double(size) / double(prefix_size) << prefixes[i] << "B";
+                return ss.str();
+            }
+
+            ss << double(size) << "B";
+            return ss.str();
+        };
+
+        const size_t limit = VolumeCache::instance().getMemoryLimitBytes();
+        if (limit == 0)
+        {
+            MGlobal::displayInfo("[openvdb] Volume caching is off.");
+            return MS::kSuccess;
+        }
+
+        const size_t alloc = VolumeCache::instance().getAllocatedBytes();
+        MGlobal::displayInfo(format("[openvdb] Volume cache allocated/total: ^1s/^2s.",
+            pretty_string_size(alloc),
+            pretty_string_size(limit)));
         return MS::kSuccess;
     }
 
-    const size_t alloc = VolumeCache::instance().getAllocatedBytes();
-    MGlobal::displayInfo(format("openvdb_render: volume cache allocated/total: ^1s/^2s",
-                         pretty_string_size(alloc),
-                         pretty_string_size(limit)));
+    // Default: display help.
+    MGlobal::displayInfo(format("[openvdb] Usage: ^1s [-h|-help] [-q|-query|-e|-edit] [-vt|-voxelType [\"half\"|\"float\"]] [-l|-limit [<limit_in_gigabytes>]]", COMMAND_STRING));
     return MS::kSuccess;
 }
+
+const char *VDBVolumeCacheCmd::COMMAND_STRING = "vdb_visualizer_volume_cache";

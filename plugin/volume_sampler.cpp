@@ -14,7 +14,8 @@
 #include "progress_bar.h"
 #include "vdb_maya_utils.hpp"
 
-bool VolumeSampler::sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output)
+template <typename SampleType>
+bool VolumeSampler<SampleType>::sampleGrid(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, const VolumeBufferHandleType& output)
 {
     assert(output);
 
@@ -49,22 +50,24 @@ namespace {
     };
     typedef ValueRange<float> FloatRange;
 
-    void setHeader(const FloatRange& value_range, const openvdb::BBoxd& bbox, VolumeBufferHeader& output)
+    template <typename RealType>
+    void setHeader(const FloatRange& value_range, const openvdb::BBoxd& bbox, VolumeBufferHeader<RealType>& output)
     {
-        output.value_range[0] = value_range.min;
-        output.value_range[1] = value_range.max;
+        output.value_range[0] = static_cast<RealType>(value_range.min);
+        output.value_range[1] = static_cast<RealType>(value_range.max);
         const auto& extents = bbox.extents();
-        output.size[0] = float(extents.x());
-        output.size[1] = float(extents.y());
-        output.size[2] = float(extents.z());
+        output.size[0] = static_cast<RealType>(extents.x());
+        output.size[1] = static_cast<RealType>(extents.y());
+        output.size[2] = static_cast<RealType>(extents.z());
         const auto& origin = bbox.min();
-        output.origin[0] = float(origin.x());
-        output.origin[1] = float(origin.y());
-        output.origin[2] = float(origin.z());
+        output.origin[0] = static_cast<RealType>(origin.x());
+        output.origin[1] = static_cast<RealType>(origin.y());
+        output.origin[2] = static_cast<RealType>(origin.z());
     }
 
-    template <typename SamplingFunc>
-    bool sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func, ProgressBar *progress_bar, float *out_voxel_array, FloatRange& out_value_range)
+    template <typename SamplingFunc, typename VoxelType>
+    bool sampleVolume(const openvdb::Coord& extents, SamplingFunc sampling_func, ProgressBar *progress_bar,
+                      VoxelType *out_voxel_array, FloatRange& out_value_range)
     {
         const auto domain = openvdb::CoordBBox(openvdb::Coord(), extents - openvdb::Coord(1, 1, 1));
         const auto num_voxels = domain.volume();
@@ -134,40 +137,51 @@ namespace {
 
 } // unnamed namespace
 
-bool VolumeSampler::sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output)
+template <typename SampleType>
+bool VolumeSampler<SampleType>::sampleGridWithBoxFilter(const openvdb::FloatGrid& grid, const openvdb::Coord& texture_extents, const VolumeBufferHandleType& output)
 {
     assert(output);
 
+    // Return false if the grid bbox is empty.
+    const auto grid_bbox_is = getIndexSpaceBoundingBox(grid);
+    if (grid_bbox_is.empty())
+        return false;
+
     // Set up sampling func.
     const auto sampler = openvdb::tools::GridSampler<openvdb::FloatGrid, openvdb::tools::BoxSampler>(grid);
-    const auto bbox_world = grid.transform().indexToWorld(getIndexSpaceBoundingBox(grid));
+    const auto bbox_world = grid.transform().indexToWorld(grid_bbox_is);
     const auto domain_extents = texture_extents.asVec3d();
-    auto sampling_func = [&sampler, &bbox_world, &domain_extents](const openvdb::Vec3d& domain_index) {
+    auto sampling_func = [&sampler, &bbox_world, &domain_extents](const openvdb::Vec3d& domain_index) -> SampleType {
         const auto sample_pos_ws = (domain_index + 0.5) / domain_extents * bbox_world.extents() + bbox_world.min();
         return sampler.wsSample(sample_pos_ws);
     };
 
     FloatRange value_range;
     const auto res = sampleVolume(texture_extents, sampling_func, m_progress_bar, output.voxel_array, value_range);
-    setHeader(value_range, bbox_world, *output.header);
+    setHeader<SampleType>(value_range, bbox_world, *output.header);
     return res;
 }
 
-bool VolumeSampler::sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents, const VolumeBufferHandle& output)
+template <typename SampleType>
+bool VolumeSampler<SampleType>::sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvdb::FloatTree>& multires, const openvdb::Coord& texture_extents, const VolumeBufferHandleType& output)
 {
     assert(output);
 
+    // Return false if the grid bbox is empty.
+    const auto grid_bbox_is = getIndexSpaceBoundingBox(*multires.grid(0));
+    if (grid_bbox_is.empty())
+        return false;
+
     // Calculate LOD level.
-    const auto index_bbox = getIndexSpaceBoundingBox(*multires.grid(0));
-    const auto grid_extents = index_bbox.extents().asVec3d();
+    const auto grid_extents = grid_bbox_is.extents().asVec3d();
     const auto coarse_voxel_size = grid_extents / texture_extents.asVec3d();
     const auto max_levels = openvdb::math::Ceil(std::log2(maxComponentValue(grid_extents)));
     const auto lod_level = clamp(std::log2(maxComponentValue(coarse_voxel_size)), 0, max_levels);
 
     // Set up sampling func.
-    const auto bbox_world = multires.grid(0)->transform().indexToWorld(index_bbox);
+    const auto bbox_world = multires.grid(0)->transform().indexToWorld(grid_bbox_is);
     const auto domain_extents = texture_extents.asVec3d();
-    auto sampling_func = [&multires, lod_level, &bbox_world, &domain_extents](const openvdb::Vec3d& domain_index) {
+    auto sampling_func = [&multires, lod_level, &bbox_world, &domain_extents](const openvdb::Vec3d& domain_index) -> SampleType {
         const auto sample_pos_ws = (domain_index + 0.5) / domain_extents * bbox_world.extents() + bbox_world.min();
         const auto sample_pos_is = multires.transform().worldToIndex(sample_pos_ws);
         return multires.sampleValue<1>(sample_pos_is, lod_level);
@@ -175,8 +189,9 @@ bool VolumeSampler::sampleMultiResGrid(const openvdb::tools::MultiResGrid<openvd
 
     FloatRange value_range;
     const auto res = sampleVolume(texture_extents, sampling_func, m_progress_bar, output.voxel_array, value_range);
-    setHeader(value_range, bbox_world, *output.header);
+    setHeader<SampleType>(value_range, bbox_world, *output.header);
     return res;
 }
 
-const size_t VolumeBufferHandle::VOXEL_ARRAY_OFFSET = sizeof(VolumeBufferHeader) / sizeof(float);
+template class VolumeSampler<float>;
+template class VolumeSampler<half>;
