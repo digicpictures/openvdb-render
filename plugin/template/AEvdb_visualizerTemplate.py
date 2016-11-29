@@ -196,12 +196,16 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
             maya.cmds.vdb_visualizer_volume_cache(edit=True, voxelType=item)
             maya.cmds.vdb_visualizer_volume_cache(voxelType=True)
 
-        menu = pm.optionMenuGrp(label="Volume Cache Precision", changeCommand=change_command).menu()
+        menu = pm.optionMenuGrp("VDBVisualizerVolumeCacheVoxelType",
+                               label="Volume Cache Precision",
+                               changeCommand=change_command).menu()
         menu.addItems(["half", "float"])
         menu.setWidth(70)
+        self.update_voxel_type_menu(param_name)
 
     def update_voxel_type_menu(self, param_name):
-        pass
+        menu = pm.optionMenuGrp("VDBVisualizerVolumeCacheVoxelType", edit=True).menu()
+        menu.setValue(maya.cmds.vdb_visualizer_volume_cache(query=True, voxelType=True))
 
     def create_channel_stats(self, param_name):
         pm.text("OpenVDBChannelStats", label=pm.getAttr(param_name), align="left")
