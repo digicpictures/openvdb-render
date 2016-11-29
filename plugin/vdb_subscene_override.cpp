@@ -207,7 +207,6 @@ struct VolumeTexture
     MFloatVector volume_size;
     MFloatVector volume_origin;
     openvdb::Coord extents;
-    MHWRender::MRasterFormat raster_format;
 
     VolumeTexture() : texture_ptr(nullptr) {}
     VolumeTexture(const VolumeTexture&) = delete;
@@ -226,7 +225,9 @@ struct VolumeTexture
     }
 private:
     MHWRender::MTextureAssignment m_texture_assignment;
+    static std::vector<float> s_staging;
 };
+std::vector<float> VolumeTexture::s_staging;
 
 namespace {
 
@@ -247,20 +248,10 @@ namespace {
         return { vec.x(), vec.y(), vec.z() };
     }
 
-    template <typename VoxelType>
-    struct VoxelTypeTraits {};
-
-    template <>
-    struct VoxelTypeTraits<float>
+    size_t voxel_count(const openvdb::Coord& extents)
     {
-        enum { RASTER_FORMAT = MHWRender::kR32_FLOAT };
-    };
-
-    template <>
-    struct VoxelTypeTraits<half>
-    {
-        enum { RASTER_FORMAT = MHWRender::kR16_FLOAT };
-    };
+        return extents.x() * extents.y() * extents.z();
+    }
 
 } // unnamed namespace
 
@@ -277,13 +268,34 @@ void VolumeTexture::acquireBuffer(const openvdb::Coord& texture_extents, const V
     value_range = mayavecFromArray2(volume_buffer.header->value_range);
     volume_size = mayavecFromArray3(volume_buffer.header->size);
     volume_origin = mayavecFromArray3(volume_buffer.header->origin);
-    const auto new_raster_format = MHWRender::MRasterFormat(VoxelTypeTraits<RealType>::RASTER_FORMAT);
 
-    // If texture raster format and size didn't change, texture data can be updated in place
-    // (if there is an actual texture owned by this instance).
-    if (raster_format == new_raster_format && extents == texture_extents && texture_ptr.get() != nullptr)
+    void* buffer = nullptr;
+    if (std::is_same<RealType, float>::value)
     {
-        texture_ptr->update(volume_buffer.voxel_array, true);
+        buffer = volume_buffer.voxel_array;
+    }
+    else
+    {
+        // Convert voxels to float.
+        // Note: uploading 'half' voxel data (i.e. using raster type kR16_FLOAT) is
+        // SLOWER by a factor of ~2 compared to uploading floats. I have no idea why.
+        // If you know the answer, please explain it to me (zoltan.gilian@gmail.com).
+        s_staging.resize(voxel_count(texture_extents));
+        typedef tbb::blocked_range<size_t> tbb_range;
+        tbb::parallel_for(tbb_range(0, s_staging.size()),
+            [input = reinterpret_cast<RealType*>(volume_buffer.voxel_array), output = s_staging.data()]
+        (const tbb_range& range){
+            for (size_t i = range.begin(); i < range.end(); ++i)
+                output[i] = static_cast<float>(input[i]);
+        });
+        buffer = s_staging.data();
+    }
+
+    // If texture size didn't change, texture data can be updated in place,
+    // providing there is an actual texture owned by this instance.
+    if (extents == texture_extents && texture_ptr.get() != nullptr)
+    {
+        texture_ptr->update(buffer, true);
         return;
     }
 
@@ -292,17 +304,16 @@ void VolumeTexture::acquireBuffer(const openvdb::Coord& texture_extents, const V
     texture_desc.fWidth = texture_extents.x();
     texture_desc.fHeight = texture_extents.y();
     texture_desc.fDepth = texture_extents.z();
-    texture_desc.fBytesPerRow = sizeof(RealType) * texture_desc.fWidth;
+    texture_desc.fBytesPerRow = sizeof(float) * texture_desc.fWidth;
     texture_desc.fBytesPerSlice = texture_desc.fBytesPerRow * texture_desc.fHeight;
     texture_desc.fMipmaps = 0;
     texture_desc.fArraySlices = 1;
-    texture_desc.fFormat = new_raster_format;
+    texture_desc.fFormat = MHWRender::kR32_FLOAT;
     texture_desc.fTextureType = MHWRender::kVolumeTexture;
     texture_desc.fEnvMapType = MHWRender::kEnvNone;
-    texture_ptr.reset(get_texture_manager()->acquireTexture("", texture_desc, volume_buffer.voxel_array, true));
+    texture_ptr.reset(get_texture_manager()->acquireTexture("", texture_desc, buffer, true));
 
     extents = texture_extents;
-    raster_format = new_raster_format;
 }
 
 // === VolumeCache =========================================================
@@ -404,11 +415,6 @@ namespace {
         }
 
         return grid_ptr;
-    }
-
-    size_t voxel_count(const openvdb::Coord extents)
-    {
-        return extents.x() * extents.y() * extents.z();
     }
 
     constexpr size_t KILOBYTE = 1024;
