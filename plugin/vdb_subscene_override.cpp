@@ -725,24 +725,21 @@ private:
     const MHWRender::MSamplerState *m_sampler_state;
 };
 
-// === RGBRampTexture ======================================================
+// === RampTextureBase =====================================================
 
-class RGBRampTexture
+class RampTextureBase
 {
 public:
-    RGBRampTexture(unsigned int resolution, const MFloatVector* colors = nullptr);
-    void updateFromGradient(const Gradient& gradient);
-    void updateFromData(const MFloatVector* colors, const float normalizer = 1.0f);
     void assignSamplerToShader(MHWRender::MShaderInstance* shader_instance, const MString& sampler_param);
     void assignTextureToShader(MHWRender::MShaderInstance* shader_instance, const MString& texture_param) const;
     void assignDomainToShader(MHWRender::MShaderInstance* shader_instance, const MString& domain_param) const;
 
     operator bool() const { return m_texture.get() != nullptr; }
 
-private:
-    void fillStagingVector(const MFloatVector* colors, const float normalizer = 1.0f);
+protected:
+    RampTextureBase(const size_t resolution, const MHWRender::MRasterFormat raster_format, const size_t bytes_per_pixel);
 
-    unsigned int m_resolution;
+    size_t m_resolution;
     std::vector<uint8_t> m_staging;
 
     TexturePtr m_texture;
@@ -750,33 +747,30 @@ private:
     const SamplerState m_ramp_sampler_state;
 };
 
-RGBRampTexture::RGBRampTexture(unsigned int resolution, const MFloatVector *colors)
-    : m_resolution(resolution), m_staging(4 * resolution, 0),
+RampTextureBase::RampTextureBase(const size_t resolution, const MHWRender::MRasterFormat raster_format, const size_t bytes_per_pixel)
+    : m_resolution(resolution), m_staging(bytes_per_pixel * resolution, 0),
     m_ramp_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexClamp)
 {
     MHWRender::MTextureDescription ramp_desc;
     ramp_desc.fWidth = resolution;
     ramp_desc.fHeight = 1;
     ramp_desc.fDepth = 1;
-    ramp_desc.fBytesPerRow = ramp_desc.fWidth * 4;
+    ramp_desc.fBytesPerRow = bytes_per_pixel * ramp_desc.fWidth;
     ramp_desc.fBytesPerSlice = ramp_desc.fBytesPerRow;
     ramp_desc.fMipmaps = 1;
     ramp_desc.fArraySlices = 1;
-    ramp_desc.fFormat = MHWRender::kR8G8B8X8;
+    ramp_desc.fFormat = raster_format;
     ramp_desc.fTextureType = MHWRender::kImage1D;
     ramp_desc.fEnvMapType = MHWRender::kEnvNone;
-
-    if (colors)
-        updateFromData(colors);
     m_texture.reset(get_texture_manager()->acquireTexture("", ramp_desc, m_staging.data(), false));
 }
 
-void RGBRampTexture::assignSamplerToShader(MHWRender::MShaderInstance* shader_instance, const MString& sampler_param)
+void RampTextureBase::assignSamplerToShader(MHWRender::MShaderInstance* shader_instance, const MString& sampler_param)
 {
     m_ramp_sampler_state.assign(shader_instance, sampler_param);
 }
 
-void RGBRampTexture::assignTextureToShader(MHWRender::MShaderInstance* shader_instance, const MString& texture_param) const
+void RampTextureBase::assignTextureToShader(MHWRender::MShaderInstance* shader_instance, const MString& texture_param) const
 {
     MHWRender::MTextureAssignment ta;
     ta.texture = m_texture.get();
@@ -792,12 +786,58 @@ namespace {
 
 } // unnamed namespace
 
-void RGBRampTexture::assignDomainToShader(MHWRender::MShaderInstance* shader_instance, const MString& domain_param) const
+void RampTextureBase::assignDomainToShader(MHWRender::MShaderInstance* shader_instance, const MString& domain_param) const
 {
     CHECK_MSTATUS(shader_instance->setParameter(domain_param, mayavecFromVec2f(m_domain)));
 }
 
-void RGBRampTexture::fillStagingVector(const MFloatVector *colors, const float normalizer)
+// === FloatRampTexture ====================================================
+
+class FloatRampTexture : public RampTextureBase
+{
+public:
+    FloatRampTexture(const size_t resolution) : RampTextureBase(resolution, MHWRender::MRasterFormat::kR8_UNORM, 1) {}
+
+    void updateFromData(const float *data);
+    void updateFromGradient(const Gradient& gradient);
+
+private:
+};
+
+void FloatRampTexture::updateFromData(const float *floats)
+{
+    for (unsigned int i = 0; i < m_resolution; ++i)
+        m_staging[i] = uint8_t(floats[i] * 255);
+    m_texture->update(m_staging.data(), false);
+}
+
+void FloatRampTexture::updateFromGradient(const Gradient& gradient)
+{
+    if (!m_texture)
+        return;
+
+    const auto& sample_vector = gradient.getFloatRamp();
+    if (sample_vector.size() < m_resolution)
+        return;
+
+    updateFromData(sample_vector.data());
+    m_domain = openvdb::Vec2d(gradient.getInputMin(), gradient.getInputMax());
+}
+
+// === RGBRampTexture ======================================================
+
+class RGBRampTexture : public RampTextureBase
+{
+public:
+    RGBRampTexture(const size_t resolution) : RampTextureBase(resolution, MHWRender::MRasterFormat::kR8G8B8X8, 4) {}
+
+    void updateFromData(const MFloatVector *colors, const float normalizer=1);
+    void updateFromGradient(const Gradient& gradient);
+
+private:
+};
+
+void RGBRampTexture::updateFromData(const MFloatVector *colors, const float normalizer)
 {
     for (unsigned int i = 0; i < m_resolution; ++i)
     {
@@ -807,6 +847,7 @@ void RGBRampTexture::fillStagingVector(const MFloatVector *colors, const float n
         m_staging[4 * i + 2] = uint8_t(srgb_color.z * 255);
         m_staging[4 * i + 3] = 0;
     }
+    m_texture->update(m_staging.data(), false);
 }
 
 void RGBRampTexture::updateFromGradient(const Gradient& gradient)
@@ -814,21 +855,12 @@ void RGBRampTexture::updateFromGradient(const Gradient& gradient)
     if (!m_texture)
         return;
 
-    // Update texture.
     const auto& sample_vector = gradient.getRgbRamp();
     if (sample_vector.size() < m_resolution)
         return;
-    fillStagingVector(sample_vector.data());
-    m_texture->update(m_staging.data(), false);
 
-    // Update domain.
+    updateFromData(sample_vector.data());
     m_domain = openvdb::Vec2d(gradient.getInputMin(), gradient.getInputMax());
-}
-
-void RGBRampTexture::updateFromData(const MFloatVector* colors, const float normalizer)
-{
-    fillStagingVector(colors, normalizer);
-    m_texture->update(m_staging.data(), false);
 }
 
 // === BlackbodyLUT ========================================================
@@ -872,6 +904,7 @@ private:
 
     // Must be the same as Gradient resolution.
     static const unsigned int RAMP_RESOLUTION;
+    FloatRampTexture m_density_ramp;
     RGBRampTexture m_scattering_ramp;
     RGBRampTexture m_emission_ramp;
 
@@ -1033,7 +1066,8 @@ bool VDBSubSceneOverrideData::update(const VDBVisualizerData* data, const MObjec
     if (!vdb_file)
         clear();
 
-    if (display_mode == VDBDisplayMode::DISPLAY_SLICES) {
+    if (display_mode == VDBDisplayMode::DISPLAY_SLICES)
+    {
         change_set |= setup_parameter(max_slice_count, data->max_slice_count, ChangeSet::MAX_SLICE_COUNT);
         change_set |= setup_parameter(shadow_sample_count, data->shadow_sample_count, ChangeSet::GENERIC_ATTRIBUTE);
         change_set |= setup_parameter(shadow_gain, data->shadow_gain, ChangeSet::GENERIC_ATTRIBUTE);
@@ -1465,7 +1499,11 @@ float3 volume_origin;
 
 // Channels.
 
+#define DENSITY_SOURCE_VALUE 0
+#define DENSITY_SOURCE_RAMP  1
+
 float     density = 1.0f;
+int       density_source = DENSITY_SOURCE_VALUE;
 bool      use_density_texture = true;
 float2    density_value_range = float2(0, 1);
 float3    density_volume_size;
@@ -1480,7 +1518,7 @@ sampler3D density_sampler = sampler_state {
 
 float     scattering_intensity = 1;
 float3    scattering_color = float3(1, 1, 1);
-int       scattering_color_source = 0;
+int       scattering_color_source = COLOR_SOURCE_COLOR;
 float     scattering_anisotropy = 0;
 bool      use_scattering_texture = true;
 float2    scattering_value_range = float2(0, 1);
@@ -1507,7 +1545,7 @@ sampler3D transparency_sampler = sampler_state {
 #define EMISSION_MODE_BLACKBODY             3
 #define EMISSION_MODE_DENSITY_AND_BLACKBODY 4
 int       emission_mode = 0;
-int       emission_color_source = 0;
+int       emission_color_source = COLOR_SOURCE_COLOR;
 bool      use_emission_texture = false;
 float     emission_intensity = 1;
 float3    emission_color = float3(1, 1, 1);
@@ -1536,6 +1574,12 @@ sampler1D blackbody_lut_sampler = sampler_state {
 };
 
 // Ramps.
+
+float2    density_ramp_domain = float2(0, 1);
+texture   density_ramp_texture;
+sampler1D density_ramp_sampler = sampler_state {
+    Texture = <density_ramp_texture>;
+};
 
 float2    scattering_ramp_domain = float2(0, 1);
 texture   scattering_ramp_texture;
@@ -1606,6 +1650,11 @@ float3 SRGBFromLinear(float3 color)
     return pow(color, 1.0f/2.2f);
 }
 
+float SampleFloatRamp(sampler1D ramp_sampler, float texcoord)
+{
+    return tex1Dlod(ramp_sampler, float4(texcoord, 0, 0, 0)).x;
+}
+
 float3 SampleColorRamp(sampler1D ramp_sampler, float texcoord)
 {
     return LinearFromSRGB(tex1Dlod(ramp_sampler, float4(texcoord, 0, 0, 0)).xyz);
@@ -1645,7 +1694,10 @@ float SampleDensityTexture(float3 pos_model, float lod_scale_model)
         float3 tex_coords = (pos_model - density_volume_origin) / density_volume_size;
         float lod = CalcLOD(lod_scale_model, density_volume_size);
         float tex_sample = tex3Dlod(density_sampler, float4(tex_coords, lod)).r;
-        return density * lerp(density_value_range.x, density_value_range.y, tex_sample);
+        float channel_value = lerp(density_value_range.x, density_value_range.y, tex_sample);
+        if (density_source == DENSITY_SOURCE_RAMP)
+            channel_value *= SampleFloatRamp(density_ramp_sampler, unlerp(density_ramp_domain.x, density_ramp_domain.y, channel_value));
+        return density * channel_value;
     }
     else
         return density;
@@ -2015,7 +2067,7 @@ namespace {
 SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
     : m_parent(parent),
     m_density_channel("density"), m_scattering_channel("scattering"), m_emission_channel("emission"), m_transparency_channel("transparency"), m_temperature_channel("temperature"),
-    m_scattering_ramp(RAMP_RESOLUTION), m_emission_ramp(RAMP_RESOLUTION),
+    m_density_ramp(RAMP_RESOLUTION), m_scattering_ramp(RAMP_RESOLUTION), m_emission_ramp(RAMP_RESOLUTION),
     m_volume_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexBorder),
     m_enabled(false), m_selected(false)
 {
@@ -2057,6 +2109,7 @@ SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
         m_volume_sampler_state.assign(m_volume_shader.get(), param);
 
     // Assign ramp sampler states.
+    m_density_ramp.assignSamplerToShader(m_volume_shader.get(), "density_ramp_sampler");
     m_scattering_ramp.assignSamplerToShader(m_volume_shader.get(), "scattering_ramp_sampler");
     m_emission_ramp.assignSamplerToShader(m_volume_shader.get(), "emission_ramp_sampler");
 
@@ -2398,6 +2451,7 @@ bool SlicedDisplay::update(MHWRender::MSubSceneContainer& container, const VDBSu
 
     // Update shader params.
     CHECK_MSTATUS(m_volume_shader->setParameter("density", data.density_channel.intensity));
+    CHECK_MSTATUS(m_volume_shader->setParameter("density_source", int(data.density_channel.color_source)));
     CHECK_MSTATUS(m_volume_shader->setParameter("scattering_intensity", data.scattering_channel.intensity));
     CHECK_MSTATUS(m_volume_shader->setParameter("scattering_color", data.scattering_channel.color));
     CHECK_MSTATUS(m_volume_shader->setParameter("scattering_color_source", int(data.scattering_channel.color_source)));
@@ -2420,6 +2474,9 @@ bool SlicedDisplay::update(MHWRender::MSubSceneContainer& container, const VDBSu
         return true;
 
     // Update ramps.
+    m_density_ramp.updateFromGradient(data.density_channel.gradient);
+    m_density_ramp.assignTextureToShader(m_volume_shader.get(), "density_ramp_texture");
+    m_density_ramp.assignDomainToShader(m_volume_shader.get(), "density_ramp_domain");
     m_scattering_ramp.updateFromGradient(data.scattering_channel.gradient);
     m_scattering_ramp.assignTextureToShader(m_volume_shader.get(), "scattering_ramp_texture");
     m_scattering_ramp.assignDomainToShader(m_volume_shader.get(), "scattering_ramp_domain");

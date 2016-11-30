@@ -8,7 +8,7 @@
 #include "vdb_shader.h"
 
 VDBVolumeStandardShaderParams::VDBVolumeStandardShaderParams()
-    : scattering_gradient("scattering"), emission_gradient("emission")
+    : density_gradient("density"), scattering_gradient("scattering"), emission_gradient("emission")
 {
 }
 
@@ -33,6 +33,14 @@ void VDBVolumeStandardShaderParams::create_params(VDBShaderParams *shared_params
     density_channel = tAttr.create("densityChannel", "density_channel", MFnData::kString);
     tAttr.setDefault(sData.create("density"));
     MPxNode::addAttribute(density_channel);
+
+    density_source = eAttr.create("densitySource", "density_source");
+    eAttr.addField("Density Value", 0);
+    eAttr.addField("Density Ramp", 1);
+    eAttr.setDefault(0);
+    MPxNode::addAttribute(density_source);
+
+    density_gradient.create_params();
 
     // Scattering.
 
@@ -157,6 +165,8 @@ void VDBVolumeStandardShaderParams::affect_output(MObject& out_object)
 {
     MPxNode::attributeAffects(density, out_object);
     MPxNode::attributeAffects(density_channel, out_object);
+    MPxNode::attributeAffects(density_source, out_object);
+    density_gradient.affect_output(out_object);
 
     MPxNode::attributeAffects(scattering_intensity, out_object);
     MPxNode::attributeAffects(scattering_color, out_object);
@@ -184,6 +194,8 @@ bool VDBVolumeStandardShaderParams::check_plug(const MPlug& plug)
 {
     return plug == density ||
            plug == density_channel ||
+           plug == density_source ||
+           density_gradient.check_plug(plug) ||
            plug == scattering_intensity ||
            plug == scattering_color ||
            plug == scattering_channel ||

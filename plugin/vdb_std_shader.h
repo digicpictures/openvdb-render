@@ -18,6 +18,8 @@ struct VDBVolumeStandardShaderParams
 
     MObject density;
     MObject density_channel;
+    MObject density_source;
+    VDBGradientParams density_gradient;
 
     MObject scattering_intensity;
     MObject scattering_color;

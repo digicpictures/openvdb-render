@@ -708,9 +708,10 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
         {
             if (display_mode == DISPLAY_SLICES)
             {
-                // Always use RGB ramp in sliced display mode.
-                m_vdb_data.scattering_channel.gradient.set_channel_mode_override(4);
-                m_vdb_data.emission_channel.gradient.set_channel_mode_override(4);
+                // Override ramp modes in sliced display mode.
+                m_vdb_data.density_channel.gradient.set_channel_mode_override(3);    // FLOAT_RAMP
+                m_vdb_data.scattering_channel.gradient.set_channel_mode_override(4); // RGB_RAMP
+                m_vdb_data.emission_channel.gradient.set_channel_mode_override(4);   // RGB_RAMP
             }
             else
             {
@@ -864,7 +865,9 @@ VDBVisualizerData* VDBVisualizerShape::get_update()
                 // Density.
                 setChannel(s_volume_standard_params.density_channel,
                            s_volume_standard_params.density,
-                           {}, {}, nullptr,
+                           {},
+                           s_volume_standard_params.density_source,
+                           &s_volume_standard_params.density_gradient,
                            m_vdb_data.density_channel);
 
                 // Scattering.

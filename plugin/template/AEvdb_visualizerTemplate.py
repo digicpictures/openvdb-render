@@ -410,6 +410,8 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.beginLayout("Density", collapse=False)
         self.addControl("density", label="Density")
         self.callCustom(self.create_density_channel, self.update_density_channel, "density_channel")
+        self.addControl("density_source", label="Density Source")
+        self.create_float_ramp("density", node_name)
         self.endLayout()
 
         self.beginLayout("Scattering", collapse=False)
