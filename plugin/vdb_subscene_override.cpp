@@ -2488,9 +2488,14 @@ bool SlicedDisplay::update(MHWRender::MSubSceneContainer& container, const VDBSu
     if (data.change_set == ChangeSet::GRADIENT)
         return true;
 
-    //const bool vdb_file_changed        = hasChange(data.change_set, ChangeSet::VDB_FILE);
-    //const bool max_slice_count_changed = hasChange(data.change_set, ChangeSet::MAX_SLICE_COUNT);
+    // Update slice geometry if number of slices has changed.
+    if (hasChange(data.change_set, ChangeSet::MAX_SLICE_COUNT))
+        updateSliceGeo(data);
 
+    // Update file-level bbox.
+    updateBBox(data.bbox);
+
+    // Update volumes.
     const auto extents = openvdb::Coord(data.max_slice_count, data.max_slice_count, data.max_slice_count);
     m_density_channel.setVolume({ data.vdb_path, data.vdb_file->getUniqueTag(), data.density_channel.name, extents });
     m_scattering_channel.setVolume({ data.vdb_path, data.vdb_file->getUniqueTag(), data.scattering_channel.name, extents });
