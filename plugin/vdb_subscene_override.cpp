@@ -115,9 +115,9 @@ technique Main
     inline void log_error(const char *msg, const char *file_name, int line_no)
     {
 #if _DEBUG
-        std::cerr << "openvdb_render error: " << file_name << ": line " << line_no << ": " << msg << std::endl;
+        std::cerr << "[openvdb_render] error: " << file_name << ": line " << line_no << ": " << msg << std::endl;
 #else
-        std::cerr << "openvdb_render error: " << msg << std::endl;
+        std::cerr << "[openvdb_render] error: " << msg << std::endl;
 #endif
     }
     inline void log_error(const MString& msg, const char *file_name, int line_no)
