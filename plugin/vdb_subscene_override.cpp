@@ -876,614 +876,269 @@ BlackbodyLUT::BlackbodyLUT() : lut(Blackbody::TABLE_SIZE)
     lut.updateFromData(Blackbody::LUT, Blackbody::LUT_NORMALIZER);
 }
 
-// === SlicedDisplay =======================================================
+// === VolumeShader ========================================================
 
-class SlicedDisplay
+class VolumeShader
 {
 public:
-    SlicedDisplay(MHWRender::MPxSubSceneOverride& parent);
-    bool update(MHWRender::MSubSceneContainer& container, const VDBSubSceneOverrideData& data);
-    void enable(bool enable);
+    VolumeShader();
+    ~VolumeShader();
+    MHWRender::MShaderInstance *get() { return m_shader_ptr; }
+    const MHWRender::MShaderInstance *get() const { return m_shader_ptr; }
+    MHWRender::MShaderInstance *operator*() { return get(); }
+    const MHWRender::MShaderInstance *operator*() const { return get(); }
+    MHWRender::MShaderInstance *operator->() { return get(); }
+    const MHWRender::MShaderInstance *operator->() const { return get(); }
+
+    operator bool() const { return get() != nullptr; }
 
 private:
-    bool initRenderItems(MHWRender::MSubSceneContainer& container, const VDBSubSceneOverrideData& data);
+    ShaderPtr m_shader_clone_owner;
+    MHWRender::MShaderInstance *m_shader_ptr;
 
-    void updateBBox(const MBoundingBox& bbox);
-    void updateSliceGeo(const VDBSubSceneOverrideData& data);
+    static void loadShader();
+    static void preDrawCallback(MHWRender::MDrawContext& context,
+                                const MHWRender::MRenderItemList& renderItemList,
+                                MHWRender::MShaderInstance* shaderInstance);
 
-    MHWRender::MPxSubSceneOverride& m_parent;
-
+    static ShaderPtr s_volume_shader;
+    static size_t s_refcount;
     static const unsigned int MAX_LIGHT_COUNT;
-    ShaderPtr m_volume_shader;
-
-    VolumeParam m_density_channel;
-    VolumeParam m_scattering_channel;
-    VolumeParam m_emission_channel;
-    VolumeParam m_transparency_channel;
-    VolumeParam m_temperature_channel;
-
-    // Must be the same as Gradient resolution.
-    static const unsigned int RAMP_RESOLUTION;
-    FloatRampTexture m_density_ramp;
-    RGBRampTexture m_scattering_ramp;
-    RGBRampTexture m_emission_ramp;
-
-    BlackbodyLUT m_blackbody_lut;
-
-    Renderable m_slices_renderable;
-    Renderable m_bbox_renderable;
-    SamplerState m_volume_sampler_state;
-
-    bool m_enabled;
-    bool m_selected;
-
-    static void preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& renderItemList, MHWRender::MShaderInstance* shaderInstance);
-    static const std::string s_effect_code;
-};
-const unsigned int SlicedDisplay::MAX_LIGHT_COUNT = 16;
-const unsigned int SlicedDisplay::RAMP_RESOLUTION = 128;
-
-// === VDBSubSceneOverrideData ====================================================
-
-enum class ChangeSet : unsigned int {
-    NO_CHANGES = 0,
-    GENERIC_ATTRIBUTE =    1<<0,
-    GRADIENT =             1<<1,
-    VDB_FILE =             1<<2,
-    MAX_SLICE_COUNT =      1<<3,
-    SCATTERING_CHANNEL =   1<<4,
-    ATTENUATION_CHANNEL =  1<<5,
-    EMISSION_CHANNEL =     1<<6,
-    DENSITY_CHANNEL =      1<<7,
-    TRANSPARENCY_CHANNEL = 1<<8,
-    TEMPERATURE_CHANNEL =  1<<9,
+    static const std::string VOLUME_EFFECT_CODE;
 };
 
-struct VDBSubSceneOverrideData : public VDBVisualizerData {
-    MMatrix world_matrix;
-    MColor wireframe_color;
-    bool is_selected, is_visible;
+ShaderPtr VolumeShader::s_volume_shader = nullptr;
+size_t VolumeShader::s_refcount = 0;
 
-    openvdb::GridBase::ConstPtr scattering_grid;
-    openvdb::GridBase::ConstPtr attenuation_grid;
-    openvdb::GridBase::ConstPtr emission_grid;
-
-    ChangeSet change_set;
-
-    VDBSubSceneOverrideData();
-    ~VDBSubSceneOverrideData();
-    void clear();
-    bool update(const VDBVisualizerData* data, const MObject& obj);
-};
-
-inline ChangeSet& operator|=(ChangeSet& lhs, ChangeSet rhs)
-{
-    return lhs = ChangeSet(unsigned(lhs) | unsigned(rhs));
-}
-inline ChangeSet operator|(ChangeSet lhs, ChangeSet rhs)
-{
-    lhs |= rhs;
-    return lhs;
-}
-inline ChangeSet& operator&=(ChangeSet& lhs, ChangeSet rhs)
-{
-    return lhs = ChangeSet(unsigned(lhs) & unsigned(rhs));
-}
-inline ChangeSet operator&(ChangeSet lhs, ChangeSet rhs)
-{
-    lhs &= rhs;
-    return lhs;
-}
-inline bool hasChange(ChangeSet change_set, ChangeSet mask)
-{
-    return (change_set & mask) != ChangeSet::NO_CHANGES;
-}
-
-VDBSubSceneOverrideData::VDBSubSceneOverrideData() : is_selected(false), change_set(ChangeSet::NO_CHANGES)
-{
-    for (unsigned int x = 0; x < 4; ++x)
-    {
-        for (unsigned int y = 0; y < 4; ++y)
-            world_matrix(x, y) = std::numeric_limits<float>::infinity();
-    }
-}
-
-VDBSubSceneOverrideData::~VDBSubSceneOverrideData()
-{
-    clear();
-}
-
-void VDBSubSceneOverrideData::clear()
-{
-    scattering_grid = 0;
-    attenuation_grid = 0;
-    emission_grid = 0;
-    vdb_file = nullptr;
-}
+const unsigned int VolumeShader::MAX_LIGHT_COUNT = 16;
 
 namespace {
 
-    ChangeSet setup_channel(ChannelParams& target, const ChannelParams& source, ChangeSet channel_mask)
+    template <typename T>
+    MHWRender::MShaderCompileMacro makeMacroDef(const MString& name, const T& value)
     {
-        if (target.name != source.name)
-        {
-            target = source;
-            return channel_mask;
-        }
-        else if (target.gradient != source.gradient)
-        {
-            target = source;
-            return ChangeSet::GRADIENT;
-        }
-        else if (target.color_source != source.color_source || target.intensity != source.intensity || target.color != source.color)
-        {
-            target = source;
-            return ChangeSet::GENERIC_ATTRIBUTE;
-        }
-        else
-        {
-            return ChangeSet::NO_CHANGES;
-        }
+        return { name, format("^1s", value) };
+    };
+
+    template <>
+    MHWRender::MShaderCompileMacro makeMacroDef<float>(const MString& name, const float& value)
+    {
+        return { name, format("^1sf", value) };
     }
 
 } // unnamed namespace
 
-bool VDBSubSceneOverrideData::update(const VDBVisualizerData* data, const MObject& obj)
+VolumeShader::VolumeShader()
 {
-    // TODO: we can limit some of the comparisons to the display mode
-    // ie, we don't need to compare certain things if we are using the bounding
-    // box mode
-    change_set = ChangeSet::NO_CHANGES;
-
-    MDagPath dg = MDagPath::getAPathTo(obj);
-    const MMatrix inc_world_matrix = dg.inclusiveMatrix();
-    change_set |= setup_parameter(world_matrix, inc_world_matrix, ChangeSet::GENERIC_ATTRIBUTE);
-    change_set |= setup_parameter(wireframe_color, MHWRender::MGeometryUtilities::wireframeColor(dg), ChangeSet::GENERIC_ATTRIBUTE);
-    change_set |= setup_parameter(is_selected, isPathSelected(dg), ChangeSet::GENERIC_ATTRIBUTE);
-    change_set |= setup_parameter(is_visible, dg.isVisible(), ChangeSet::GENERIC_ATTRIBUTE);
-
-    if (data == nullptr || update_trigger == data->update_trigger)
-        return change_set != ChangeSet::NO_CHANGES;
-
-    update_trigger = data->update_trigger;
-
-    change_set |= setup_parameter(display_mode, data->display_mode, ChangeSet::GENERIC_ATTRIBUTE);
-    change_set |= setup_parameter(bbox, data->bbox, ChangeSet::GENERIC_ATTRIBUTE);
-    change_set |= setup_parameter(point_skip, data->point_skip, ChangeSet::GENERIC_ATTRIBUTE);
-
-    change_set |= setup_channel(density_channel, data->density_channel, ChangeSet::DENSITY_CHANNEL);
-    change_set |= setup_channel(scattering_channel, data->scattering_channel, ChangeSet::SCATTERING_CHANNEL);
-    change_set |= setup_channel(attenuation_channel, data->attenuation_channel, ChangeSet::ATTENUATION_CHANNEL);
-    change_set |= setup_channel(emission_channel, data->emission_channel, ChangeSet::EMISSION_CHANNEL);
-    change_set |= setup_channel(transparency_channel, data->transparency_channel, ChangeSet::TRANSPARENCY_CHANNEL);
-    change_set |= setup_channel(temperature_channel, data->temperature_channel, ChangeSet::TEMPERATURE_CHANNEL);
-    change_set |= setup_parameter(anisotropy, data->anisotropy, ChangeSet::GENERIC_ATTRIBUTE);
-    change_set |= setup_parameter(blackbody_intensity, data->blackbody_intensity, ChangeSet::GENERIC_ATTRIBUTE);
-    change_set |= setup_parameter(emission_mode, data->emission_mode, ChangeSet::GENERIC_ATTRIBUTE);
-
-    change_set |= setup_parameter(vdb_path, data->vdb_path, ChangeSet::VDB_FILE);
-    vdb_file = data->vdb_file;
-    if (!vdb_file)
-        clear();
-
-    if (display_mode == VDBDisplayMode::DISPLAY_SLICES)
+    if (s_refcount == 0)
     {
-        change_set |= setup_parameter(max_slice_count, data->max_slice_count, ChangeSet::MAX_SLICE_COUNT);
-        change_set |= setup_parameter(shadow_sample_count, data->shadow_sample_count, ChangeSet::GENERIC_ATTRIBUTE);
-        change_set |= setup_parameter(shadow_gain, data->shadow_gain, ChangeSet::GENERIC_ATTRIBUTE);
-        change_set |= setup_parameter(per_slice_gamma, data->per_slice_gamma, ChangeSet::GENERIC_ATTRIBUTE);
+        // Load the shader. 
+        loadShader();
+        // The first instance uses the static MShaderInstance.
+        m_shader_ptr = s_volume_shader.get();
     }
-
-    point_size = data->point_size;
-    point_jitter = data->point_jitter; // We can jitter in the vertex shader. Hopefully
-
-    return change_set != ChangeSet::NO_CHANGES;
-}
-
-// === VDBSubSceneOverride implementation ==================================
-
-void VDBSubSceneOverride::shader_instance_deleter::operator()(MHWRender::MShaderInstance* p)
-{
-    auto shmgr = get_shader_manager();
-    if (shmgr != nullptr)
-        shmgr->releaseShader(p);
-}
-
-MString VDBSubSceneOverride::registrantId("VDBVisualizerSubSceneOverride");
-
-MHWRender::MPxSubSceneOverride* VDBSubSceneOverride::creator(const MObject& obj)
-{
-    return new VDBSubSceneOverride(obj);
-}
-
-VDBSubSceneOverride::VDBSubSceneOverride(const MObject& obj) : MPxSubSceneOverride(obj),
-    p_data(new VDBSubSceneOverrideData),
-    m_sliced_display(new SlicedDisplay(*this))
-{
-    m_object = obj;
-    MFnDependencyNode dnode(obj);
-    p_vdb_visualizer = dynamic_cast<VDBVisualizerShape*>(dnode.userNode());
-    auto shmgr = get_shader_manager();
-    if (shmgr != nullptr)
+    else if (s_volume_shader.get() != nullptr)
     {
-        p_point_cloud_shader.reset(shmgr->getEffectsBufferShader(
-            point_cloud_technique, static_cast<unsigned int>(strlen(point_cloud_technique)), "Main", 0, 0, false));
-
-        if (p_point_cloud_shader != nullptr)
-            p_point_cloud_shader->setIsTransparent(true);
-        else
-            std::cerr << "Point cloud shader is zero!" << std::endl;
+        // Not the first instance, clone the static shader.
+        m_shader_clone_owner.reset(s_volume_shader->clone());
+        m_shader_ptr = m_shader_clone_owner.get();
     }
+    ++s_refcount;
 }
 
-VDBSubSceneOverride::~VDBSubSceneOverride()
+VolumeShader::~VolumeShader()
 {
+    --s_refcount;
+    if (s_refcount == 0)
+        // Last instance; release the static MShaderInstance.
+        s_volume_shader.reset();
 }
 
-MHWRender::DrawAPI VDBSubSceneOverride::supportedDrawAPIs() const
+void VolumeShader::loadShader()
 {
-#if MAYA_API_VERSION >= 201600
-    return MHWRender::kOpenGLCoreProfile | MHWRender::kOpenGL;
-#else
-    return MHWRender::kOpenGL;
-#endif
-}
-
-void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const MHWRender::MFrameContext& /*frameContext*/)
-{
-    VDBSubSceneOverrideData* data = p_data.get();
-
     const MHWRender::MShaderManager* shader_manager = get_shader_manager();
-    if (shader_manager == nullptr)
+    if (!shader_manager)
         return;
 
-    MHWRender::MRenderItem* bounding_box = container.find("bounding_box");
-    if (bounding_box == nullptr)
+    MHWRender::MShaderCompileMacro macros[] = { makeMacroDef("BLACKBODY_LUT_MIN_TEMP",   Blackbody::TEMPERATURE_MIN),
+                                                makeMacroDef("BLACKBODY_LUT_MAX_TEMP",   Blackbody::TEMPERATURE_MAX),
+                                                makeMacroDef("BLACKBODY_LUT_NORMALIZER", Blackbody::LUT_NORMALIZER),
+                                                makeMacroDef("MAX_LIGHT_COUNT",          MAX_LIGHT_COUNT) };
+    constexpr int macro_count = sizeof(macros) / sizeof(MHWRender::MShaderCompileMacro);
+    s_volume_shader.reset(shader_manager->getEffectsBufferShader(
+            VOLUME_EFFECT_CODE.c_str(), unsigned(VOLUME_EFFECT_CODE.size()),
+            "Main", macros, macro_count, /*useEffectCache=*/false, preDrawCallback));
+    if (!s_volume_shader)
     {
-        bounding_box = MHWRender::MRenderItem::Create("bounding_box",
-            MHWRender::MRenderItem::NonMaterialSceneItem,
-            MHWRender::MGeometry::kLines);
-        bounding_box->enable(false);
-        bounding_box->setDrawMode(MHWRender::MGeometry::kAll);
-        bounding_box->depthPriority(MHWRender::MRenderItem::sDormantWireDepthPriority);
-
-        MHWRender::MShaderInstance* shader = shader_manager->getStockShader(
-            MHWRender::MShaderManager::k3dSolidShader, nullptr, nullptr);
-        if (shader)
+        LOG_ERROR("Cannot compile cgfx.");
+        CGcontext context = cgCreateContext();
+        for (auto shader_spec : { std::make_pair("VolumeVertexShader", "gp5vp"), std::make_pair("VolumeFragmentShader", "gp5fp") })
         {
-            // Set the color on the shader instance using the parameter interface
-            static const float color[] = { 0.0f, 1.0f, 0.0f, 1.0f };
-            shader->setParameter("solidColor", color);
-
-            // Assign the shader to the custom render item
-            bounding_box->setShader(shader);
+            if (!cgCreateProgram(context, CG_SOURCE, VOLUME_EFFECT_CODE.c_str(), cgGetProfile(shader_spec.second), shader_spec.first, nullptr))
+            {
+                const char *compiler_output = cgGetLastListing(context);
+                LOG_ERROR(format("^1s: compilation errors:\n^2s", shader_spec.first, compiler_output).asChar());
+            }
         }
-
-        container.add(bounding_box);
-    }
-
-    MHWRender::MRenderItem* point_cloud = container.find("point_cloud");
-    if (point_cloud == nullptr)
-    {
-        point_cloud = MHWRender::MRenderItem::Create("point_cloud",
-            MHWRender::MGeometry::kPoints,
-            MHWRender::MGeometry::kAll,
-            false);
-        point_cloud->enable(false);
-        point_cloud->setDrawMode(MHWRender::MGeometry::kAll);
-        point_cloud->depthPriority(MHWRender::MRenderItem::sDormantPointDepthPriority);
-
-        //if (p_point_cloud_shader == nullptr)
-        {
-            MHWRender::MShaderInstance* shader = shader_manager->getStockShader(
-                MHWRender::MShaderManager::k3dCPVFatPointShader, nullptr, nullptr);
-            if (shader)
-                point_cloud->setShader(shader);
-        }
-        /*else
-            point_cloud->setShader(p_point_cloud_shader.get());*/
-
-        container.add(point_cloud);
-    }
-
-    bounding_box->setMatrix(&data->world_matrix);
-    point_cloud->setMatrix(&data->world_matrix);
-
-    if (data->change_set == ChangeSet::NO_CHANGES)
         return;
-
-    const bool file_exists = data->vdb_file != nullptr;
-
-    const static MHWRender::MVertexBufferDescriptor position_buffer_desc("", MHWRender::MGeometry::kPosition, MHWRender::MGeometry::kFloat, 3);
-    const static MHWRender::MVertexBufferDescriptor color_buffer_desc("", MHWRender::MGeometry::kColor, MHWRender::MGeometry::kFloat, 4);
-
-    if (!file_exists || data->display_mode <= DISPLAY_GRID_BBOX)
-    {
-        point_cloud->enable(false);
-        bounding_box->enable(data->is_visible);
-        m_sliced_display->enable(false);
-
-        MHWRender::MVertexBufferArray vertex_buffers;
-        p_bbox_position.reset(new MHWRender::MVertexBuffer(position_buffer_desc));
-        p_bbox_indices.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
-
-        if ((data->display_mode == DISPLAY_AXIS_ALIGNED_BBOX) || !file_exists)
-        {
-            MFloatVector* bbox_vertices = reinterpret_cast<MFloatVector*>(p_bbox_position->acquire(8, true));
-            MFloatVector min = data->bbox.min();
-            MFloatVector max = data->bbox.max();
-            bbox_vertices[0] = MFloatVector(min.x, min.y, min.z);
-            bbox_vertices[1] = MFloatVector(min.x, max.y, min.z);
-            bbox_vertices[2] = MFloatVector(min.x, max.y, max.z);
-            bbox_vertices[3] = MFloatVector(min.x, min.y, max.z);
-            bbox_vertices[4] = MFloatVector(max.x, min.y, min.z);
-            bbox_vertices[5] = MFloatVector(max.x, max.y, min.z);
-            bbox_vertices[6] = MFloatVector(max.x, max.y, max.z);
-            bbox_vertices[7] = MFloatVector(max.x, min.y, max.z);
-            p_bbox_position->commit(bbox_vertices);
-            set_bbox_indices(1, p_bbox_indices.get());
-        }
-        else if (data->display_mode == DISPLAY_GRID_BBOX)
-        {
-            try
-            {
-                if (!data->vdb_file->isOpen())
-                    data->vdb_file->open(false);
-                openvdb::GridPtrVecPtr grids = data->vdb_file->readAllGridMetadata();
-                if (grids->size() == 0)
-                    return;
-                std::vector<MFloatVector> vertices;
-                vertices.reserve(grids->size() * 8);
-
-                for (openvdb::GridPtrVec::const_iterator it = grids->begin(); it != grids->end(); ++it)
-                {
-                    if (openvdb::GridBase::ConstPtr grid = *it)
-                    {
-                        std::array<MFloatVector, 8> _vertices;
-                        if (read_grid_transformed_bbox_wire(grid, _vertices))
-                        {
-                            for (int v = 0; v < 8; ++v)
-                                vertices.push_back(_vertices[v]);
-                        }
-                    }
-                }
-
-                const unsigned int vertex_count = static_cast<unsigned int>(vertices.size());
-
-                if (vertex_count > 0)
-                {
-                    p_bbox_position.reset(new MHWRender::MVertexBuffer(position_buffer_desc));
-                    p_bbox_indices.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
-                    MFloatVector* bbox_vertices = reinterpret_cast<MFloatVector*>(p_bbox_position->acquire(vertex_count, true));
-                    for (unsigned int i = 0; i < vertex_count; ++i)
-                        bbox_vertices[i] = vertices[i];
-                    p_bbox_position->commit(bbox_vertices);
-                    set_bbox_indices(vertex_count / 8, p_bbox_indices.get());
-                }
-            }
-            catch (...)
-            {
-            }
-        }
-
-        vertex_buffers.addBuffer("", p_bbox_position.get());
-        setGeometryForRenderItem(*bounding_box, vertex_buffers, *p_bbox_indices.get(), &data->bbox);
     }
-    else
+
+    s_volume_shader->setIsTransparent(true);
+}
+
+namespace {
+
+    typedef std::array<float, 3> Float3;
+
+    template <typename ParamSpec>
+    void setLightParam(MHWRender::MLightParameterInformation* light_params, const ParamSpec& param_spec, float& output) {
+        MFloatArray float_array;
+        if (light_params->getParameter(param_spec, float_array) == MStatus::kSuccess)
+            output = float_array[0];
+    };
+
+    template <typename ParamSpec>
+    void setLightParam(MHWRender::MLightParameterInformation* light_params, const ParamSpec& param_spec, Float3& output) {
+        MFloatArray float_array;
+        if (light_params->getParameter(param_spec, float_array) == MStatus::kSuccess)
+            memcpy(&output, &float_array[0], 3 * sizeof(float));
+    };
+
+    float radiansFromDegrees(float degrees)
     {
-        bounding_box->enable(false);
-        if (data->display_mode == DISPLAY_POINT_CLOUD)
-        {
-            m_sliced_display->enable(false);
+        return float(M_PI) * degrees / 180.0f;
+    }
 
-            try {
-                if (!data->vdb_file->isOpen())
-                    data->vdb_file->open(false);
-                if (data->attenuation_grid == nullptr || data->attenuation_grid->getName() != data->attenuation_channel.name)
-                    data->attenuation_grid = data->vdb_file->readGrid(data->attenuation_channel.name);
-            }
-            catch (...) {
-                data->attenuation_grid = nullptr;
-                data->scattering_grid = nullptr;
-                data->emission_grid = nullptr;
-                return;
-            }
-            point_cloud->enable(data->is_visible);
+    template <int N>
+    union Float3Array
+    {
+        std::array<float, 3 * N> float_array;
+        std::array<Float3, N> float3_array;
+    };
 
-            const openvdb::Vec3d voxel_size = data->attenuation_grid->voxelSize();
+} // unnamed namespace
 
-            FloatVoxelIterator* iter = nullptr;
+void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& /*renderItemList*/, MHWRender::MShaderInstance* shader_instance)
+{
+    constexpr int LIGHT_FLAG_POINT_LIGHT       = 0;
+    constexpr int LIGHT_FLAG_DIRECTIONAL_LIGHT = 1;
+    constexpr int LIGHT_FLAG_SPOTLIGHT         = 2;
+    constexpr int LIGHT_FLAG_CAST_SHADOWS      = 8;
 
-            if (data->attenuation_grid->valueType() == "float")
-                iter = new FloatToFloatVoxelIterator(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->attenuation_grid));
-            else if (data->attenuation_grid->valueType() == "vec3s")
-                iter = new Vec3SToFloatVoxelIterator(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->attenuation_grid));
-            else
-                iter = new FloatVoxelIterator();
+    // Set view position.
+    {
+        MStatus status;
+        const auto view_pos = context.getTuple(MHWRender::MFrameContext::kViewPosition, &status);
+        CHECK_MSTATUS(status);
+        CHECK_MSTATUS(shader_instance->setParameter("view_pos_world", MFloatVector(float(view_pos[0]), float(view_pos[1]), float(view_pos[2]))));
+    }
 
-            // setting up vertex buffers
-            std::vector<MFloatVector> vertices;
-            vertices.reserve(iter->get_active_voxels());
-            const openvdb::math::Transform attenuation_transform = data->attenuation_grid->transform();
+    // Collect light data.
 
-            std::mt19937 mt_generator;
-            std::uniform_real_distribution<float> uniform_0_1_dist(0.0f, 1.0f);
-            const float point_skip_ratio = 1.0f / static_cast<float>(std::max(data->point_skip, 1));
-            for (; iter->is_valid(); iter->get_next())
-            {
-                // this gives a better distribution than skipping based on index
-                if (uniform_0_1_dist(mt_generator) > point_skip_ratio)
-                    continue;
-                openvdb::Vec3d vdb_pos = attenuation_transform.indexToWorld(iter->get_coord());
-                vertices.push_back(MFloatVector(static_cast<float>(vdb_pos.x()), static_cast<float>(vdb_pos.y()),
-                    static_cast<float>(vdb_pos.z())));
-            }
+    Float3Array<MAX_LIGHT_COUNT> light_position;
+    Float3Array<MAX_LIGHT_COUNT> light_direction;
+    Float3Array<MAX_LIGHT_COUNT> light_color;
+    Float3Array<MAX_LIGHT_COUNT> light_shadow_color;
+    std::array<int,   MAX_LIGHT_COUNT> light_flags;
+    std::array<float, MAX_LIGHT_COUNT> light_intensity;
+    std::array<float, MAX_LIGHT_COUNT> light_decay_exponent;
+    std::array<float, MAX_LIGHT_COUNT> light_cutoff_costheta1;
+    std::array<float, MAX_LIGHT_COUNT> light_cutoff_costheta2;
+    std::array<float, MAX_LIGHT_COUNT> light_dropoff;
 
-            vertices.shrink_to_fit();
-            const unsigned int vertex_count = static_cast<unsigned int>(vertices.size());
+    using MHWRender::MLightParameterInformation;
 
-            if (vertex_count == 0)
-                return;
+    const auto light_count_total = std::min(context.numberOfActiveLights(), MAX_LIGHT_COUNT);
+    int shader_light_count = 0;
+    for (unsigned int i = 0; i < light_count_total; ++i)
+    {
+        MIntArray int_array;
+        MFloatArray float_array;
 
-            delete iter;
+        const auto light_params = context.getLightParameterInformation(i);
 
-            tbb::task_scheduler_init task_init;
+        // Proceed to next light if this light is not enabled.
+        const auto status = light_params->getParameter(MLightParameterInformation::kLightEnabled, float_array);
+        if (status != MS::kSuccess || float_array[0] != 1)
+            continue;
 
-            p_index_buffer.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
-            unsigned int* indices = reinterpret_cast<unsigned int*>(p_index_buffer->acquire(vertex_count, true));
-            for (unsigned int i = 0; i < vertex_count; ++i)
-                indices[i] = i;
-            p_index_buffer->commit(indices);
+        light_flags[shader_light_count] = 0;
 
-
-            p_position_buffer.reset(new MHWRender::MVertexBuffer(position_buffer_desc));
-            MFloatVector* pc_vertices = reinterpret_cast<MFloatVector*>(p_position_buffer->acquire(static_cast<unsigned int>(vertices.size()), true));
-            const float point_jitter = data->point_jitter;
-            if (point_jitter > 0.001f)
-            {
-                std::uniform_real_distribution<float> distributionX(-point_jitter * static_cast<float>(voxel_size.x()), point_jitter * static_cast<float>(voxel_size.x()));
-                std::uniform_real_distribution<float> distributionY(-point_jitter * static_cast<float>(voxel_size.y()), point_jitter * static_cast<float>(voxel_size.y()));
-                std::uniform_real_distribution<float> distributionZ(-point_jitter * static_cast<float>(voxel_size.z()), point_jitter * static_cast<float>(voxel_size.z()));
-
-                tbb::parallel_for(tbb::blocked_range<unsigned int>(0, vertex_count), [&](const tbb::blocked_range<unsigned int>& r) {
-                    std::minstd_rand generatorX(42 + r.begin()); // LCG
-                    std::minstd_rand generatorY(137 + r.begin());
-                    std::minstd_rand generatorZ(1337 + r.begin());
-                    for (unsigned int i = r.begin(); i != r.end(); ++i)
-                    {
-                        MFloatVector pos = vertices[i];
-                        pos.x += distributionX(generatorX);
-                        pos.y += distributionY(generatorY);
-                        pos.z += distributionZ(generatorZ);
-                        pc_vertices[i] = pos;
-                    }
-                });
-            }
-            else
-            {
-                tbb::parallel_for(tbb::blocked_range<unsigned int>(0, vertex_count), [&](const tbb::blocked_range<unsigned int>& r) {
-                    memcpy(&pc_vertices[r.begin()], &vertices[r.begin()], (r.end() - r.begin()) * sizeof(MFloatVector));
-                });
-            }
-            p_position_buffer->commit(pc_vertices);
-
-            // setting up color buffers
-
-            try {
-                if (data->scattering_grid == nullptr || data->scattering_grid->getName() != data->scattering_channel.name)
-                    data->scattering_grid = data->vdb_file->readGrid(data->scattering_channel.name);
-            }
-            catch (...) {
-                data->scattering_grid = nullptr;
-            }
-
-            RGBSampler* scattering_sampler = nullptr;
-
-            if (data->scattering_grid == nullptr)
-                scattering_sampler = new (m_scattering_sampler.data()) RGBSampler();
-            else
-            {
-                if (data->scattering_grid->valueType() == "float")
-                    scattering_sampler = new (m_scattering_sampler.data()) FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->scattering_grid));
-                else if (data->scattering_grid->valueType() == "vec3s")
-                    scattering_sampler = new (m_scattering_sampler.data()) Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->scattering_grid));
-                else
-                    scattering_sampler = new (m_scattering_sampler.data()) RGBSampler();
-            }
-
-            try {
-                if (data->emission_grid == nullptr || data->emission_grid->getName() != data->emission_channel.name)
-                    data->emission_grid = data->vdb_file->readGrid(data->emission_channel.name);
-            }
-            catch (...) {
-                data->emission_grid = nullptr;
-            }
-
-            RGBSampler* emission_sampler = nullptr;
-
-            if (data->emission_grid == nullptr)
-                emission_sampler = new (m_emission_sampler.data()) RGBSampler(MFloatVector(0.0f, 0.0f, 0.0f));
-            else
-            {
-                if (data->emission_grid->valueType() == "float")
-                    emission_sampler = new (m_emission_sampler.data()) FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->emission_grid));
-                else if (data->emission_grid->valueType() == "vec3s")
-                    emission_sampler = new (m_emission_sampler.data()) Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->emission_grid));
-                else
-                    emission_sampler = new (m_emission_sampler.data()) RGBSampler(MFloatVector(0.0f, 0.0f, 0.0f));
-            }
-
-            RGBSampler* attenuation_sampler = 0;
-
-            if (data->attenuation_grid->valueType() == "float")
-                attenuation_sampler = new (m_attenuation_sampler.data()) FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->attenuation_grid));
-            else if (data->attenuation_grid->valueType() == "vec3s")
-                attenuation_sampler = new (m_attenuation_sampler.data()) Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->attenuation_grid));
-            else
-                attenuation_sampler = new (m_attenuation_sampler.data()) RGBSampler(MFloatVector(1.0f, 1.0f, 1.0f));
-
-            p_color_buffer.reset(new MHWRender::MVertexBuffer(color_buffer_desc));
-            MColor* colors = reinterpret_cast<MColor*>(p_color_buffer->acquire(vertex_count, true));
-            tbb::parallel_for(tbb::blocked_range<unsigned int>(0, vertex_count), [&](const tbb::blocked_range<unsigned int>& r) {
-                for (unsigned int i = r.begin(); i < r.end(); ++i)
-                {
-                    const MFloatVector& v = vertices[i];
-                    const openvdb::Vec3d pos(v.x, v.y, v.z);
-                    MColor& color = colors[i];
-                    const MFloatVector scattering_color = data->scattering_channel.gradient.evaluate(scattering_sampler->get_rgb(pos));
-                    const MFloatVector emission_color = data->emission_channel.gradient.evaluate(emission_sampler->get_rgb(pos));
-                    const MFloatVector attenuation_color = data->attenuation_channel.gradient.evaluate(attenuation_sampler->get_rgb(pos));
-                    color.r = scattering_color.x * data->scattering_channel.color.x + emission_color.x * data->emission_channel.color.x;
-                    color.g = scattering_color.y * data->scattering_channel.color.y + emission_color.y * data->emission_channel.color.y;
-                    color.b = scattering_color.z * data->scattering_channel.color.z + emission_color.z * data->emission_channel.color.z;
-                    color.a = (attenuation_color.x * data->attenuation_channel.color.x +
-                        attenuation_color.y * data->attenuation_channel.color.y +
-                        attenuation_color.z * data->attenuation_channel.color.z) / 3.0f;
-                }
-            });
-            p_color_buffer->commit(colors);
-
-            scattering_sampler->~RGBSampler();
-            emission_sampler->~RGBSampler();
-            attenuation_sampler->~RGBSampler();
-
-            MHWRender::MVertexBufferArray vertex_buffers;
-            vertex_buffers.addBuffer("", p_position_buffer.get());
-            vertex_buffers.addBuffer("", p_color_buffer.get());
-
-            /*const MVertexBufferDescriptorList& reqs = point_cloud->requiredVertexBuffers();
-            for (int i = 0; i < reqs.length(); ++i)
-            {
-                MVertexBufferDescriptor desc;
-                reqs.getDescriptor(i, desc);
-                std::cerr << "Requirement : (" << desc.name() << ") " << desc.semantic() << std::endl;
-            }*/
-            setGeometryForRenderItem(*point_cloud, vertex_buffers, *p_index_buffer.get(), &data->bbox);
-        }
-        else if (data->display_mode == DISPLAY_SLICES)
-        {
-            point_cloud->enable(false);
-
-            m_sliced_display->enable(data->is_visible);
-            m_sliced_display->update(container, *data);
-        }
+        // Light type.
+        const auto light_type = light_params->lightType();
+        if (light_type == "pointLight")
+            light_flags[shader_light_count] |= LIGHT_FLAG_POINT_LIGHT;
+        else if (light_type == "directionalLight")
+            light_flags[shader_light_count] |= LIGHT_FLAG_DIRECTIONAL_LIGHT;
+        else if (light_type == "spotLight")
+            light_flags[shader_light_count] |= LIGHT_FLAG_SPOTLIGHT;
         else
         {
-            m_sliced_display->enable(false);
+            LOG_ERROR(format("unsupported light type ^1s", light_type).asChar());
+            continue;
         }
+
+        // Position.
+        setLightParam(light_params, MLightParameterInformation::kWorldPosition, light_position.float3_array[shader_light_count]);
+
+        // Direction.
+        setLightParam(light_params, MLightParameterInformation::kWorldDirection, light_direction.float3_array[shader_light_count]);
+
+        // Color.
+        setLightParam(light_params, MLightParameterInformation::kColor, light_color.float3_array[shader_light_count]);
+
+        // Intensity.
+        setLightParam(light_params, MLightParameterInformation::kIntensity, light_intensity[shader_light_count]);
+
+        // TODO: exposure from node.
+        //auto light_path = light_params->lightPath();
+        // Or use maya api if it will provide exposure.
+        //if (light_params->getParameter("exposure", float_array) == MStatus::kSuccess)
+        //    light_intensity[shader_light_count] *= std::pow(2.0f, float_array[0]);
+
+        // Shadow.
+        // ShadowOn attrib of point lights is buggy, cast shadows by default.
+        if (light_type == "pointLight")
+            light_flags[shader_light_count] |= LIGHT_FLAG_CAST_SHADOWS;
+        else if (light_params->getParameter(MLightParameterInformation::kShadowOn, int_array) == MStatus::kSuccess && int_array[0] == 1)
+            light_flags[shader_light_count] |= LIGHT_FLAG_CAST_SHADOWS;
+        setLightParam(light_params, MLightParameterInformation::kShadowColor, light_shadow_color.float3_array[shader_light_count]);
+
+        // Decay rate.
+        setLightParam(light_params, MLightParameterInformation::kDecayRate, light_decay_exponent[shader_light_count]);
+
+        // Spot light dropoff.
+        setLightParam(light_params, MLightParameterInformation::kDropoff, light_dropoff[shader_light_count]);
+
+        // Spot light cutoffs.
+        if (light_params->getParameter(MLightParameterInformation::kCosConeAngle, float_array) == MStatus::kSuccess)
+        {
+            light_cutoff_costheta1[shader_light_count] = float_array[0];
+            light_cutoff_costheta2[shader_light_count] = float_array[1];
+        }
+
+        shader_light_count++;
     }
 
-    data->change_set = ChangeSet::NO_CHANGES;
+    // Convert colors to linear color space.
+    LinearFromSRGB(light_color.float_array.data(), shader_light_count);
+    LinearFromSRGB(light_shadow_color.float_array.data(), shader_light_count);
+
+    // Set shader params.
+    CHECK_MSTATUS(shader_instance->setParameter("light_count", shader_light_count));
+    CHECK_MSTATUS(shader_instance->setArrayParameter("light_flags", light_flags.data(), shader_light_count));
+    CHECK_MSTATUS(shader_instance->setArrayParameter("light_position", light_position.float_array.data(), shader_light_count));
+    CHECK_MSTATUS(shader_instance->setArrayParameter("light_direction", light_direction.float_array.data(), shader_light_count));
+    CHECK_MSTATUS(shader_instance->setArrayParameter("light_color", light_color.float_array.data(), shader_light_count));
+    CHECK_MSTATUS(shader_instance->setArrayParameter("light_intensity", light_intensity.data(), shader_light_count));
+    CHECK_MSTATUS(shader_instance->setArrayParameter("light_shadow_color", light_shadow_color.float_array.data(), shader_light_count));
+    CHECK_MSTATUS(shader_instance->setArrayParameter("light_decay_exponent", light_decay_exponent.data(), shader_light_count));
+    CHECK_MSTATUS(shader_instance->setArrayParameter("light_cutoff_costheta1", light_cutoff_costheta1.data(), shader_light_count));
+    CHECK_MSTATUS(shader_instance->setArrayParameter("light_cutoff_costheta2", light_cutoff_costheta2.data(), shader_light_count));
+    CHECK_MSTATUS(shader_instance->setArrayParameter("light_dropoff", light_dropoff.data(), shader_light_count));
 }
 
-bool VDBSubSceneOverride::requiresUpdate(const MHWRender::MSubSceneContainer& /*container*/, const MHWRender::MFrameContext& /*frameContext*/) const
-{
-    return p_data->update(p_vdb_visualizer->get_update(), m_object);
-}
-
-// === Sliced display mode implementation ===================================
-
-const std::string SlicedDisplay::s_effect_code = std::string(R"cgfx(
+const std::string VolumeShader::VOLUME_EFFECT_CODE = std::string(R"cgfx(
 float3 view_dir_world : ViewDirection;
 float3 view_pos_world;
 float4x4 world_mat : World;
@@ -2048,21 +1703,613 @@ technique Main < int isTransparent = 1; >
 }
 )cgfx");
 
+// === SlicedDisplay =======================================================
+
+class SlicedDisplay
+{
+public:
+    SlicedDisplay(MHWRender::MPxSubSceneOverride& parent);
+    bool update(MHWRender::MSubSceneContainer& container, const VDBSubSceneOverrideData& data);
+    void enable(bool enable);
+
+private:
+    bool initRenderItems(MHWRender::MSubSceneContainer& container, const VDBSubSceneOverrideData& data);
+
+    void updateBBox(const MBoundingBox& bbox);
+    void updateSliceGeo(const VDBSubSceneOverrideData& data);
+
+    MHWRender::MPxSubSceneOverride& m_parent;
+
+    VolumeShader m_volume_shader;
+
+    VolumeParam m_density_channel;
+    VolumeParam m_scattering_channel;
+    VolumeParam m_emission_channel;
+    VolumeParam m_transparency_channel;
+    VolumeParam m_temperature_channel;
+
+    // Must be the same as Gradient resolution.
+    static const unsigned int RAMP_RESOLUTION;
+    FloatRampTexture m_density_ramp;
+    RGBRampTexture m_scattering_ramp;
+    RGBRampTexture m_emission_ramp;
+
+    BlackbodyLUT m_blackbody_lut;
+
+    Renderable m_slices_renderable;
+    Renderable m_bbox_renderable;
+    SamplerState m_volume_sampler_state;
+
+    bool m_enabled;
+    bool m_selected;
+};
+const unsigned int SlicedDisplay::RAMP_RESOLUTION = 128;
+
+// === VDBSubSceneOverrideData ====================================================
+
+enum class ChangeSet : unsigned int {
+    NO_CHANGES = 0,
+    GENERIC_ATTRIBUTE =    1<<0,
+    GRADIENT =             1<<1,
+    VDB_FILE =             1<<2,
+    MAX_SLICE_COUNT =      1<<3,
+    SCATTERING_CHANNEL =   1<<4,
+    ATTENUATION_CHANNEL =  1<<5,
+    EMISSION_CHANNEL =     1<<6,
+    DENSITY_CHANNEL =      1<<7,
+    TRANSPARENCY_CHANNEL = 1<<8,
+    TEMPERATURE_CHANNEL =  1<<9,
+};
+
+struct VDBSubSceneOverrideData : public VDBVisualizerData {
+    MMatrix world_matrix;
+    MColor wireframe_color;
+    bool is_selected, is_visible;
+
+    openvdb::GridBase::ConstPtr scattering_grid;
+    openvdb::GridBase::ConstPtr attenuation_grid;
+    openvdb::GridBase::ConstPtr emission_grid;
+
+    ChangeSet change_set;
+
+    VDBSubSceneOverrideData();
+    ~VDBSubSceneOverrideData();
+    void clear();
+    bool update(const VDBVisualizerData* data, const MObject& obj);
+};
+
+inline ChangeSet& operator|=(ChangeSet& lhs, ChangeSet rhs)
+{
+    return lhs = ChangeSet(unsigned(lhs) | unsigned(rhs));
+}
+inline ChangeSet operator|(ChangeSet lhs, ChangeSet rhs)
+{
+    lhs |= rhs;
+    return lhs;
+}
+inline ChangeSet& operator&=(ChangeSet& lhs, ChangeSet rhs)
+{
+    return lhs = ChangeSet(unsigned(lhs) & unsigned(rhs));
+}
+inline ChangeSet operator&(ChangeSet lhs, ChangeSet rhs)
+{
+    lhs &= rhs;
+    return lhs;
+}
+inline bool hasChange(ChangeSet change_set, ChangeSet mask)
+{
+    return (change_set & mask) != ChangeSet::NO_CHANGES;
+}
+inline ChangeSet operator~(ChangeSet cs)
+{
+    return ChangeSet(~unsigned(cs));
+}
+
+VDBSubSceneOverrideData::VDBSubSceneOverrideData() : is_selected(false), change_set(ChangeSet::NO_CHANGES)
+{
+    for (unsigned int x = 0; x < 4; ++x)
+    {
+        for (unsigned int y = 0; y < 4; ++y)
+            world_matrix(x, y) = std::numeric_limits<float>::infinity();
+    }
+}
+
+VDBSubSceneOverrideData::~VDBSubSceneOverrideData()
+{
+    clear();
+}
+
+void VDBSubSceneOverrideData::clear()
+{
+    scattering_grid = 0;
+    attenuation_grid = 0;
+    emission_grid = 0;
+    vdb_file = nullptr;
+}
+
 namespace {
 
-    template <typename T>
-    MHWRender::MShaderCompileMacro makeMacroDef(const MString& name, const T& value)
+    ChangeSet setup_channel(ChannelParams& target, const ChannelParams& source, ChangeSet channel_mask)
     {
-        return { name, format("^1s", value) };
-    };
-
-    template <>
-    MHWRender::MShaderCompileMacro makeMacroDef<float>(const MString& name, const float& value)
-    {
-        return { name, format("^1sf", value) };
+        if (target.name != source.name)
+        {
+            target = source;
+            return channel_mask;
+        }
+        else if (target.gradient != source.gradient)
+        {
+            target = source;
+            return ChangeSet::GRADIENT;
+        }
+        else if (target.color_source != source.color_source || target.intensity != source.intensity || target.color != source.color)
+        {
+            target = source;
+            return ChangeSet::GENERIC_ATTRIBUTE;
+        }
+        else
+        {
+            return ChangeSet::NO_CHANGES;
+        }
     }
 
 } // unnamed namespace
+
+bool VDBSubSceneOverrideData::update(const VDBVisualizerData* data, const MObject& obj)
+{
+    // TODO: we can limit some of the comparisons to the display mode
+    // ie, we don't need to compare certain things if we are using the bounding
+    // box mode
+    change_set = ChangeSet::NO_CHANGES;
+
+    MDagPath dg = MDagPath::getAPathTo(obj);
+    const MMatrix inc_world_matrix = dg.inclusiveMatrix();
+    change_set |= setup_parameter(world_matrix, inc_world_matrix, ChangeSet::GENERIC_ATTRIBUTE);
+    change_set |= setup_parameter(wireframe_color, MHWRender::MGeometryUtilities::wireframeColor(dg), ChangeSet::GENERIC_ATTRIBUTE);
+    change_set |= setup_parameter(is_selected, isPathSelected(dg), ChangeSet::GENERIC_ATTRIBUTE);
+    change_set |= setup_parameter(is_visible, dg.isVisible(), ChangeSet::GENERIC_ATTRIBUTE);
+
+    if (data == nullptr || update_trigger == data->update_trigger)
+        return change_set != ChangeSet::NO_CHANGES;
+
+    update_trigger = data->update_trigger;
+
+    // A change in display mode triggers complete recalculation; mark everything as changed.
+    change_set |= setup_parameter(display_mode, data->display_mode, ~ChangeSet::NO_CHANGES);
+
+    change_set |= setup_parameter(bbox, data->bbox, ChangeSet::GENERIC_ATTRIBUTE);
+    change_set |= setup_parameter(point_skip, data->point_skip, ChangeSet::GENERIC_ATTRIBUTE);
+
+    change_set |= setup_channel(density_channel, data->density_channel, ChangeSet::DENSITY_CHANNEL);
+    change_set |= setup_channel(scattering_channel, data->scattering_channel, ChangeSet::SCATTERING_CHANNEL);
+    change_set |= setup_channel(attenuation_channel, data->attenuation_channel, ChangeSet::ATTENUATION_CHANNEL);
+    change_set |= setup_channel(emission_channel, data->emission_channel, ChangeSet::EMISSION_CHANNEL);
+    change_set |= setup_channel(transparency_channel, data->transparency_channel, ChangeSet::TRANSPARENCY_CHANNEL);
+    change_set |= setup_channel(temperature_channel, data->temperature_channel, ChangeSet::TEMPERATURE_CHANNEL);
+    change_set |= setup_parameter(anisotropy, data->anisotropy, ChangeSet::GENERIC_ATTRIBUTE);
+    change_set |= setup_parameter(blackbody_intensity, data->blackbody_intensity, ChangeSet::GENERIC_ATTRIBUTE);
+    change_set |= setup_parameter(emission_mode, data->emission_mode, ChangeSet::GENERIC_ATTRIBUTE);
+
+    change_set |= setup_parameter(vdb_path, data->vdb_path, ChangeSet::VDB_FILE);
+    vdb_file = data->vdb_file;
+    if (!vdb_file)
+        clear();
+
+    if (display_mode == VDBDisplayMode::DISPLAY_SLICES)
+    {
+        change_set |= setup_parameter(max_slice_count, data->max_slice_count, ChangeSet::MAX_SLICE_COUNT);
+        change_set |= setup_parameter(shadow_sample_count, data->shadow_sample_count, ChangeSet::GENERIC_ATTRIBUTE);
+        change_set |= setup_parameter(shadow_gain, data->shadow_gain, ChangeSet::GENERIC_ATTRIBUTE);
+        change_set |= setup_parameter(per_slice_gamma, data->per_slice_gamma, ChangeSet::GENERIC_ATTRIBUTE);
+    }
+
+    point_size = data->point_size;
+    point_jitter = data->point_jitter; // We can jitter in the vertex shader. Hopefully
+
+    return change_set != ChangeSet::NO_CHANGES;
+}
+
+// === VDBSubSceneOverride implementation ==================================
+
+void VDBSubSceneOverride::shader_instance_deleter::operator()(MHWRender::MShaderInstance* p)
+{
+    auto shmgr = get_shader_manager();
+    if (shmgr != nullptr)
+        shmgr->releaseShader(p);
+}
+
+MString VDBSubSceneOverride::registrantId("VDBVisualizerSubSceneOverride");
+
+MHWRender::MPxSubSceneOverride* VDBSubSceneOverride::creator(const MObject& obj)
+{
+    return new VDBSubSceneOverride(obj);
+}
+
+VDBSubSceneOverride::VDBSubSceneOverride(const MObject& obj) : MPxSubSceneOverride(obj),
+    p_data(new VDBSubSceneOverrideData),
+    m_sliced_display(new SlicedDisplay(*this))
+{
+    m_object = obj;
+    MFnDependencyNode dnode(obj);
+    p_vdb_visualizer = dynamic_cast<VDBVisualizerShape*>(dnode.userNode());
+    auto shmgr = get_shader_manager();
+    if (shmgr != nullptr)
+    {
+        p_point_cloud_shader.reset(shmgr->getEffectsBufferShader(
+            point_cloud_technique, static_cast<unsigned int>(strlen(point_cloud_technique)), "Main", 0, 0, false));
+
+        if (p_point_cloud_shader != nullptr)
+            p_point_cloud_shader->setIsTransparent(true);
+        else
+            std::cerr << "Point cloud shader is zero!" << std::endl;
+    }
+}
+
+VDBSubSceneOverride::~VDBSubSceneOverride()
+{
+}
+
+MHWRender::DrawAPI VDBSubSceneOverride::supportedDrawAPIs() const
+{
+#if MAYA_API_VERSION >= 201600
+    return MHWRender::kOpenGLCoreProfile | MHWRender::kOpenGL;
+#else
+    return MHWRender::kOpenGL;
+#endif
+}
+
+void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const MHWRender::MFrameContext& /*frameContext*/)
+{
+    VDBSubSceneOverrideData* data = p_data.get();
+
+    const MHWRender::MShaderManager* shader_manager = get_shader_manager();
+    if (shader_manager == nullptr)
+        return;
+
+    MHWRender::MRenderItem* bounding_box = container.find("bounding_box");
+    if (bounding_box == nullptr)
+    {
+        bounding_box = MHWRender::MRenderItem::Create("bounding_box",
+            MHWRender::MRenderItem::NonMaterialSceneItem,
+            MHWRender::MGeometry::kLines);
+        bounding_box->enable(false);
+        bounding_box->setDrawMode(MHWRender::MGeometry::kAll);
+        bounding_box->depthPriority(MHWRender::MRenderItem::sDormantWireDepthPriority);
+
+        MHWRender::MShaderInstance* shader = shader_manager->getStockShader(
+            MHWRender::MShaderManager::k3dSolidShader, nullptr, nullptr);
+        if (shader)
+        {
+            // Set the color on the shader instance using the parameter interface
+            static const float color[] = { 0.0f, 1.0f, 0.0f, 1.0f };
+            shader->setParameter("solidColor", color);
+
+            // Assign the shader to the custom render item
+            bounding_box->setShader(shader);
+        }
+
+        container.add(bounding_box);
+    }
+
+    MHWRender::MRenderItem* point_cloud = container.find("point_cloud");
+    if (point_cloud == nullptr)
+    {
+        point_cloud = MHWRender::MRenderItem::Create("point_cloud",
+            MHWRender::MGeometry::kPoints,
+            MHWRender::MGeometry::kAll,
+            false);
+        point_cloud->enable(false);
+        point_cloud->setDrawMode(MHWRender::MGeometry::kAll);
+        point_cloud->depthPriority(MHWRender::MRenderItem::sDormantPointDepthPriority);
+
+        //if (p_point_cloud_shader == nullptr)
+        {
+            MHWRender::MShaderInstance* shader = shader_manager->getStockShader(
+                MHWRender::MShaderManager::k3dCPVFatPointShader, nullptr, nullptr);
+            if (shader)
+                point_cloud->setShader(shader);
+        }
+        /*else
+            point_cloud->setShader(p_point_cloud_shader.get());*/
+
+        container.add(point_cloud);
+    }
+
+    bounding_box->setMatrix(&data->world_matrix);
+    point_cloud->setMatrix(&data->world_matrix);
+
+    if (data->change_set == ChangeSet::NO_CHANGES)
+        return;
+
+    const bool file_exists = data->vdb_file != nullptr;
+
+    const static MHWRender::MVertexBufferDescriptor position_buffer_desc("", MHWRender::MGeometry::kPosition, MHWRender::MGeometry::kFloat, 3);
+    const static MHWRender::MVertexBufferDescriptor color_buffer_desc("", MHWRender::MGeometry::kColor, MHWRender::MGeometry::kFloat, 4);
+
+    if (!file_exists || data->display_mode <= DISPLAY_GRID_BBOX)
+    {
+        point_cloud->enable(false);
+        bounding_box->enable(data->is_visible);
+        m_sliced_display->enable(false);
+
+        MHWRender::MVertexBufferArray vertex_buffers;
+        p_bbox_position.reset(new MHWRender::MVertexBuffer(position_buffer_desc));
+        p_bbox_indices.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
+
+        if ((data->display_mode == DISPLAY_AXIS_ALIGNED_BBOX) || !file_exists)
+        {
+            MFloatVector* bbox_vertices = reinterpret_cast<MFloatVector*>(p_bbox_position->acquire(8, true));
+            MFloatVector min = data->bbox.min();
+            MFloatVector max = data->bbox.max();
+            bbox_vertices[0] = MFloatVector(min.x, min.y, min.z);
+            bbox_vertices[1] = MFloatVector(min.x, max.y, min.z);
+            bbox_vertices[2] = MFloatVector(min.x, max.y, max.z);
+            bbox_vertices[3] = MFloatVector(min.x, min.y, max.z);
+            bbox_vertices[4] = MFloatVector(max.x, min.y, min.z);
+            bbox_vertices[5] = MFloatVector(max.x, max.y, min.z);
+            bbox_vertices[6] = MFloatVector(max.x, max.y, max.z);
+            bbox_vertices[7] = MFloatVector(max.x, min.y, max.z);
+            p_bbox_position->commit(bbox_vertices);
+            set_bbox_indices(1, p_bbox_indices.get());
+        }
+        else if (data->display_mode == DISPLAY_GRID_BBOX)
+        {
+            try
+            {
+                if (!data->vdb_file->isOpen())
+                    data->vdb_file->open(false);
+                openvdb::GridPtrVecPtr grids = data->vdb_file->readAllGridMetadata();
+                if (grids->size() == 0)
+                    return;
+                std::vector<MFloatVector> vertices;
+                vertices.reserve(grids->size() * 8);
+
+                for (openvdb::GridPtrVec::const_iterator it = grids->begin(); it != grids->end(); ++it)
+                {
+                    if (openvdb::GridBase::ConstPtr grid = *it)
+                    {
+                        std::array<MFloatVector, 8> _vertices;
+                        if (read_grid_transformed_bbox_wire(grid, _vertices))
+                        {
+                            for (int v = 0; v < 8; ++v)
+                                vertices.push_back(_vertices[v]);
+                        }
+                    }
+                }
+
+                const unsigned int vertex_count = static_cast<unsigned int>(vertices.size());
+
+                if (vertex_count > 0)
+                {
+                    p_bbox_position.reset(new MHWRender::MVertexBuffer(position_buffer_desc));
+                    p_bbox_indices.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
+                    MFloatVector* bbox_vertices = reinterpret_cast<MFloatVector*>(p_bbox_position->acquire(vertex_count, true));
+                    for (unsigned int i = 0; i < vertex_count; ++i)
+                        bbox_vertices[i] = vertices[i];
+                    p_bbox_position->commit(bbox_vertices);
+                    set_bbox_indices(vertex_count / 8, p_bbox_indices.get());
+                }
+            }
+            catch (...)
+            {
+            }
+        }
+
+        vertex_buffers.addBuffer("", p_bbox_position.get());
+        setGeometryForRenderItem(*bounding_box, vertex_buffers, *p_bbox_indices.get(), &data->bbox);
+    }
+    else
+    {
+        bounding_box->enable(false);
+        if (data->display_mode == DISPLAY_POINT_CLOUD)
+        {
+            m_sliced_display->enable(false);
+
+            try {
+                if (!data->vdb_file->isOpen())
+                    data->vdb_file->open(false);
+                if (data->attenuation_grid == nullptr || data->attenuation_grid->getName() != data->attenuation_channel.name)
+                    data->attenuation_grid = data->vdb_file->readGrid(data->attenuation_channel.name);
+            }
+            catch (...) {
+                data->attenuation_grid = nullptr;
+                data->scattering_grid = nullptr;
+                data->emission_grid = nullptr;
+                return;
+            }
+            point_cloud->enable(data->is_visible);
+
+            const openvdb::Vec3d voxel_size = data->attenuation_grid->voxelSize();
+
+            FloatVoxelIterator* iter = nullptr;
+
+            if (data->attenuation_grid->valueType() == "float")
+                iter = new FloatToFloatVoxelIterator(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->attenuation_grid));
+            else if (data->attenuation_grid->valueType() == "vec3s")
+                iter = new Vec3SToFloatVoxelIterator(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->attenuation_grid));
+            else
+                iter = new FloatVoxelIterator();
+
+            // setting up vertex buffers
+            std::vector<MFloatVector> vertices;
+            vertices.reserve(iter->get_active_voxels());
+            const openvdb::math::Transform attenuation_transform = data->attenuation_grid->transform();
+
+            std::mt19937 mt_generator;
+            std::uniform_real_distribution<float> uniform_0_1_dist(0.0f, 1.0f);
+            const float point_skip_ratio = 1.0f / static_cast<float>(std::max(data->point_skip, 1));
+            for (; iter->is_valid(); iter->get_next())
+            {
+                // this gives a better distribution than skipping based on index
+                if (uniform_0_1_dist(mt_generator) > point_skip_ratio)
+                    continue;
+                openvdb::Vec3d vdb_pos = attenuation_transform.indexToWorld(iter->get_coord());
+                vertices.push_back(MFloatVector(static_cast<float>(vdb_pos.x()), static_cast<float>(vdb_pos.y()),
+                    static_cast<float>(vdb_pos.z())));
+            }
+
+            vertices.shrink_to_fit();
+            const unsigned int vertex_count = static_cast<unsigned int>(vertices.size());
+
+            if (vertex_count == 0)
+                return;
+
+            delete iter;
+
+            tbb::task_scheduler_init task_init;
+
+            p_index_buffer.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
+            unsigned int* indices = reinterpret_cast<unsigned int*>(p_index_buffer->acquire(vertex_count, true));
+            for (unsigned int i = 0; i < vertex_count; ++i)
+                indices[i] = i;
+            p_index_buffer->commit(indices);
+
+
+            p_position_buffer.reset(new MHWRender::MVertexBuffer(position_buffer_desc));
+            MFloatVector* pc_vertices = reinterpret_cast<MFloatVector*>(p_position_buffer->acquire(static_cast<unsigned int>(vertices.size()), true));
+            const float point_jitter = data->point_jitter;
+            if (point_jitter > 0.001f)
+            {
+                std::uniform_real_distribution<float> distributionX(-point_jitter * static_cast<float>(voxel_size.x()), point_jitter * static_cast<float>(voxel_size.x()));
+                std::uniform_real_distribution<float> distributionY(-point_jitter * static_cast<float>(voxel_size.y()), point_jitter * static_cast<float>(voxel_size.y()));
+                std::uniform_real_distribution<float> distributionZ(-point_jitter * static_cast<float>(voxel_size.z()), point_jitter * static_cast<float>(voxel_size.z()));
+
+                tbb::parallel_for(tbb::blocked_range<unsigned int>(0, vertex_count), [&](const tbb::blocked_range<unsigned int>& r) {
+                    std::minstd_rand generatorX(42 + r.begin()); // LCG
+                    std::minstd_rand generatorY(137 + r.begin());
+                    std::minstd_rand generatorZ(1337 + r.begin());
+                    for (unsigned int i = r.begin(); i != r.end(); ++i)
+                    {
+                        MFloatVector pos = vertices[i];
+                        pos.x += distributionX(generatorX);
+                        pos.y += distributionY(generatorY);
+                        pos.z += distributionZ(generatorZ);
+                        pc_vertices[i] = pos;
+                    }
+                });
+            }
+            else
+            {
+                tbb::parallel_for(tbb::blocked_range<unsigned int>(0, vertex_count), [&](const tbb::blocked_range<unsigned int>& r) {
+                    memcpy(&pc_vertices[r.begin()], &vertices[r.begin()], (r.end() - r.begin()) * sizeof(MFloatVector));
+                });
+            }
+            p_position_buffer->commit(pc_vertices);
+
+            // setting up color buffers
+
+            try {
+                if (data->scattering_grid == nullptr || data->scattering_grid->getName() != data->scattering_channel.name)
+                    data->scattering_grid = data->vdb_file->readGrid(data->scattering_channel.name);
+            }
+            catch (...) {
+                data->scattering_grid = nullptr;
+            }
+
+            RGBSampler* scattering_sampler = nullptr;
+
+            if (data->scattering_grid == nullptr)
+                scattering_sampler = new (m_scattering_sampler.data()) RGBSampler();
+            else
+            {
+                if (data->scattering_grid->valueType() == "float")
+                    scattering_sampler = new (m_scattering_sampler.data()) FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->scattering_grid));
+                else if (data->scattering_grid->valueType() == "vec3s")
+                    scattering_sampler = new (m_scattering_sampler.data()) Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->scattering_grid));
+                else
+                    scattering_sampler = new (m_scattering_sampler.data()) RGBSampler();
+            }
+
+            try {
+                if (data->emission_grid == nullptr || data->emission_grid->getName() != data->emission_channel.name)
+                    data->emission_grid = data->vdb_file->readGrid(data->emission_channel.name);
+            }
+            catch (...) {
+                data->emission_grid = nullptr;
+            }
+
+            RGBSampler* emission_sampler = nullptr;
+
+            if (data->emission_grid == nullptr)
+                emission_sampler = new (m_emission_sampler.data()) RGBSampler(MFloatVector(0.0f, 0.0f, 0.0f));
+            else
+            {
+                if (data->emission_grid->valueType() == "float")
+                    emission_sampler = new (m_emission_sampler.data()) FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->emission_grid));
+                else if (data->emission_grid->valueType() == "vec3s")
+                    emission_sampler = new (m_emission_sampler.data()) Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->emission_grid));
+                else
+                    emission_sampler = new (m_emission_sampler.data()) RGBSampler(MFloatVector(0.0f, 0.0f, 0.0f));
+            }
+
+            RGBSampler* attenuation_sampler = 0;
+
+            if (data->attenuation_grid->valueType() == "float")
+                attenuation_sampler = new (m_attenuation_sampler.data()) FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->attenuation_grid));
+            else if (data->attenuation_grid->valueType() == "vec3s")
+                attenuation_sampler = new (m_attenuation_sampler.data()) Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->attenuation_grid));
+            else
+                attenuation_sampler = new (m_attenuation_sampler.data()) RGBSampler(MFloatVector(1.0f, 1.0f, 1.0f));
+
+            p_color_buffer.reset(new MHWRender::MVertexBuffer(color_buffer_desc));
+            MColor* colors = reinterpret_cast<MColor*>(p_color_buffer->acquire(vertex_count, true));
+            tbb::parallel_for(tbb::blocked_range<unsigned int>(0, vertex_count), [&](const tbb::blocked_range<unsigned int>& r) {
+                for (unsigned int i = r.begin(); i < r.end(); ++i)
+                {
+                    const MFloatVector& v = vertices[i];
+                    const openvdb::Vec3d pos(v.x, v.y, v.z);
+                    MColor& color = colors[i];
+                    const MFloatVector scattering_color = data->scattering_channel.gradient.evaluate(scattering_sampler->get_rgb(pos));
+                    const MFloatVector emission_color = data->emission_channel.gradient.evaluate(emission_sampler->get_rgb(pos));
+                    const MFloatVector attenuation_color = data->attenuation_channel.gradient.evaluate(attenuation_sampler->get_rgb(pos));
+                    color.r = scattering_color.x * data->scattering_channel.color.x + emission_color.x * data->emission_channel.color.x;
+                    color.g = scattering_color.y * data->scattering_channel.color.y + emission_color.y * data->emission_channel.color.y;
+                    color.b = scattering_color.z * data->scattering_channel.color.z + emission_color.z * data->emission_channel.color.z;
+                    color.a = (attenuation_color.x * data->attenuation_channel.color.x +
+                        attenuation_color.y * data->attenuation_channel.color.y +
+                        attenuation_color.z * data->attenuation_channel.color.z) / 3.0f;
+                }
+            });
+            p_color_buffer->commit(colors);
+
+            scattering_sampler->~RGBSampler();
+            emission_sampler->~RGBSampler();
+            attenuation_sampler->~RGBSampler();
+
+            MHWRender::MVertexBufferArray vertex_buffers;
+            vertex_buffers.addBuffer("", p_position_buffer.get());
+            vertex_buffers.addBuffer("", p_color_buffer.get());
+
+            /*const MVertexBufferDescriptorList& reqs = point_cloud->requiredVertexBuffers();
+            for (int i = 0; i < reqs.length(); ++i)
+            {
+                MVertexBufferDescriptor desc;
+                reqs.getDescriptor(i, desc);
+                std::cerr << "Requirement : (" << desc.name() << ") " << desc.semantic() << std::endl;
+            }*/
+            setGeometryForRenderItem(*point_cloud, vertex_buffers, *p_index_buffer.get(), &data->bbox);
+        }
+        else if (data->display_mode == DISPLAY_SLICES)
+        {
+            point_cloud->enable(false);
+
+            m_sliced_display->enable(data->is_visible);
+            m_sliced_display->update(container, *data);
+        }
+        else
+        {
+            m_sliced_display->enable(false);
+        }
+    }
+
+    data->change_set = ChangeSet::NO_CHANGES;
+}
+
+bool VDBSubSceneOverride::requiresUpdate(const MHWRender::MSubSceneContainer& /*container*/, const MHWRender::MFrameContext& /*frameContext*/) const
+{
+    return p_data->update(p_vdb_visualizer->get_update(), m_object);
+}
+
+// === Sliced display mode implementation ===================================
 
 SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
     : m_parent(parent),
@@ -2071,32 +2318,8 @@ SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
     m_volume_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexBorder),
     m_enabled(false), m_selected(false)
 {
-    const MHWRender::MShaderManager* shader_manager = get_shader_manager();
-    if (!shader_manager)
-        return;
-
-    // Load volume shader from effect file.
-    MHWRender::MShaderCompileMacro macros[] = { makeMacroDef("BLACKBODY_LUT_MIN_TEMP",   Blackbody::TEMPERATURE_MIN),
-                                                makeMacroDef("BLACKBODY_LUT_MAX_TEMP",   Blackbody::TEMPERATURE_MAX),
-                                                makeMacroDef("BLACKBODY_LUT_NORMALIZER", Blackbody::LUT_NORMALIZER),
-                                                makeMacroDef("MAX_LIGHT_COUNT",          MAX_LIGHT_COUNT) };
-    constexpr int macro_count = sizeof(macros) / sizeof(MHWRender::MShaderCompileMacro);
-    m_volume_shader.reset(shader_manager->getEffectsBufferShader(s_effect_code.c_str(), unsigned(s_effect_code.size()), "Main", macros, macro_count, false, preDrawCallback));
     if (!m_volume_shader)
-    {
-        LOG_ERROR("Cannot compile cgfx.");
-        CGcontext context = cgCreateContext();
-        for (auto shader_spec : { std::make_pair("VolumeVertexShader", "gp5vp"), std::make_pair("VolumeFragmentShader", "gp5fp") })
-        {
-            if (!cgCreateProgram(context, CG_SOURCE, s_effect_code.c_str(), cgGetProfile(shader_spec.second), shader_spec.first, nullptr))
-            {
-                const char *compiler_output = cgGetLastListing(context);
-                LOG_ERROR(format("^1s: compilation errors:\n^2s", shader_spec.first, compiler_output).asChar());
-            }
-        }
         return;
-    }
-    m_volume_shader->setIsTransparent(true);
 
     m_density_channel.setShaderInstance(m_volume_shader.get());
     m_scattering_channel.setShaderInstance(m_volume_shader.get());
@@ -2272,158 +2495,6 @@ void SlicedDisplay::updateBBox(const MBoundingBox& bbox)
 
     CHECK_MSTATUS(m_volume_shader->setParameter("volume_origin", bbox.min()));
     CHECK_MSTATUS(m_volume_shader->setParameter("volume_size", extents));
-}
-
-namespace {
-
-    typedef std::array<float, 3> Float3;
-
-    template <typename ParamSpec>
-    void setLightParam(MHWRender::MLightParameterInformation* light_params, const ParamSpec& param_spec, float& output) {
-        MFloatArray float_array;
-        if (light_params->getParameter(param_spec, float_array) == MStatus::kSuccess)
-            output = float_array[0];
-    };
-
-    template <typename ParamSpec>
-    void setLightParam(MHWRender::MLightParameterInformation* light_params, const ParamSpec& param_spec, Float3& output) {
-        MFloatArray float_array;
-        if (light_params->getParameter(param_spec, float_array) == MStatus::kSuccess)
-            memcpy(&output, &float_array[0], 3 * sizeof(float));
-    };
-
-    float radiansFromDegrees(float degrees)
-    {
-        return float(M_PI) * degrees / 180.0f;
-    }
-
-    template <int N>
-    union Float3Array
-    {
-        std::array<float, 3 * N> float_array;
-        std::array<Float3, N> float3_array;
-    };
-
-} // unnamed namespace
-
-void SlicedDisplay::preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& /*renderItemList*/, MHWRender::MShaderInstance* shader_instance)
-{
-    constexpr int LIGHT_FLAG_POINT_LIGHT       = 0;
-    constexpr int LIGHT_FLAG_DIRECTIONAL_LIGHT = 1;
-    constexpr int LIGHT_FLAG_SPOTLIGHT         = 2;
-    constexpr int LIGHT_FLAG_CAST_SHADOWS      = 8;
-
-    // Set view position.
-    {
-        MStatus status;
-        const auto view_pos = context.getTuple(MHWRender::MFrameContext::kViewPosition, &status);
-        CHECK_MSTATUS(status);
-        CHECK_MSTATUS(shader_instance->setParameter("view_pos_world", MFloatVector(float(view_pos[0]), float(view_pos[1]), float(view_pos[2]))));
-    }
-
-    // Collect light data.
-
-    Float3Array<MAX_LIGHT_COUNT> light_position;
-    Float3Array<MAX_LIGHT_COUNT> light_direction;
-    Float3Array<MAX_LIGHT_COUNT> light_color;
-    Float3Array<MAX_LIGHT_COUNT> light_shadow_color;
-    std::array<int,   MAX_LIGHT_COUNT> light_flags;
-    std::array<float, MAX_LIGHT_COUNT> light_intensity;
-    std::array<float, MAX_LIGHT_COUNT> light_decay_exponent;
-    std::array<float, MAX_LIGHT_COUNT> light_cutoff_costheta1;
-    std::array<float, MAX_LIGHT_COUNT> light_cutoff_costheta2;
-    std::array<float, MAX_LIGHT_COUNT> light_dropoff;
-
-    using MHWRender::MLightParameterInformation;
-
-    const auto light_count_total = std::min(context.numberOfActiveLights(), MAX_LIGHT_COUNT);
-    int shader_light_count = 0;
-    for (unsigned int i = 0; i < light_count_total; ++i)
-    {
-        MIntArray int_array;
-        MFloatArray float_array;
-
-        const auto light_params = context.getLightParameterInformation(i);
-
-        // Proceed to next light if this light is not enabled.
-        const auto status = light_params->getParameter(MLightParameterInformation::kLightEnabled, float_array);
-        if (status != MS::kSuccess || float_array[0] != 1)
-            continue;
-
-        light_flags[shader_light_count] = 0;
-
-        // Light type.
-        const auto light_type = light_params->lightType();
-        if (light_type == "pointLight")
-            light_flags[shader_light_count] |= LIGHT_FLAG_POINT_LIGHT;
-        else if (light_type == "directionalLight")
-            light_flags[shader_light_count] |= LIGHT_FLAG_DIRECTIONAL_LIGHT;
-        else if (light_type == "spotLight")
-            light_flags[shader_light_count] |= LIGHT_FLAG_SPOTLIGHT;
-        else
-        {
-            LOG_ERROR(format("unsupported light type ^1s", light_type).asChar());
-            continue;
-        }
-
-        // Position.
-        setLightParam(light_params, MLightParameterInformation::kWorldPosition, light_position.float3_array[shader_light_count]);
-
-        // Direction.
-        setLightParam(light_params, MLightParameterInformation::kWorldDirection, light_direction.float3_array[shader_light_count]);
-
-        // Color.
-        setLightParam(light_params, MLightParameterInformation::kColor, light_color.float3_array[shader_light_count]);
-
-        // Intensity.
-        setLightParam(light_params, MLightParameterInformation::kIntensity, light_intensity[shader_light_count]);
-
-        // TODO: exposure from node.
-        //auto light_path = light_params->lightPath();
-        // Or use maya api if it will provide exposure.
-        //if (light_params->getParameter("exposure", float_array) == MStatus::kSuccess)
-        //    light_intensity[shader_light_count] *= std::pow(2.0f, float_array[0]);
-
-        // Shadow.
-        // ShadowOn attrib of point lights is buggy, cast shadows by default.
-        if (light_type == "pointLight")
-            light_flags[shader_light_count] |= LIGHT_FLAG_CAST_SHADOWS;
-        else if (light_params->getParameter(MLightParameterInformation::kShadowOn, int_array) == MStatus::kSuccess && int_array[0] == 1)
-            light_flags[shader_light_count] |= LIGHT_FLAG_CAST_SHADOWS;
-        setLightParam(light_params, MLightParameterInformation::kShadowColor, light_shadow_color.float3_array[shader_light_count]);
-
-        // Decay rate.
-        setLightParam(light_params, MLightParameterInformation::kDecayRate, light_decay_exponent[shader_light_count]);
-
-        // Spot light dropoff.
-        setLightParam(light_params, MLightParameterInformation::kDropoff, light_dropoff[shader_light_count]);
-
-        // Spot light cutoffs.
-        if (light_params->getParameter(MLightParameterInformation::kCosConeAngle, float_array) == MStatus::kSuccess)
-        {
-            light_cutoff_costheta1[shader_light_count] = float_array[0];
-            light_cutoff_costheta2[shader_light_count] = float_array[1];
-        }
-
-        shader_light_count++;
-    }
-
-    // Convert colors to linear color space.
-    LinearFromSRGB(light_color.float_array.data(), shader_light_count);
-    LinearFromSRGB(light_shadow_color.float_array.data(), shader_light_count);
-
-    // Set shader params.
-    CHECK_MSTATUS(shader_instance->setParameter("light_count", shader_light_count));
-    CHECK_MSTATUS(shader_instance->setArrayParameter("light_flags", light_flags.data(), shader_light_count));
-    CHECK_MSTATUS(shader_instance->setArrayParameter("light_position", light_position.float_array.data(), shader_light_count));
-    CHECK_MSTATUS(shader_instance->setArrayParameter("light_direction", light_direction.float_array.data(), shader_light_count));
-    CHECK_MSTATUS(shader_instance->setArrayParameter("light_color", light_color.float_array.data(), shader_light_count));
-    CHECK_MSTATUS(shader_instance->setArrayParameter("light_intensity", light_intensity.data(), shader_light_count));
-    CHECK_MSTATUS(shader_instance->setArrayParameter("light_shadow_color", light_shadow_color.float_array.data(), shader_light_count));
-    CHECK_MSTATUS(shader_instance->setArrayParameter("light_decay_exponent", light_decay_exponent.data(), shader_light_count));
-    CHECK_MSTATUS(shader_instance->setArrayParameter("light_cutoff_costheta1", light_cutoff_costheta1.data(), shader_light_count));
-    CHECK_MSTATUS(shader_instance->setArrayParameter("light_cutoff_costheta2", light_cutoff_costheta2.data(), shader_light_count));
-    CHECK_MSTATUS(shader_instance->setArrayParameter("light_dropoff", light_dropoff.data(), shader_light_count));
 }
 
 bool SlicedDisplay::update(MHWRender::MSubSceneContainer& container, const VDBSubSceneOverrideData& data)
