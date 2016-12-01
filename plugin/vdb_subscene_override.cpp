@@ -737,9 +737,9 @@ public:
     operator bool() const { return m_texture.get() != nullptr; }
 
 protected:
-    RampTextureBase(const size_t resolution, const MHWRender::MRasterFormat raster_format, const size_t bytes_per_pixel);
+    RampTextureBase(const unsigned int resolution, const MHWRender::MRasterFormat raster_format, const unsigned int bytes_per_pixel);
 
-    size_t m_resolution;
+    unsigned int m_resolution;
     std::vector<uint8_t> m_staging;
 
     TexturePtr m_texture;
@@ -747,7 +747,7 @@ protected:
     const SamplerState m_ramp_sampler_state;
 };
 
-RampTextureBase::RampTextureBase(const size_t resolution, const MHWRender::MRasterFormat raster_format, const size_t bytes_per_pixel)
+RampTextureBase::RampTextureBase(const unsigned int resolution, const MHWRender::MRasterFormat raster_format, const unsigned int bytes_per_pixel)
     : m_resolution(resolution), m_staging(bytes_per_pixel * resolution, 0),
     m_ramp_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexClamp)
 {
@@ -796,7 +796,7 @@ void RampTextureBase::assignDomainToShader(MHWRender::MShaderInstance* shader_in
 class FloatRampTexture : public RampTextureBase
 {
 public:
-    FloatRampTexture(const size_t resolution) : RampTextureBase(resolution, MHWRender::MRasterFormat::kR8_UNORM, 1) {}
+    FloatRampTexture(const unsigned int resolution) : RampTextureBase(resolution, MHWRender::MRasterFormat::kR8_UNORM, 1) {}
 
     void updateFromData(const float *data);
     void updateFromGradient(const Gradient& gradient);
@@ -829,7 +829,7 @@ void FloatRampTexture::updateFromGradient(const Gradient& gradient)
 class RGBRampTexture : public RampTextureBase
 {
 public:
-    RGBRampTexture(const size_t resolution) : RampTextureBase(resolution, MHWRender::MRasterFormat::kR8G8B8X8, 4) {}
+    RGBRampTexture(const unsigned int resolution) : RampTextureBase(resolution, MHWRender::MRasterFormat::kR8G8B8X8, 4) {}
 
     void updateFromData(const MFloatVector *colors, const float normalizer=1);
     void updateFromGradient(const Gradient& gradient);
