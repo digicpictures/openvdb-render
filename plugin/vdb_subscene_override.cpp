@@ -234,13 +234,13 @@ namespace {
     template <typename RealType>
     MFloatVector inline mayavecFromArray2(RealType *a)
     {
-        return {a[0], a[1]};
+        return { a[0], a[1] };
     }
 
     template <typename RealType>
     MFloatVector inline mayavecFromArray3(RealType *a)
     {
-        return {a[0], a[1], a[2]};
+        return { a[0], a[1], a[2] };
     }
 
     MFloatVector inline mayavecFromVec3f(const openvdb::Vec3f& vec)
@@ -621,7 +621,7 @@ void VolumeCache::growBuffer(size_t minimum_buffer_size_bytes)
 void VolumeCache::clearRange(const BufferRange& range_to_clear)
 {
     // Find first range which begins strictly after the given range.begin.
-    auto erase_it  = m_allocation_map.upper_bound(range_to_clear.begin);
+    auto erase_it = m_allocation_map.upper_bound(range_to_clear.begin);
     // Start erasing at the previous range if it contains range_to_clear.begin.
     if (erase_it != m_allocation_map.begin())
     {
