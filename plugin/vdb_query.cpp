@@ -112,7 +112,7 @@ MStatus VDBQueryCmd::doIt(const MArgList& args)
 
         if (dnode.typeName() != VDBVisualizerShape::typeName)
         {
-            MGlobal::displayError("[openvdb] Wrong node was passed to the command : " + dnode.name());
+            MGlobal::displayError("[openvdb_render] Wrong node was passed to the command : " + dnode.name());
             return MS::kFailure;
         }
 
@@ -154,13 +154,13 @@ MStatus VDBQueryCmd::doIt(const MArgList& args)
     }
     else
     {
-        MGlobal::displayError("[openvdb] No cache was passed to the command, use the -file(f) or the -node(n) flags");
+        MGlobal::displayError("[openvdb_render] No cache was passed to the command, use the -file(f) or the -node(n) flags");
         return MS::kFailure;
     }
 
     if (vdb_paths.size() == 0)
     {
-        MGlobal::displayError("[openvdb] No paths are passed to the command.");
+        MGlobal::displayError("[openvdb_render] No paths are passed to the command.");
         return MS::kFailure;
     }
 
@@ -172,7 +172,7 @@ MStatus VDBQueryCmd::doIt(const MArgList& args)
         arg_data.getFlagArgument(query_short_flag, 0, query_type);
     else
     {
-        MGlobal::displayError("[openvdb] No query is specified.");
+        MGlobal::displayError("[openvdb_render] No query is specified.");
         return MS::kFailure;
     }
 
@@ -205,7 +205,7 @@ MStatus VDBQueryCmd::doIt(const MArgList& args)
 
     if (queries.size() == 0)
     {
-        MGlobal::displayError("[openvdb] No queries are specified!");
+        MGlobal::displayError("[openvdb_render] No queries are specified!");
         return MS::kFailure;
     }
 
@@ -221,7 +221,7 @@ MStatus VDBQueryCmd::doIt(const MArgList& args)
 
     if (vdb_files.size() == 0)
     {
-        MGlobal::displayError("[openvdb] No vdb files can be opened.");
+        MGlobal::displayError("[openvdb_render] No vdb files can be opened.");
         return MS::kFailure;
     }
 

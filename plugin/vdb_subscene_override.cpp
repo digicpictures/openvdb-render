@@ -2536,7 +2536,7 @@ MStatus VDBVolumeCacheCmd::doIt(const MArgList& args)
 
     const auto display_error = [](const MString& message)
     {
-        MGlobal::displayError(format("[openvdb] command ^1s: ^2s", COMMAND_STRING, message));
+        MGlobal::displayError(format("[openvdb_render] command ^1s: ^2s", COMMAND_STRING, message));
     };
 
     if (parser.isEdit())
@@ -2601,7 +2601,7 @@ MStatus VDBVolumeCacheCmd::doIt(const MArgList& args)
     if (parser.isFlagSet("voxelType"))
     {
         // Display voxel type.
-        MGlobal::displayInfo(format("[openvdb] volume cache voxel type is '^1s'.", getVoxelTypeString()));
+        MGlobal::displayInfo(format("[openvdb_render] volume cache voxel type is '^1s'.", getVoxelTypeString()));
         return MS::kSuccess;
     }
     else if (parser.isFlagSet("limit"))
@@ -2631,19 +2631,19 @@ MStatus VDBVolumeCacheCmd::doIt(const MArgList& args)
         const size_t limit = VolumeCache::instance().getMemoryLimitBytes();
         if (limit == 0)
         {
-            MGlobal::displayInfo("[openvdb] Volume caching is off.");
+            MGlobal::displayInfo("[openvdb_render] Volume caching is off.");
             return MS::kSuccess;
         }
 
         const size_t alloc = VolumeCache::instance().getAllocatedBytes();
-        MGlobal::displayInfo(format("[openvdb] Volume cache allocated/total: ^1s/^2s.",
+        MGlobal::displayInfo(format("[openvdb_render] Volume cache allocated/total: ^1s/^2s.",
             pretty_string_size(alloc),
             pretty_string_size(limit)));
         return MS::kSuccess;
     }
 
     // Default: display help.
-    MGlobal::displayInfo(format("[openvdb] Usage: ^1s [-h|-help] [-q|-query|-e|-edit] [-vt|-voxelType [\"half\"|\"float\"]] [-l|-limit [<limit_in_gigabytes>]]", COMMAND_STRING));
+    MGlobal::displayInfo(format("[openvdb_render] Usage: ^1s [-h|-help] [-q|-query|-e|-edit] [-vt|-voxelType [\"half\"|\"float\"]] [-l|-limit [<limit_in_gigabytes>]]", COMMAND_STRING));
     return MS::kSuccess;
 }
 

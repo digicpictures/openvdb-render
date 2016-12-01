@@ -27,7 +27,7 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
                                   VDBVisualizerShapeUI::creator, &VDBVisualizerShape::drawDbClassification);
     if (!status)
     {
-        status.perror("[openvdb] Error registering the VDBVisualizer Node.");
+        status.perror("[openvdb_render] Error registering the VDBVisualizer Node.");
         return status;
     }
 
@@ -36,7 +36,7 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
                                  VDBSamplerNode::creator, VDBSamplerNode::initialize, MPxNode::kDependNode, &VDBSamplerNode::s_classification);
     if (!status)
     {
-        status.perror("[openvdb] Error registering the VDBSampler Node.");
+        status.perror("[openvdb_render] Error registering the VDBSampler Node.");
         return status;
     }
 
@@ -45,7 +45,7 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
                                  VDBShaderNode::creator, VDBShaderNode::initialize, MPxNode::kDependNode, &VDBShaderNode::s_classification);
     if (!status)
     {
-        status.perror("[openvdb] Error registering the VDBShader Node.");
+        status.perror("[openvdb_render] Error registering the VDBShader Node.");
         return status;
     }
 
@@ -54,7 +54,7 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
                                  VDBSimpleShaderNode::creator, VDBSimpleShaderNode::initialize, MPxNode::kDependNode, &VDBSimpleShaderNode::s_classification);
     if (!status)
     {
-        status.perror("[openvdb] Error registering the VDBSimpleShader Node.");
+        status.perror("[openvdb_render] Error registering the VDBSimpleShader Node.");
         return status;
     }
 
@@ -66,7 +66,7 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
     );
     if (!status)
     {
-        status.perror("[openvdb] Error registering the VDBVisualizer Sub Scene Override.");
+        status.perror("[openvdb_render] Error registering the VDBVisualizer Sub Scene Override.");
         return status;
     }
 
@@ -76,7 +76,7 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
     status = plugin.registerCommand("vdb_query", VDBQueryCmd::creator, VDBQueryCmd::create_syntax);
     if (!status)
     {
-        status.perror("[openvdb] Error registering the VDBQuery Command.");
+        status.perror("[openvdb_render] Error registering the VDBQuery Command.");
         return status;
     }
 
@@ -85,7 +85,7 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
                                     VDBVisualizerUpdateMaxSliceCountCmd::create_syntax);
     if (!status)
     {
-        status.perror("[openvdb] Error registering the 'vdb_visualizer_update_max_slice_count' command.");
+        status.perror("[openvdb_render] Error registering the 'vdb_visualizer_update_max_slice_count' command.");
         return status;
     }
 
@@ -94,7 +94,7 @@ PLUGIN_EXPORT MStatus initializePlugin(MObject obj)
                                     VDBVolumeCacheCmd::create_syntax);
     if (!status)
     {
-        status.perror(format("[openvdb] Error registering the '^1s' command.", VDBVolumeCacheCmd::COMMAND_STRING));
+        status.perror(format("[openvdb_render] Error registering the '^1s' command.", VDBVolumeCacheCmd::COMMAND_STRING));
         return status;
     }
 
@@ -114,7 +114,7 @@ PLUGIN_EXPORT MStatus uninitializePlugin(MObject obj)
     status = plugin.deregisterNode(VDBVisualizerShape::typeId);
     if (!status)
     {
-        status.perror("[openvdb] Error deregistering the VDBVisualizer Node.");
+        status.perror("[openvdb_render] Error deregistering the VDBVisualizer Node.");
         return status;
     }
 
@@ -122,7 +122,7 @@ PLUGIN_EXPORT MStatus uninitializePlugin(MObject obj)
     status = plugin.deregisterNode(VDBSamplerNode::s_type_id);
     if (!status)
     {
-        status.perror("[openvdb] Error deregistering the VDBSampler Node.");
+        status.perror("[openvdb_render] Error deregistering the VDBSampler Node.");
         return status;
     }
 
@@ -130,7 +130,7 @@ PLUGIN_EXPORT MStatus uninitializePlugin(MObject obj)
     status = plugin.deregisterNode(VDBShaderNode::s_type_id);
     if (!status)
     {
-        status.perror("[openvdb] Error deregistering the VDBShader Node.");
+        status.perror("[openvdb_render] Error deregistering the VDBShader Node.");
         return status;
     }
 
@@ -138,7 +138,7 @@ PLUGIN_EXPORT MStatus uninitializePlugin(MObject obj)
     status = plugin.deregisterNode(VDBSimpleShaderNode::s_type_id);
     if (!status)
     {
-        status.perror("[openvdb] Error deregistering the VDBSimpleShader Node.");
+        status.perror("[openvdb_render] Error deregistering the VDBSimpleShader Node.");
         return status;
     }
 
@@ -149,28 +149,28 @@ PLUGIN_EXPORT MStatus uninitializePlugin(MObject obj)
     );
     if (!status)
     {
-        status.perror("[openvdb] Error deregistering the VDBVisualizer Sub Scene Override.");
+        status.perror("[openvdb_render] Error deregistering the VDBVisualizer Sub Scene Override.");
         return status;
     }
 
     status = plugin.deregisterCommand("vdb_query");
     if (!status)
     {
-        status.perror("[openvdb] Error deregistering the VDBQuery Command.");
+        status.perror("[openvdb_render] Error deregistering the VDBQuery Command.");
         return status;
     }
 
     status = plugin.deregisterCommand("vdb_visualizer_update_max_slice_count");
     if (!status)
     {
-        status.perror("[openvdb] Error deregistering the 'vdb_visualizer_update_max_slice_count' command.");
+        status.perror("[openvdb_render] Error deregistering the 'vdb_visualizer_update_max_slice_count' command.");
         return status;
     }
 
     status = plugin.deregisterCommand(VDBVolumeCacheCmd::COMMAND_STRING);
     if (!status)
     {
-        status.perror(format("[openvdb] Error deregistering the '^1s' command.", VDBVolumeCacheCmd::COMMAND_STRING));
+        status.perror(format("[openvdb_render] Error deregistering the '^1s' command.", VDBVolumeCacheCmd::COMMAND_STRING));
         return status;
     }
 
