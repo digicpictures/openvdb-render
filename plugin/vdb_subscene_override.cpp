@@ -1866,7 +1866,12 @@ bool VDBSubSceneOverrideData::update(const VDBVisualizerData* data, const MObjec
     change_set |= setup_parameter(world_matrix, inc_world_matrix, ChangeSet::GENERIC_ATTRIBUTE);
     change_set |= setup_parameter(wireframe_color, MHWRender::MGeometryUtilities::wireframeColor(dg), ChangeSet::GENERIC_ATTRIBUTE);
     change_set |= setup_parameter(is_selected, isPathSelected(dg), ChangeSet::GENERIC_ATTRIBUTE);
-    change_set |= setup_parameter(is_visible, dg.isVisible(), ChangeSet::GENERIC_ATTRIBUTE);
+
+    if (dg.isVisible() && !is_visible)
+        // Update everything if becoming visible.
+        change_set = ~ChangeSet::NO_CHANGES;
+    is_visible = dg.isVisible();
+    //change_set |= setup_parameter(is_visible, dg.isVisible(), ChangeSet::GENERIC_ATTRIBUTE);
 
     if (data == nullptr || update_trigger == data->update_trigger)
         return change_set != ChangeSet::NO_CHANGES;
@@ -2293,7 +2298,9 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
             point_cloud->enable(false);
 
             m_sliced_display->enable(data->is_visible);
-            m_sliced_display->update(container, *data);
+
+            if (data->is_visible)
+                m_sliced_display->update(container, *data);
         }
         else
         {
