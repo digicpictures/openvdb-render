@@ -334,6 +334,15 @@ public:
     size_t getAllocatedBytes() const { return m_buffer.size(); }
 
 private:
+    static size_t s_refcount;
+
+public:
+    // Each SubSceneOverride should call registerUsage in its ctor and unregisterUsage in its dtor
+    // so that the cache can be cleared if e.g. a new scene is created.
+    static void registerUsage() { ++s_refcount; }
+    static void unregisterUsage() { --s_refcount; if (s_refcount == 0) instance().clear(); }
+
+private:
     VoxelType m_voxel_type;
 
     struct BufferRange
@@ -363,6 +372,7 @@ private:
 
     VolumeCache();
     openvdb::FloatGrid::ConstPtr loadGrid(const VDBVolumeSpec& spec);
+    void clear();
     void clearRange(const BufferRange& range);
     void growBuffer(size_t minimum_buffer_size_bytes);
 
@@ -377,6 +387,8 @@ private:
     static const size_t DEFAULT_SIZE_BYTES;
     static const size_t GROW_AMOUNT_BYTES;
 };
+
+size_t VolumeCache::s_refcount = 0;
 
 namespace {
 
@@ -436,12 +448,7 @@ VolumeCache& VolumeCache::instance()
 void VolumeCache::setVoxelType(VoxelType voxel_type)
 {
     if (m_voxel_type != voxel_type)
-    {
-        m_buffer_head = 0;
-        m_buffer.clear();
-        m_buffer_map.clear();
-        m_allocation_map.clear();
-    }
+        clear();
 
     m_voxel_type = voxel_type;
 }
@@ -616,6 +623,14 @@ void VolumeCache::growBuffer(size_t minimum_buffer_size_bytes)
     {
         m_buffer_head = 0;
     }
+}
+
+void VolumeCache::clear()
+{
+    m_buffer_head = 0;
+    m_buffer.clear();
+    m_buffer_map.clear();
+    m_allocation_map.clear();
 }
 
 void VolumeCache::clearRange(const BufferRange& range_to_clear)
@@ -1709,6 +1724,7 @@ class SlicedDisplay
 {
 public:
     SlicedDisplay(MHWRender::MPxSubSceneOverride& parent);
+    ~SlicedDisplay();
     bool update(MHWRender::MSubSceneContainer& container, const VDBSubSceneOverrideData& data);
     void enable(bool enable);
 
@@ -2328,6 +2344,8 @@ SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
     if (!m_volume_shader)
         return;
 
+    VolumeCache::registerUsage();
+
     m_density_channel.setShaderInstance(m_volume_shader.get());
     m_scattering_channel.setShaderInstance(m_volume_shader.get());
     m_emission_channel.setShaderInstance(m_volume_shader.get());
@@ -2346,6 +2364,11 @@ SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
     // Set up blackbody LUT texture.
     m_blackbody_lut.lut.assignSamplerToShader(m_volume_shader.get(), "blackbody_lut_sampler");
     m_blackbody_lut.lut.assignTextureToShader(m_volume_shader.get(), "blackbody_lut_texture");
+}
+
+SlicedDisplay::~SlicedDisplay()
+{
+    VolumeCache::unregisterUsage();
 }
 
 void SlicedDisplay::enable(bool enable)
