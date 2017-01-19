@@ -629,6 +629,7 @@ void VolumeCache::clear()
 {
     m_buffer_head = 0;
     m_buffer.clear();
+    m_buffer.shrink_to_fit();
     m_buffer_map.clear();
     m_allocation_map.clear();
 }
