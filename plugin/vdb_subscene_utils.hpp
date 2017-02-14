@@ -3,6 +3,7 @@
 #include <maya/MHWGeometry.h>
 #include <maya/MPxSubSceneOverride.h>
 #include <maya/MShaderManager.h>
+#include <maya/MStateManager.h>
 
 #include <openvdb/tools/Interpolation.h>
 #include <openvdb/Exceptions.h>
@@ -26,6 +27,15 @@ struct TextureDeleter {
     }
 };
 typedef std::unique_ptr<MHWRender::MTexture, TextureDeleter> TexturePtr;
+
+struct SamplerStateDeleter {
+    void operator()(const MHWRender::MSamplerState* ptr) const
+    {
+        if (ptr)
+            MHWRender::MStateManager::releaseSamplerState(ptr);
+    }
+};
+typedef std::unique_ptr<const MHWRender::MSamplerState, SamplerStateDeleter> SamplerStatePtr;
 
 struct RenderTargetDeleter {
     void operator()(MHWRender::MRenderTarget* ptr) const

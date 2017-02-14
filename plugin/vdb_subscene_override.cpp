@@ -198,6 +198,47 @@ namespace std
     }
 }
 
+// === SamplerState ========================================================
+
+class SamplerState
+{
+public:
+    SamplerState(MHWRender::MSamplerState::TextureFilter filter,
+        MHWRender::MSamplerState::TextureAddress address,
+        int min_lod = 0, int max_lod = 16)
+        : m_sampler_state(createSamplerState(filter, address, min_lod, max_lod))
+    {
+    }
+
+    void assign(MHWRender::MShaderInstance *shader, const MString& param_name) const
+    {
+        CHECK_MSTATUS(shader->setParameter(param_name, *m_sampler_state));
+    }
+
+private:
+    SamplerStatePtr m_sampler_state;
+
+    static SamplerStatePtr createSamplerState(MHWRender::MSamplerState::TextureFilter filter,
+        MHWRender::MSamplerState::TextureAddress address,
+        int min_lod, int max_lod);
+};
+
+SamplerStatePtr SamplerState::createSamplerState(MHWRender::MSamplerState::TextureFilter filter,
+    MHWRender::MSamplerState::TextureAddress address,
+    int min_lod, int max_lod)
+{
+    MHWRender::MSamplerStateDesc desc;
+    desc.filter = filter;
+    desc.addressU = address;
+    desc.addressV = address;
+    desc.addressW = address;
+    desc.minLOD = min_lod;
+    desc.maxLOD = max_lod;
+    desc.mipLODBias = 0;
+    memset(desc.borderColor, 0, 4 * sizeof(float));
+    return SamplerStatePtr(MHWRender::MStateManager::acquireSamplerState(desc));
+}
+
 // === VolumeTexture =======================================================
 
 struct VolumeTexture
@@ -717,30 +758,6 @@ void VolumeParam::assign()
     CHECK_MSTATUS(m_shader_instance->setParameter(volume_origin_param, m_volume_texture.volume_origin));
 }
 
-// === SamplerState ========================================================
-
-class SamplerState
-{
-public:
-    SamplerState(MHWRender::MSamplerState::TextureFilter filter, MHWRender::MSamplerState::TextureAddress address)
-    {
-        MHWRender::MSamplerStateDesc desc;
-        desc.filter = filter;
-        desc.addressU = address;
-        desc.addressV = address;
-        desc.addressW = address;
-        m_sampler_state = MHWRender::MStateManager::acquireSamplerState(desc);
-    }
-    ~SamplerState() { MHWRender::MStateManager::releaseSamplerState(m_sampler_state); }
-    void assign(MHWRender::MShaderInstance *shader, const MString& param_name) const
-    {
-        CHECK_MSTATUS(shader->setParameter(param_name, *m_sampler_state));
-    }
-
-private:
-    const MHWRender::MSamplerState *m_sampler_state;
-};
-
 // === RampTextureBase =====================================================
 
 class RampTextureBase
@@ -765,7 +782,7 @@ protected:
 
 RampTextureBase::RampTextureBase(const unsigned int resolution, const MHWRender::MRasterFormat raster_format, const unsigned int bytes_per_pixel)
     : m_resolution(resolution), m_staging(bytes_per_pixel * resolution, 0),
-    m_ramp_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexClamp)
+    m_ramp_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexClamp, 0, 0)
 {
     MHWRender::MTextureDescription ramp_desc;
     ramp_desc.fWidth = resolution;
