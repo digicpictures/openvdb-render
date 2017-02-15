@@ -259,11 +259,13 @@ struct VolumeTexture
     void acquireBuffer(const openvdb::Coord& texture_extents, const VolumeBufferHandle<RealType>& volume_buffer);
     void clear() { texture_ptr.reset(); }
     bool isValid() const { return texture_ptr.get() != nullptr; }
-    MHWRender::MTextureAssignment& getTextureAssignment()
+
+    void assign(MHWRender::MShaderInstance* shader_instance, const MString& param)
     {
         m_texture_assignment.texture = texture_ptr.get();
-        return m_texture_assignment;
+        CHECK_MSTATUS(shader_instance->setParameter(param, m_texture_assignment));
     }
+
 private:
     MHWRender::MTextureAssignment m_texture_assignment;
     static std::vector<float> s_staging;
@@ -282,6 +284,11 @@ namespace {
     MFloatVector inline mayavecFromArray3(RealType *a)
     {
         return { a[0], a[1], a[2] };
+    }
+
+    MFloatVector inline mayavecFromVec2f(const openvdb::Vec2f& vec)
+    {
+        return { vec.x(), vec.y() };
     }
 
     MFloatVector inline mayavecFromVec3f(const openvdb::Vec3f& vec)
@@ -752,7 +759,7 @@ void VolumeParam::assign()
     if (!use_texture)
         return;
 
-    CHECK_MSTATUS(m_shader_instance->setParameter(texture_param, m_volume_texture.getTextureAssignment()));
+    m_volume_texture.assign(m_shader_instance, texture_param);
     CHECK_MSTATUS(m_shader_instance->setParameter(value_range_param, m_volume_texture.value_range));
     CHECK_MSTATUS(m_shader_instance->setParameter(volume_size_param, m_volume_texture.volume_size));
     CHECK_MSTATUS(m_shader_instance->setParameter(volume_origin_param, m_volume_texture.volume_origin));
@@ -809,15 +816,6 @@ void RampTextureBase::assignTextureToShader(MHWRender::MShaderInstance* shader_i
     ta.texture = m_texture.get();
     CHECK_MSTATUS(shader_instance->setParameter(texture_param, ta));
 }
-
-namespace {
-
-    MFloatVector inline mayavecFromVec2f(const openvdb::Vec2f& vec)
-    {
-        return { vec.x(), vec.y() };
-    }
-
-} // unnamed namespace
 
 void RampTextureBase::assignDomainToShader(MHWRender::MShaderInstance* shader_instance, const MString& domain_param) const
 {
