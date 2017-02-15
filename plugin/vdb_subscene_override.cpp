@@ -1421,7 +1421,8 @@ float3 BlackbodyColor(float temperature)
 float CalcLOD(float distance_model, float3 size_model)
 {
     float3 distance_voxels = (distance_model / size_model) * float(max_slice_count - 1);
-    return max(0, log(MaxComponent(distance_voxels)) / log(2.f));
+    float max_component = MaxComponent(distance_voxels) + EPS;
+    return clamp(log(max_component) / log(2.f), 0.f, 16.f);
 }
 
 float SampleDensityTexture(float3 pos_model, float lod_scale_model)
@@ -1618,7 +1619,8 @@ float3 RayTransmittance(float3 from_world, float3 to_world)
     for (int i = 0; i < shadow_sample_count; ++i) {
         float density = SampleDensityTexture(pos_model, step_size_model);
         float3 transparency = SampleTransparencyTexture(pos_model, step_size_model);
-        transmittance *= pow(transparency, density * step_size_world / (1.0 + float(i) * step_size_world * shadow_gain));
+        if (density >= EPS)
+            transmittance *= pow(transparency, density * step_size_world / (1.0 + float(i) * step_size_world * shadow_gain));
         pos_model += step_model;
     }
     return transmittance;
@@ -1660,8 +1662,6 @@ float3 LightLuminanceDirectional(int light_index, float3 pos_world, float3 direc
         return lumi;
 
     // Shadow.
-    //float  max_distance_world = MaxComponent(volume_size);
-    //float3 shadow_vector = 0.5f * max_distance_world * direction_to_light;
     float3 shadow_vector = 0.5f * StretchToVolumeSize(direction_to_light);
     lumi *= (float3(1, 1, 1) - ShadowFactor(light_index, pos_world, pos_world + shadow_vector));
 
@@ -1678,7 +1678,7 @@ float3 LightLuminancePointSpot(int light_index, float3 pos_world, float3 directi
 
     // Phase.
     float3 vector_to_light_world = light_position[light_index] - pos_world;
-    float  distance_to_light_world = max(length(vector_to_light_world), EPS3);
+    float  distance_to_light_world = max(length(vector_to_light_world), EPS);
     float3 direction_to_light_world = vector_to_light_world / distance_to_light_world;
     float phase = HGPhase(dot(direction_to_eye_world, direction_to_light_world));
     lumi *= phase;
