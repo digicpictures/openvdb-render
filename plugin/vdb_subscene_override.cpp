@@ -1347,6 +1347,7 @@ bool per_slice_gamma = false;
 int dominant_axis; // 0: x, 1: y, 2:z
 
 #define DEBUG_COLOR float3(1.0, 0.5, 0.5)
+#define DEBUG_COLOR4 float4(1.0, 0.5, 0.5, 1)
 
 #define EPS 1e-7f
 #define EPS3 float3(EPS, EPS, EPS)
@@ -1791,6 +1792,10 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
     lumi += emission;
 
     output.color = float4(lumi, alpha);
+
+    if (isnan(output.color.x) || isnan(output.color.y) ||
+        isnan(output.color.z) || isnan(output.color.w))
+        output.color = DEBUG_COLOR4;
 
     return output;
 }
