@@ -1853,6 +1853,7 @@ private:
 
     bool m_enabled;
     bool m_selected;
+    bool m_force_shadows_off;
 };
 const unsigned int SlicedDisplay::RAMP_RESOLUTION = 128;
 
@@ -2434,7 +2435,7 @@ SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
     m_density_channel("density"), m_scattering_channel("scattering"), m_emission_channel("emission"), m_transparency_channel("transparency"), m_temperature_channel("temperature"),
     m_density_ramp(RAMP_RESOLUTION), m_scattering_ramp(RAMP_RESOLUTION), m_emission_ramp(RAMP_RESOLUTION),
     m_volume_sampler_state(MHWRender::MSamplerState::kMinMagMipLinear, MHWRender::MSamplerState::kTexBorder),
-    m_enabled(false), m_selected(false)
+    m_enabled(false), m_selected(false), m_force_shadows_off(false)
 {
     if (!m_volume_shader)
         return;
@@ -2459,6 +2460,16 @@ SlicedDisplay::SlicedDisplay(MHWRender::MPxSubSceneOverride& parent)
     // Set up blackbody LUT texture.
     m_blackbody_lut.lut.assignSamplerToShader(m_volume_shader.get(), "blackbody_lut_sampler");
     m_blackbody_lut.lut.assignTextureToShader(m_volume_shader.get(), "blackbody_lut_texture");
+
+    // Shadows don't display correctly on Radeon HD 7950 under Linux,
+    // so switch them off if the OpenGL vendor string doesn't contain
+    // the string "nvidia" as a temporary (TM) workaround (TM).
+    const std::string gl_vendor = reinterpret_cast<const char*>(glGetString(GL_VENDOR));
+    static const std::string pattern = "nvidia";
+    auto it = std::search(
+        gl_vendor.begin(), gl_vendor.end(), pattern.begin(), pattern.end(),
+        [](char a, char b) { return std::tolower(a, std::locale()) == std::tolower(b, std::locale()); });
+    m_force_shadows_off = (it == gl_vendor.end());
 }
 
 SlicedDisplay::~SlicedDisplay()
@@ -2660,7 +2671,7 @@ bool SlicedDisplay::update(MHWRender::MSubSceneContainer& container, const VDBSu
     CHECK_MSTATUS(m_volume_shader->setParameter("temperature", data.temperature_channel.intensity));
     CHECK_MSTATUS(m_volume_shader->setParameter("blackbody_intensity", data.blackbody_intensity));
     CHECK_MSTATUS(m_volume_shader->setParameter("shadow_gain", data.shadow_gain));
-    CHECK_MSTATUS(m_volume_shader->setParameter("shadow_sample_count", data.shadow_sample_count));
+    CHECK_MSTATUS(m_volume_shader->setParameter("shadow_sample_count", m_force_shadows_off ? 0 : data.shadow_sample_count));
     CHECK_MSTATUS(m_volume_shader->setParameter("per_slice_gamma", data.per_slice_gamma));
 
     // === Update channels. ===
