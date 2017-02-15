@@ -1006,7 +1006,7 @@ void VolumeShader::loadShader()
 
         // Create macros.
         std::string compile_args_str[macro_count];
-        const char *compile_args[macro_count + 1];
+        const char *compile_args[macro_count + 3];
         for (int i = 0; i < macro_count; ++i) {
             const auto macro_def = macros[i];
             std::stringstream ss;
@@ -1014,10 +1014,12 @@ void VolumeShader::loadShader()
             compile_args_str[i] = ss.str();
             compile_args[i] = compile_args_str[i].c_str();
         }
-        compile_args[macro_count] = nullptr;
+        compile_args[macro_count + 0] = "-po";
+        compile_args[macro_count + 1] = "version=410";
+        compile_args[macro_count + 2] = nullptr;
 
         // Compile shaders.
-        for (auto shader_spec : { std::make_pair("VolumeVertexShader", "gp5vp"), std::make_pair("VolumeFragmentShader", "gp5fp") })
+        for (auto shader_spec : { std::make_pair("VolumeVertexShader", "glslv"), std::make_pair("VolumeFragmentShader", "glslf") })
         {
             if (!cgCreateProgram(context, CG_SOURCE, VOLUME_EFFECT_CODE.c_str(), cgGetProfile(shader_spec.second), shader_spec.first, compile_args))
             {
@@ -1505,7 +1507,6 @@ float3 DominantAxis(float3 dir, float3 v)
 struct VERT_INPUT
 {
     float3 pos : Position;
-    int id : VERTEXID;
 };
 
 struct VERT_OUTPUT
@@ -1519,8 +1520,8 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
 {
     VERT_OUTPUT output;
 
-    int slice_idx = input.id >> 2;
     float2 pos_slice = input.pos.xy;
+    int slice_idx = round(input.pos.z);
 
     float3 view_dir_model = normalize(mul(world_inverse_mat_3x3, view_dir_world));
     if (dot(DominantAxis(view_dir_model, float3(0, 0, 1)), view_dir_model) > 0)
@@ -1742,8 +1743,8 @@ technique Main < int isTransparent = 1; >
         BlendEnable = true;
         BlendFunc = int2(One, OneMinusSrcAlpha);
         CullFaceEnable = false;
-        VertexProgram = compile gp5vp VolumeVertexShader();
-        FragmentProgram = compile gp5fp VolumeFragmentShader();
+        VertexProgram = compile glslv "-po version=410" VolumeVertexShader();
+        FragmentProgram = compile glslf "-po version=410" VolumeFragmentShader();
     }
 }
 )cgfx");
@@ -2513,7 +2514,7 @@ void SlicedDisplay::updateSliceGeo(const VDBSubSceneOverrideData& data)
     const auto vertex_count = data.max_slice_count * 4;
     MFloatVector* positions = reinterpret_cast<MFloatVector*>(m_slices_renderable.position_buffer->acquire(vertex_count, true));
     for (int i = 0; i < data.max_slice_count; ++i) {
-        const float z = i * 1.0f / (data.max_slice_count - 1.0f);
+        const auto z = float(i);
         positions[4 * i + 0] = MFloatVector(0.0, 0.0, z);
         positions[4 * i + 1] = MFloatVector(1.0, 0.0, z);
         positions[4 * i + 2] = MFloatVector(0.0, 1.0, z);
