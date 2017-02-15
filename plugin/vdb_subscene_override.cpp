@@ -1352,14 +1352,24 @@ float3 SRGBFromLinear(float3 color)
     return pow(color, 1.0f/2.2f);
 }
 
+float4 SampleTexture1D(sampler1D sampler, float tex_coord, float lod)
+{
+    return tex1Dlod(sampler, float4(tex_coord, 0, 0, lod));
+}
+
+float4 SampleTexture3D(sampler3D sampler, float3 tex_coords, float lod)
+{
+    return tex3Dlod(sampler, float4(tex_coords, lod));
+}
+
 float SampleFloatRamp(sampler1D ramp_sampler, float texcoord)
 {
-    return tex1Dlod(ramp_sampler, float4(texcoord, 0, 0, 0)).x;
+    return SampleTexture1D(ramp_sampler, texcoord, 0).x;
 }
 
 float3 SampleColorRamp(sampler1D ramp_sampler, float texcoord)
 {
-    return LinearFromSRGB(tex1Dlod(ramp_sampler, float4(texcoord, 0, 0, 0)).xyz);
+    return LinearFromSRGB(tex1D(ramp_sampler, texcoord).xyz);
 }
 
 #define SQR(x) ((x) * (x))
@@ -1395,7 +1405,7 @@ float SampleDensityTexture(float3 pos_model, float lod_scale_model)
     {
         float3 tex_coords = (pos_model - density_volume_origin) / density_volume_size;
         float lod = CalcLOD(lod_scale_model, density_volume_size);
-        float tex_sample = tex3Dlod(density_sampler, float4(tex_coords, lod)).r;
+        float tex_sample = SampleTexture3D(density_sampler, tex_coords, lod).r;
         float channel_value = lerp(density_value_range.x, density_value_range.y, tex_sample);
         if (density_source == DENSITY_SOURCE_RAMP)
             channel_value *= SampleFloatRamp(density_ramp_sampler, unlerp(density_ramp_domain.x, density_ramp_domain.y, channel_value));
@@ -1412,7 +1422,8 @@ float3 SampleScatteringTexture(float3 pos_model, float lod_scale_model)
     {
         float3 tex_coords = (pos_model - scattering_volume_origin) / scattering_volume_size;
         float lod = CalcLOD(lod_scale_model, scattering_volume_size);
-        channel_value = lerp(scattering_value_range.x, scattering_value_range.y, tex3Dlod(scattering_sampler, float4(tex_coords, lod)).r);
+        float voxel_value = SampleTexture3D(scattering_sampler, tex_coords, lod).r;
+        channel_value = lerp(scattering_value_range.x, scattering_value_range.y, voxel_value);
     }
 
     float3 res = scattering_color;
@@ -1433,7 +1444,8 @@ float3 SampleTransparencyTexture(float3 pos_model, float lod_scale_model)
     {
         float3 tex_coords = (pos_model - transparency_volume_origin) / transparency_volume_size;
         float lod = CalcLOD(lod_scale_model, transparency_volume_size);
-        res *= lerp(transparency_value_range.x, transparency_value_range.y, tex3Dlod(transparency_sampler, float4(tex_coords, lod)).r);
+        float voxel_value = SampleTexture3D(transparency_sampler, tex_coords, lod).r;
+        res *= lerp(transparency_value_range.x, transparency_value_range.y, voxel_value);
     }
 
     return clamp(res, float3(EPS, EPS, EPS), float3(1, 1, 1));
@@ -1446,7 +1458,8 @@ float SampleTemperatureTexture(float3 pos_model, float lod_scale_model)
     {
         float3 tex_coords = (pos_model - temperature_volume_origin) / temperature_volume_size;
         float lod = CalcLOD(lod_scale_model, temperature_volume_size);
-        res *= lerp(temperature_value_range.x, temperature_value_range.y, tex3Dlod(temperature_sampler, float4(tex_coords, lod)).r);
+        float voxel_value = SampleTexture3D(temperature_sampler, tex_coords, lod).r;
+        res *= lerp(temperature_value_range.x, temperature_value_range.y, voxel_value);
     }
 
     return res;
@@ -1462,7 +1475,8 @@ float3 SampleEmissionTexture(float3 pos_model, float lod_scale_model)
     {
         float3 tex_coords = (pos_model - emission_volume_origin) / emission_volume_size;
         float lod = CalcLOD(lod_scale_model, emission_volume_size);
-        channel_value = lerp(emission_value_range.x, emission_value_range.y, tex3Dlod(emission_sampler, float4(tex_coords, lod)).r);
+        float voxel_value = SampleTexture3D(emission_sampler, tex_coords, lod).r;
+        channel_value = lerp(emission_value_range.x, emission_value_range.y, voxel_value);
     }
 
     float3 res = emission_color;
