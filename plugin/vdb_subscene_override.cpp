@@ -1080,6 +1080,28 @@ void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRe
         CHECK_MSTATUS(shader_instance->setParameter("view_pos_world", MFloatVector(float(view_pos[0]), float(view_pos[1]), float(view_pos[2]))));
     }
 
+    // Set view direction in model space and dominant axis index (0: x, 1: y, 2: z).
+    {
+        MStatus status;
+        const auto view_dir = context.getTuple(MHWRender::MFrameContext::kViewDirection, &status);
+        CHECK_MSTATUS(status);
+        const auto world_inverse_mat = context.getMatrix(MHWRender::MFrameContext::kWorldInverseMtx, &status);
+        CHECK_MSTATUS(status);
+        auto view_dir_vec = MVector(view_dir[0], view_dir[1], view_dir[2]);
+        view_dir_vec *= world_inverse_mat;
+        view_dir_vec.normalize();
+        const auto view_dir_model = MFloatVector(view_dir_vec[0], view_dir_vec[1], view_dir_vec[2]);
+        CHECK_MSTATUS(shader_instance->setParameter("view_dir_model", view_dir_model));
+
+        const float ax = std::fabs(view_dir_model.x), ay = std::fabs(view_dir_model.y), az = std::fabs(view_dir_model.z);
+        int dominant_axis = 0;
+        if (ay > ax && ay > az)
+            dominant_axis = 1;
+        else if (az > ax && az > ay)
+            dominant_axis = 2;
+        CHECK_MSTATUS(shader_instance->setParameter("dominant_axis", dominant_axis));
+    }
+
     // Collect light data.
 
     Float3Array<MAX_LIGHT_COUNT> light_position;
@@ -1187,6 +1209,7 @@ void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRe
 
 const std::string VolumeShader::VOLUME_EFFECT_CODE = std::string(R"cgfx(
 float3 view_dir_world : ViewDirection;
+float3 view_dir_model;
 float3 view_pos_world;
 float4x4 world_mat : World;
 float3x3 world_mat_3x3 : World;
@@ -1321,6 +1344,7 @@ float shadow_gain = 0.2;
 int shadow_sample_count = 4;
 int max_slice_count;
 bool per_slice_gamma = false;
+int dominant_axis; // 0: x, 1: y, 2:z
 
 #define DEBUG_COLOR float3(1.0, 0.5, 0.5)
 
@@ -1505,15 +1529,33 @@ float3 SampleEmissionTexture(float3 pos_model, float lod_scale_model)
     return res;
 }
 
-float3 DominantAxis(float3 dir, float3 v)
+int GetDominantAxis()
 {
-    float ax = abs(dir.x), ay = abs(dir.y), az = abs(dir.z);
-    if (ax > ay && ax > az)
+#ifdef DEBUG
+    return (force_axis == -1) ? dominant_axis : force_axis;
+#else
+    return dominant_axis;
+#endif
+}
+
+float3 Swizzle(float3 v, int i)
+{
+    if (i == 1)
         return v.zxy;
-    else if (ay > ax && ay > az)
+    else if (i == 2)
         return v.yzx;
     else
-        return v.xyz;
+        return v;
+}
+
+float GetComponent(float3 v, int i)
+{
+    if (i == 1)
+        return v.y;
+    else if (i == 2)
+        return v.z;
+    else
+        return v.x;
 }
 
 // ======== VERTEX SHADER ========
@@ -1534,14 +1576,17 @@ VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
 {
     VERT_OUTPUT output;
 
+    int dom_ax = GetDominantAxis();
+
     float2 pos_slice = input.pos.xy;
     int slice_idx = round(input.pos.z);
 
-    float3 view_dir_model = normalize(mul(world_inverse_mat_3x3, view_dir_world));
-    if (dot(DominantAxis(view_dir_model, float3(0, 0, 1)), view_dir_model) > 0)
+    // Ensure back-to-front render order.
+    if (GetComponent(view_dir_model, dom_ax) > 0) {
         slice_idx = max_slice_count - 1 - slice_idx;
-    float3 pos_dom = float3(pos_slice, float(slice_idx) / float(max_slice_count - 1));
-    output.pos_model = DominantAxis(view_dir_model, pos_dom) * volume_size + volume_origin;
+    }
+    float3 pos_dom = float3(float(slice_idx) / float(max_slice_count - 1), pos_slice);
+    output.pos_model = Swizzle(pos_dom, dom_ax) * volume_size + volume_origin;
     output.pos_world = mul(world_mat, float4(output.pos_model, 1)).xyz;
     output.pos_clip = mul(world_view_proj_mat, float4(output.pos_model, 1));
 
@@ -1694,6 +1739,7 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
 {
     FRAG_OUTPUT output;
 
+    int dom_ax = GetDominantAxis();
     float density = SampleDensityTexture(input.pos_model, 0);
     float3 transparency = SampleTransparencyTexture(input.pos_model, 0);
     float3 albedo = SampleScatteringTexture(input.pos_model, 0);
@@ -1707,8 +1753,7 @@ FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
 
     float3 direction_to_eye_world = normalize(view_pos_world - input.pos_world);
 
-    float3 view_dir_model = normalize(mul(world_inverse_mat_3x3, view_dir_world));
-    float3 slice_vector_model = DominantAxis(view_dir_model, float3(0, 0, 1)) * volume_size / float(max_slice_count - 1);
+    float3 slice_vector_model = Swizzle(float3(1, 0, 0), dom_ax) * volume_size / float(max_slice_count - 1);
     float3 slice_vector_world = mul(world_mat_3x3, slice_vector_model);
     float ray_distance = dot(slice_vector_world, slice_vector_world) / abs(dot(slice_vector_world, direction_to_eye_world));
 
