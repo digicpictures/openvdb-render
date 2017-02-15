@@ -1003,9 +1003,23 @@ void VolumeShader::loadShader()
     {
         LOG_ERROR("Cannot compile cgfx.");
         CGcontext context = cgCreateContext();
+
+        // Create macros.
+        std::string compile_args_str[macro_count];
+        const char *compile_args[macro_count + 1];
+        for (int i = 0; i < macro_count; ++i) {
+            const auto macro_def = macros[i];
+            std::stringstream ss;
+            ss << "-D" << macro_def.mName << "=" << macro_def.mDefinition.asChar();
+            compile_args_str[i] = ss.str();
+            compile_args[i] = compile_args_str[i].c_str();
+        }
+        compile_args[macro_count] = nullptr;
+
+        // Compile shaders.
         for (auto shader_spec : { std::make_pair("VolumeVertexShader", "gp5vp"), std::make_pair("VolumeFragmentShader", "gp5fp") })
         {
-            if (!cgCreateProgram(context, CG_SOURCE, VOLUME_EFFECT_CODE.c_str(), cgGetProfile(shader_spec.second), shader_spec.first, nullptr))
+            if (!cgCreateProgram(context, CG_SOURCE, VOLUME_EFFECT_CODE.c_str(), cgGetProfile(shader_spec.second), shader_spec.first, compile_args))
             {
                 const char *compiler_output = cgGetLastListing(context);
                 LOG_ERROR(format("^1s: compilation errors:\n^2s", shader_spec.first, compiler_output).asChar());
