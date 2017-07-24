@@ -1190,8 +1190,8 @@ void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRe
     }
 
     // Convert colors to linear color space.
-    LinearFromSRGB(light_color.float_array.data(), shader_light_count);
-    LinearFromSRGB(light_shadow_color.float_array.data(), shader_light_count);
+    LinearFromSRGB(light_color.float_array.data(), 3 * shader_light_count);
+    LinearFromSRGB(light_shadow_color.float_array.data(), 3 * shader_light_count);
 
     // Set shader params.
     CHECK_MSTATUS(shader_instance->setParameter("light_count", shader_light_count));
