@@ -1162,12 +1162,6 @@ void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRe
         // Intensity.
         getLightParam(light_params, MLightParameterInformation::kIntensity, light_intensity[shader_light_count]);
 
-        // TODO: exposure from node.
-        //auto light_path = light_params->lightPath();
-        // Or use maya api if it will provide exposure.
-        //if (light_params->getParameter("exposure", float_array) == MStatus::kSuccess)
-        //    light_intensity[shader_light_count] *= std::pow(2.0f, float_array[0]);
-
         // Shadow.
         // ShadowOn attrib of point lights is buggy, cast shadows by default.
         if (light_type == "pointLight")
