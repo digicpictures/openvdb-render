@@ -1163,11 +1163,19 @@ void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRe
         getLightParam(light_params, MLightParameterInformation::kIntensity, light_intensity[shader_light_count]);
 
         // Shadow.
-        // ShadowOn attrib of point lights is buggy, cast shadows by default.
-        if (light_type == "pointLight")
-            light_flags[shader_light_count] |= LIGHT_FLAG_CAST_SHADOWS;
-        else if (light_params->getParameter(MLightParameterInformation::kShadowOn, int_array) == MStatus::kSuccess && int_array[0] == 1)
-            light_flags[shader_light_count] |= LIGHT_FLAG_CAST_SHADOWS;
+        {
+            // Cast shadows if the ShadowOn param is on, or true by default if there is no such param.
+            auto status = light_params->getParameter(MLightParameterInformation::kShadowOn, int_array);
+            if (status == MStatus::kSuccess && int_array[0] == 1) {
+                light_flags[shader_light_count] |= LIGHT_FLAG_CAST_SHADOWS;
+            }
+#if MAYA_API_VERSION < 201600
+            // ShadowOn attrib of point lights is buggy in Maya 2015, cast shadows by default.
+            if (light_type == "pointLight") {
+                light_flags[shader_light_count] |= LIGHT_FLAG_CAST_SHADOWS;
+            }
+#endif
+        }
 
         // Shadow color.
         getLightParam(light_params, MLightParameterInformation::kShadowColor, light_shadow_color.float3_array[shader_light_count]);
