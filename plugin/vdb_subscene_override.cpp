@@ -20,6 +20,7 @@
 
 #include <Cg/cg.h>
 
+#include "paths.h"
 #include "blackbody.h"
 #include "progress_bar.h"
 #include "volume_sampler.h"
@@ -987,6 +988,11 @@ VolumeShader::~VolumeShader()
 
 void VolumeShader::loadShader()
 {
+    // Only OpenGL core profile is supported.
+    if (MHWRender::MRenderer::theRenderer()->drawAPI() != MHWRender::kOpenGLCoreProfile) {
+        return;
+    }
+
     const MHWRender::MShaderManager* shader_manager = get_shader_manager();
     if (!shader_manager)
         return;
@@ -996,37 +1002,11 @@ void VolumeShader::loadShader()
                                                 makeMacroDef("BLACKBODY_LUT_NORMALIZER", Blackbody::LUT_NORMALIZER),
                                                 makeMacroDef("MAX_LIGHT_COUNT",          MAX_LIGHT_COUNT) };
     constexpr int macro_count = sizeof(macros) / sizeof(MHWRender::MShaderCompileMacro);
-    s_volume_shader.reset(shader_manager->getEffectsBufferShader(
-            VOLUME_EFFECT_CODE.c_str(), unsigned(VOLUME_EFFECT_CODE.size()),
+    const auto effect_file = Paths::getVolumeEffectFile();
+    s_volume_shader.reset(shader_manager->getEffectsFileShader(
+            effect_file.c_str(),
             "Main", macros, macro_count, /*useEffectCache=*/false, preDrawCallback));
-    if (!s_volume_shader)
-    {
-        LOG_ERROR("Cannot compile cgfx.");
-        CGcontext context = cgCreateContext();
-
-        // Create macros.
-        std::string compile_args_str[macro_count];
-        const char *compile_args[macro_count + 3];
-        for (int i = 0; i < macro_count; ++i) {
-            const auto macro_def = macros[i];
-            std::stringstream ss;
-            ss << "-D" << macro_def.mName << "=" << macro_def.mDefinition.asChar();
-            compile_args_str[i] = ss.str();
-            compile_args[i] = compile_args_str[i].c_str();
-        }
-        compile_args[macro_count + 0] = "-po";
-        compile_args[macro_count + 1] = "version=410";
-        compile_args[macro_count + 2] = nullptr;
-
-        // Compile shaders.
-        for (auto shader_spec : { std::make_pair("VolumeVertexShader", "glslv"), std::make_pair("VolumeFragmentShader", "glslf") })
-        {
-            if (!cgCreateProgram(context, CG_SOURCE, VOLUME_EFFECT_CODE.c_str(), cgGetProfile(shader_spec.second), shader_spec.first, compile_args))
-            {
-                const char *compiler_output = cgGetLastListing(context);
-                LOG_ERROR(format("^1s: compilation errors:\n^2s", shader_spec.first, compiler_output).asChar());
-            }
-        }
+    if (!s_volume_shader) {
         return;
     }
 
@@ -1067,6 +1047,38 @@ namespace {
 
 void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& /*renderItemList*/, MHWRender::MShaderInstance* shader_instance)
 {
+    // Check for errors.
+    if (shader_instance->bind(context) != MStatus::kSuccess) {
+        const auto shader_manager = get_shader_manager();
+        std::cerr << "[openvdb_render] Failed to compile volume shader: "
+            << shader_manager->getLastErrorSource() << "\n"
+            << shader_manager->getLastError() << std::endl;
+        return;
+    }
+
+    // Set blend state.
+    {
+        auto state_manager = context.getStateManager();
+        MHWRender::MBlendStateDesc blend_state_desc;
+        blend_state_desc.setDefaults();
+        for (int i = 0; i < (blend_state_desc.independentBlendEnable ? MHWRender::MBlendState::kMaxTargets : 1); ++i) {
+            blend_state_desc.targetBlends[i].blendEnable = true;
+            blend_state_desc.targetBlends[i].sourceBlend = MHWRender::MBlendState::kOne;
+            blend_state_desc.targetBlends[i].destinationBlend = MHWRender::MBlendState::kInvSourceAlpha;
+            blend_state_desc.targetBlends[i].blendOperation = MHWRender::MBlendState::kAdd;
+            blend_state_desc.targetBlends[i].alphaSourceBlend = MHWRender::MBlendState::kOne;
+            blend_state_desc.targetBlends[i].alphaDestinationBlend = MHWRender::MBlendState::kInvSourceAlpha;
+            blend_state_desc.targetBlends[i].alphaBlendOperation = MHWRender::MBlendState::kAdd;
+        }
+
+        blend_state_desc.blendFactor[0] = 1.0f;
+        blend_state_desc.blendFactor[1] = 1.0f;
+        blend_state_desc.blendFactor[2] = 1.0f;
+        blend_state_desc.blendFactor[3] = 1.0f;
+
+        const MHWRender::MBlendState* blend_state = state_manager->acquireBlendState(blend_state_desc);
+        CHECK_MSTATUS(state_manager->setBlendState(blend_state));
+    }
 
     // Set view position.
     {
@@ -1214,611 +1226,6 @@ void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRe
     CHECK_MSTATUS(shader_instance->setArrayParameter("light_dropoff", light_dropoff.data(), shader_light_count));
 }
 
-const std::string VolumeShader::VOLUME_EFFECT_CODE = std::string(R"cgfx(
-float3 view_dir_world : ViewDirection;
-float3 view_dir_model;
-float3 view_pos_world;
-float4x4 world_mat : World;
-float3x3 world_mat_3x3 : World;
-float4x4 world_inverse_mat : WorldInverse;
-float3x3 world_inverse_mat_3x3 : WorldInverse;
-float4x4 world_view_proj_mat : WorldViewProjection;
-
-// The following sizes and positions are in model space.
-
-float3 volume_size;
-float3 volume_origin;
-
-// Channels.
-
-#define DENSITY_SOURCE_VALUE 0
-#define DENSITY_SOURCE_RAMP  1
-
-float     density = 1.0f;
-int       density_source = DENSITY_SOURCE_VALUE;
-bool      use_density_texture = true;
-float2    density_value_range = float2(0, 1);
-float3    density_volume_size;
-float3    density_volume_origin;
-texture   density_texture < string TextureType = "3D"; >;
-sampler3D density_sampler = sampler_state {
-    Texture = <density_texture>;
-};
-
-#define COLOR_SOURCE_COLOR 0
-#define COLOR_SOURCE_RAMP  1
-
-float     scattering_intensity = 1;
-float3    scattering_color = float3(1, 1, 1);
-int       scattering_color_source = COLOR_SOURCE_COLOR;
-float     scattering_anisotropy = 0;
-bool      use_scattering_texture = true;
-float2    scattering_value_range = float2(0, 1);
-float3    scattering_volume_size;
-float3    scattering_volume_origin;
-texture   scattering_texture < string TextureType = "3D"; >;
-sampler3D scattering_sampler = sampler_state {
-    Texture = <scattering_texture>;
-};
-
-float3    transparency = float3(1, 1, 1);
-bool      use_transparency_texture = true;
-float2    transparency_value_range = float2(0, 1);
-float3    transparency_volume_size;
-float3    transparency_volume_origin;
-texture   transparency_texture < string TextureType = "3D"; >;
-sampler3D transparency_sampler = sampler_state {
-    Texture = <transparency_texture>;
-};
-
-#define EMISSION_MODE_NONE                  0
-#define EMISSION_MODE_DENSITY               1
-#define EMISSION_MODE_CHANNEL               2
-#define EMISSION_MODE_BLACKBODY             3
-#define EMISSION_MODE_DENSITY_AND_BLACKBODY 4
-int       emission_mode = 0;
-int       emission_color_source = COLOR_SOURCE_COLOR;
-bool      use_emission_texture = false;
-float     emission_intensity = 1;
-float3    emission_color = float3(1, 1, 1);
-float2    emission_value_range = float2(0, 1);
-float3    emission_volume_size;
-float3    emission_volume_origin;
-texture   emission_texture < string TextureType = "3D"; >;
-sampler3D emission_sampler = sampler_state {
-    Texture = <emission_texture>;
-};
-
-float     temperature = 5000.0f;
-bool      use_temperature_texture = false;
-float2    temperature_value_range = float2(0, 1);
-float3    temperature_volume_size;
-float3    temperature_volume_origin;
-texture   temperature_texture < string TextureType = "3D"; >;
-sampler3D temperature_sampler = sampler_state {
-    Texture = <temperature_texture>;
-};
-
-float     blackbody_intensity = 1.0f;
-texture   blackbody_lut_texture;
-sampler1D blackbody_lut_sampler = sampler_state {
-    Texture = <blackbody_lut_texture>;
-};
-
-// Ramps.
-
-float2    density_ramp_domain = float2(0, 1);
-texture   density_ramp_texture;
-sampler1D density_ramp_sampler = sampler_state {
-    Texture = <density_ramp_texture>;
-};
-
-float2    scattering_ramp_domain = float2(0, 1);
-texture   scattering_ramp_texture;
-sampler1D scattering_ramp_sampler = sampler_state {
-    Texture = <scattering_ramp_texture>;
-};
-
-float2    emission_ramp_domain = float2(0, 1);
-texture   emission_ramp_texture;
-sampler1D emission_ramp_sampler = sampler_state {
-    Texture = <emission_ramp_texture>;
-};
-
-// Lights.
-
-#define LIGHT_FLAG_POINT_LIGHT       0
-#define LIGHT_FLAG_DIRECTIONAL_LIGHT 1
-#define LIGHT_FLAG_SPOTLIGHT         2
-#define LIGHT_FLAG_MASK_TYPE         3
-#define LIGHT_FLAG_CAST_SHADOWS      8
-
-int    light_count;
-int    light_flags[MAX_LIGHT_COUNT];
-float3 light_position[MAX_LIGHT_COUNT];
-float3 light_direction[MAX_LIGHT_COUNT];
-float3 light_color[MAX_LIGHT_COUNT];
-float  light_intensity[MAX_LIGHT_COUNT];
-float  light_decay_exponent[MAX_LIGHT_COUNT];
-float3 light_shadow_color[MAX_LIGHT_COUNT];
-float  light_cutoff_costheta1[MAX_LIGHT_COUNT];
-float  light_cutoff_costheta2[MAX_LIGHT_COUNT];
-float  light_dropoff[MAX_LIGHT_COUNT];
-
-// Other params.
-
-float shadow_gain = 0.2;
-int shadow_sample_count = 4;
-int max_slice_count;
-bool per_slice_gamma = false;
-int dominant_axis; // 0: x, 1: y, 2:z
-
-#define DEBUG_COLOR float3(1.0, 0.5, 0.5)
-#define DEBUG_COLOR4 float4(1.0, 0.5, 0.5, 1)
-
-#define EPS 1e-7f
-#define EPS3 float3(EPS, EPS, EPS)
-
-float unlerp(float a, float b, float x)
-{
-    return (x - a) / (b - a);
-}
-
-float MaxComponent(float3 v)
-{
-    return max(max(v.x, v.y), v.z);
-}
-
-float MinComponent(float3 v)
-{
-    return min(min(v.x, v.y), v.z);
-}
-
-float3 LinearFromSRGB(float3 color)
-{
-    return pow(color, 2.2f);
-}
-
-float3 SRGBFromLinear(float3 color)
-{
-    return pow(color, 1.0f/2.2f);
-}
-
-float4 SampleTexture1D(sampler1D sampler, float tex_coord, float lod)
-{
-    return tex1Dlod(sampler, float4(tex_coord, 0, 0, lod));
-}
-
-float4 SampleTexture3D(sampler3D sampler, float3 tex_coords, float lod)
-{
-    return tex3Dlod(sampler, float4(tex_coords, lod));
-}
-
-float SampleFloatRamp(sampler1D ramp_sampler, float texcoord)
-{
-    return SampleTexture1D(ramp_sampler, texcoord, 0).x;
-}
-
-float3 SampleColorRamp(sampler1D ramp_sampler, float texcoord)
-{
-    return LinearFromSRGB(tex1D(ramp_sampler, texcoord).xyz);
-}
-
-#define SQR(x) ((x) * (x))
-#define PI 3.14159265f
-float BlackbodyRadiance(float temperature)
-{
-    const float sigma = 5.670367e-8f; // Stefan-Boltzmann constant
-    float power = sigma * SQR(SQR(temperature));
-
-    // non-physically correct control to reduce the intensity
-    if (blackbody_intensity < 1.0f)
-       power = lerp(sigma, power, max(blackbody_intensity, 0.0f));
-
-    // convert power to spectral radiance
-    return power * (1e-6f / PI);
-}
-
-float3 BlackbodyColor(float temperature)
-{
-    float texcoord = (temperature - BLACKBODY_LUT_MIN_TEMP) / (BLACKBODY_LUT_MAX_TEMP - BLACKBODY_LUT_MIN_TEMP);
-    return SampleColorRamp(blackbody_lut_sampler, texcoord) * BLACKBODY_LUT_NORMALIZER;
-}
-
-float CalcLOD(float distance_model, float3 size_model)
-{
-    float3 distance_voxels = (distance_model / size_model) * float(max_slice_count - 1);
-    float max_component = MaxComponent(distance_voxels) + EPS;
-    return clamp(log(max_component) / log(2.f), 0.f, 16.f);
-}
-
-float SampleDensityTexture(float3 pos_model, float lod_scale_model)
-{
-    if (use_density_texture)
-    {
-        float3 tex_coords = (pos_model - density_volume_origin) / density_volume_size;
-        float lod = CalcLOD(lod_scale_model, density_volume_size);
-        float tex_sample = SampleTexture3D(density_sampler, tex_coords, lod).r;
-        float channel_value = lerp(density_value_range.x, density_value_range.y, tex_sample);
-        if (density_source == DENSITY_SOURCE_RAMP)
-            channel_value *= SampleFloatRamp(density_ramp_sampler, unlerp(density_ramp_domain.x, density_ramp_domain.y, channel_value));
-        return density * channel_value;
-    }
-    else
-        return density;
-}
-
-float3 SampleScatteringTexture(float3 pos_model, float lod_scale_model)
-{
-    float channel_value = 0;
-    if (use_scattering_texture)
-    {
-        float3 tex_coords = (pos_model - scattering_volume_origin) / scattering_volume_size;
-        float lod = CalcLOD(lod_scale_model, scattering_volume_size);
-        float voxel_value = SampleTexture3D(scattering_sampler, tex_coords, lod).r;
-        channel_value = lerp(scattering_value_range.x, scattering_value_range.y, voxel_value);
-    }
-
-    float3 res = scattering_color;
-    if (scattering_color_source == COLOR_SOURCE_RAMP)
-        res = SampleColorRamp(scattering_ramp_sampler, unlerp(scattering_ramp_domain.x, scattering_ramp_domain.y, channel_value));
-    res *= scattering_intensity;
-
-    if (use_scattering_texture)
-        res *= channel_value;
-
-    return res;
-}
-
-float3 SampleTransparencyTexture(float3 pos_model, float lod_scale_model)
-{
-    float3 res = transparency;
-    if (use_transparency_texture)
-    {
-        float3 tex_coords = (pos_model - transparency_volume_origin) / transparency_volume_size;
-        float lod = CalcLOD(lod_scale_model, transparency_volume_size);
-        float voxel_value = SampleTexture3D(transparency_sampler, tex_coords, lod).r;
-        res *= lerp(transparency_value_range.x, transparency_value_range.y, voxel_value);
-    }
-
-    return clamp(res, float3(EPS, EPS, EPS), float3(1, 1, 1));
-}
-
-float SampleTemperatureTexture(float3 pos_model, float lod_scale_model)
-{
-    float res = temperature;
-    if (use_temperature_texture)
-    {
-        float3 tex_coords = (pos_model - temperature_volume_origin) / temperature_volume_size;
-        float lod = CalcLOD(lod_scale_model, temperature_volume_size);
-        float voxel_value = SampleTexture3D(temperature_sampler, tex_coords, lod).r;
-        res *= lerp(temperature_value_range.x, temperature_value_range.y, voxel_value);
-    }
-
-    return res;
-}
-
-float3 SampleEmissionTexture(float3 pos_model, float lod_scale_model)
-{
-    if (emission_mode == EMISSION_MODE_NONE)
-        return float3(0, 0, 0);
-
-    float channel_value = 0;
-    if (use_emission_texture)
-    {
-        float3 tex_coords = (pos_model - emission_volume_origin) / emission_volume_size;
-        float lod = CalcLOD(lod_scale_model, emission_volume_size);
-        float voxel_value = SampleTexture3D(emission_sampler, tex_coords, lod).r;
-        channel_value = lerp(emission_value_range.x, emission_value_range.y, voxel_value);
-    }
-
-    float3 res = emission_color;
-    if (emission_color_source == COLOR_SOURCE_RAMP)
-        res = SampleColorRamp(emission_ramp_sampler, unlerp(emission_ramp_domain.x, emission_ramp_domain.y, channel_value));
-    res *= emission_intensity;
-
-    if (use_emission_texture)
-        res *= channel_value;
-
-    res = max(float3(0, 0, 0), res);
-
-    if (emission_mode == EMISSION_MODE_BLACKBODY || emission_mode == EMISSION_MODE_DENSITY_AND_BLACKBODY)
-    {
-        if (!use_temperature_texture)
-            return float3(0, 0, 0);
-
-        float temperature = SampleTemperatureTexture(pos_model, lod_scale_model);
-        if (temperature <= 0)
-            return float3(0, 0, 0);
-
-        float3 blackbody = BlackbodyColor(temperature) * BlackbodyRadiance(temperature);
-        res *= blackbody;
-    }
-
-    return res;
-}
-
-int GetDominantAxis()
-{
-#ifdef DEBUG
-    return (force_axis == -1) ? dominant_axis : force_axis;
-#else
-    return dominant_axis;
-#endif
-}
-
-float3 Swizzle(float3 v, int i)
-{
-    if (i == 1)
-        return v.zxy;
-    else if (i == 2)
-        return v.yzx;
-    else
-        return v;
-}
-
-float GetComponent(float3 v, int i)
-{
-    if (i == 1)
-        return v.y;
-    else if (i == 2)
-        return v.z;
-    else
-        return v.x;
-}
-
-// ======== VERTEX SHADER ========
-
-struct VERT_INPUT
-{
-    float3 pos : Position;
-};
-
-struct VERT_OUTPUT
-{
-    float4 pos_clip : Position;
-    float3 pos_model : Texcoord0;
-    float3 pos_world : Texcoord1;
-};
-
-VERT_OUTPUT VolumeVertexShader(VERT_INPUT input)
-{
-    VERT_OUTPUT output;
-
-    int dom_ax = GetDominantAxis();
-
-    float2 pos_slice = input.pos.xy;
-    int slice_idx = round(input.pos.z);
-
-    // Ensure back-to-front render order.
-    if (GetComponent(view_dir_model, dom_ax) > 0) {
-        slice_idx = max_slice_count - 1 - slice_idx;
-    }
-    float3 pos_dom = float3(float(slice_idx) / float(max_slice_count - 1), pos_slice);
-    output.pos_model = Swizzle(pos_dom, dom_ax) * volume_size + volume_origin;
-    output.pos_world = mul(world_mat, float4(output.pos_model, 1)).xyz;
-    output.pos_clip = mul(world_view_proj_mat, float4(output.pos_model, 1));
-
-    return output;
-}
-)cgfx") + std::string(R"cgfx(
-// ======== FRAGMENT SHADER ========
-
-#define ONE_OVER_4PI 0.07957747f
-float HGPhase(float costheta)
-{
-    float g = scattering_anisotropy;
-    float g_squared = g * g;
-    return ONE_OVER_4PI * (1 - g_squared) / pow(1 + g_squared - 2*g*costheta, 1.5f);
-}
-
-float3 RayTransmittance(float3 from_world, float3 to_world)
-{
-    float3 step_world = (to_world - from_world) / float(shadow_sample_count + 1);
-    float  step_size_world = length(step_world);
-    float3 step_model = mul(world_inverse_mat_3x3, step_world);
-    float  step_size_model = length(step_model);
-
-    float3 from_model = mul(world_inverse_mat, float4(from_world, 1)).xyz;
-
-    float3 transmittance = float3(1, 1, 1);
-    float3 pos_model = from_model + 0.5f * step_model;
-    for (int i = 0; i < shadow_sample_count; ++i) {
-        float density = SampleDensityTexture(pos_model, step_size_model);
-        float3 transparency = SampleTransparencyTexture(pos_model, step_size_model);
-        if (density >= EPS)
-            transmittance *= pow(transparency, density * step_size_world / (1.0 + float(i) * step_size_world * shadow_gain));
-        pos_model += step_model;
-    }
-    return transmittance;
-}
-
-float3 StretchToVolumeSize(float3 dir_world)
-{
-    float3 dir_model = normalize(mul(world_inverse_mat_3x3, dir_world));
-    float len = MinComponent(abs(volume_size / dir_model));
-    return mul(world_mat_3x3, len * dir_model);
-}
-
-int LightType(int light_index)
-{
-    return light_flags[light_index] & LIGHT_FLAG_MASK_TYPE;
-}
-
-float3 ShadowFactor(int light_index, float3 shadow_ray_begin, float3 shadow_ray_end)
-{
-    float3 transmittance = RayTransmittance(shadow_ray_begin, shadow_ray_end);
-    return (float3(1, 1, 1) - transmittance) * (float3(1, 1, 1) - light_shadow_color[light_index]);
-}
-
-float3 LightLuminanceDirectional(int light_index, float3 pos_world, float3 direction_to_eye_world, float3 albedo)
-{
-    // Light luminance at source.
-    float3 lumi = light_color[light_index] * light_intensity[light_index];
-
-    // Albedo.
-    lumi *= albedo;
-
-    // Phase.
-    float3 direction_to_light = -light_direction[light_index];
-    float phase = HGPhase(dot(direction_to_eye_world, direction_to_light));
-    lumi *= phase;
-
-    // Bail if light casts no shadows or shadowing practically wouldn't affect the outcome.
-    if (!(light_flags[light_index] & LIGHT_FLAG_CAST_SHADOWS))
-        return lumi;
-
-    // Shadow.
-    float3 shadow_vector = 0.5f * StretchToVolumeSize(direction_to_light);
-    lumi *= (float3(1, 1, 1) - ShadowFactor(light_index, pos_world, pos_world + shadow_vector));
-
-    return lumi;
-}
-
-float3 LightLuminancePointSpot(int light_index, float3 pos_world, float3 direction_to_eye_world, float3 albedo)
-{
-    // Light luminance at source.
-    float3 lumi = light_color[light_index] * light_intensity[light_index];
-
-    // Albedo.
-    lumi *= albedo;
-
-    // Phase.
-    float3 vector_to_light_world = light_position[light_index] - pos_world;
-    float  distance_to_light_world = max(length(vector_to_light_world), EPS);
-    float3 direction_to_light_world = vector_to_light_world / distance_to_light_world;
-    float phase = HGPhase(dot(direction_to_eye_world, direction_to_light_world));
-    lumi *= phase;
-
-    // Decay.
-    lumi *= pow(distance_to_light_world, -light_decay_exponent[light_index]);
-
-    // Angular shadowing for spot lights.
-    if (LightType(light_index) == LIGHT_FLAG_SPOTLIGHT)
-    {
-        float costheta = dot(light_direction[light_index], -direction_to_light_world);
-
-        // Cone.
-        float cutoff1 = light_cutoff_costheta1[light_index];
-        float cutoff2 = light_cutoff_costheta2[light_index];
-        if (costheta < cutoff2)
-            return float3(0, 0, 0);
-        else if (costheta < cutoff1)
-            lumi *= (cutoff2 - costheta) / (cutoff2 - cutoff1);
-
-        // Dropoff.
-        lumi *= pow(costheta, light_dropoff[light_index]);
-    }
-
-    // Bail if light casts no shadows or shadowing practically wouldn't affect the outcome.
-    if (!(light_flags[light_index] & LIGHT_FLAG_CAST_SHADOWS))
-        return lumi;
-
-    // Shadow.
-    float3 shadow_vector = vector_to_light_world;
-    //float  max_distance_world = MaxComponent(volume_size);
-    float  max_distance_world = length(StretchToVolumeSize(distance_to_light_world));
-    if (distance_to_light_world > max_distance_world)
-        shadow_vector = direction_to_light_world * max_distance_world;
-    lumi *= (float3(1, 1, 1) - ShadowFactor(light_index, pos_world, pos_world + shadow_vector));
-
-    return lumi;
-}
-
-float3 LightLuminance(int light_index, float3 pos_world, float3 direction_to_eye_world, float3 albedo)
-{
-    int type = LightType(light_index);
-    if (type == LIGHT_FLAG_POINT_LIGHT || type == LIGHT_FLAG_SPOTLIGHT)
-        return LightLuminancePointSpot(light_index, pos_world, direction_to_eye_world, albedo);
-    else if (type == LIGHT_FLAG_DIRECTIONAL_LIGHT)
-        return LightLuminanceDirectional(light_index, pos_world, direction_to_eye_world, albedo);
-    else
-        return DEBUG_COLOR; // Unsupported light.
-}
-
-typedef VERT_OUTPUT FRAG_INPUT;
-
-struct FRAG_OUTPUT
-{
-    float4 color : Color0;
-};
-
-FRAG_OUTPUT VolumeFragmentShader(FRAG_INPUT input)
-{
-    FRAG_OUTPUT output;
-
-    int dom_ax = GetDominantAxis();
-    float density = SampleDensityTexture(input.pos_model, 0);
-    float3 transparency = SampleTransparencyTexture(input.pos_model, 0);
-    float3 albedo = SampleScatteringTexture(input.pos_model, 0);
-    // Note: albedo is scattering / extinction. Intuitively light lumi should
-    //       be multiplied by scattering, but because
-    //         integral(exp(a*t)dt) = 1/a exp(a*t),
-    //       and light contribution from in-scattering is
-    //         integral_0^t(exp(-extinciton*t)*phase*light_radiance dt)
-    //       evaluating the integral will yeild a 1/extinction factor, assuming
-    //       piecewise constant phase and light radiance.
-
-    float3 direction_to_eye_world = normalize(view_pos_world - input.pos_world);
-
-    float3 slice_vector_model = Swizzle(float3(1, 0, 0), dom_ax) * volume_size / float(max_slice_count - 1);
-    float3 slice_vector_world = mul(world_mat_3x3, slice_vector_model);
-    float ray_distance = dot(slice_vector_world, slice_vector_world) / abs(dot(slice_vector_world, direction_to_eye_world));
-
-    float3 lumi = float3(0, 0, 0);
-
-    // In-scattering from lights.
-
-    for (int i = 0; i < light_count; ++i)
-        lumi += LightLuminance(i, input.pos_world, direction_to_eye_world, albedo);
-
-    // This is wrong, but serves as an approximation for now.
-    if (per_slice_gamma)
-        lumi = SRGBFromLinear(lumi);
-
-    // Premultiply alpha.
-    float3 transmittance = pow(transparency, density * ray_distance);
-    float alpha = 1 - dot(transmittance, float3(1, 1, 1) / 3);
-    lumi *= alpha;
-
-    // Emission.
-
-    float3 emission = SampleEmissionTexture(input.pos_model, 0);
-    if (emission_mode == EMISSION_MODE_DENSITY || emission_mode == EMISSION_MODE_DENSITY_AND_BLACKBODY)
-        emission *= density;
-
-    // This is wrong too.
-    if (per_slice_gamma)
-        emission = SRGBFromLinear(emission);
-
-    float3 extinction = density * -log(transparency);
-    float3 x = -ray_distance * extinction;
-    // Truncated series of (1 - exp(-dt)) / t; d = ray_distance, t = extinction.
-    float3 emission_factor = ray_distance * (1 - x * (0.5f + x * (1.0f/6.0f - x / 24.0f)));
-    emission *= emission_factor;
-    lumi += emission;
-
-    output.color = float4(lumi, alpha);
-
-    if (isnan(output.color.x) || isnan(output.color.y) ||
-        isnan(output.color.z) || isnan(output.color.w))
-        output.color = DEBUG_COLOR4;
-
-    return output;
-}
-
-technique Main < int isTransparent = 1; >
-{
-    pass P0
-    {
-        BlendEnable = true;
-        BlendFunc = int2(One, OneMinusSrcAlpha);
-        CullFaceEnable = false;
-        VertexProgram = compile glslv "-po version=410" VolumeVertexShader();
-        FragmentProgram = compile glslf "-po version=410" VolumeFragmentShader();
-    }
-}
-)cgfx");
 
 // === SlicedDisplay =======================================================
 
@@ -2075,7 +1482,7 @@ VDBSubSceneOverride::~VDBSubSceneOverride()
 MHWRender::DrawAPI VDBSubSceneOverride::supportedDrawAPIs() const
 {
 #if MAYA_API_VERSION >= 201600
-    return MHWRender::kOpenGLCoreProfile | MHWRender::kOpenGL;
+    return MHWRender::kOpenGLCoreProfile;
 #else
     return MHWRender::kOpenGL;
 #endif

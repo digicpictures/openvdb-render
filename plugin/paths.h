@@ -18,7 +18,7 @@ public:
 
 private:
     static constexpr const char* SHADER_DIR = "shader";
-    static constexpr const char* VOLUME_SHADER_FILE = "volume.cgfx";
+    static constexpr const char* VOLUME_SHADER_FILE = "volume.ogsfx";
 
     static std::string s_plugin_path;
 };
