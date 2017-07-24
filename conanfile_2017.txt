@@ -1,0 +1,11 @@
+[requires]
+Maya/2017@digic/stable
+OpenVDB/3.3.0@digic/stable
+
+[options]
+OpenVDB:TBBVersion=Maya2017
+OpenEXR:shared=False
+IlmBase:shared=False
+
+[generators]
+cmake

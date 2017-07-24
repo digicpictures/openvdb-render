@@ -1,6 +1,9 @@
 project(openvdb_visualizer)
 cmake_minimum_required(VERSION 2.8)
 
+include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
+conan_basic_setup()
+
 option(BUILD_MAYA_PLUGIN "Build the maya plugin." ON)
 option(BUILD_MTOA_EXTENSION "Build the MtoA extension." OFF)
 option(BUILD_ARNOLD_SHADER "Build the Arnold shader." OFF)
