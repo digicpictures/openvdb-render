@@ -25,8 +25,8 @@ public:
     virtual bool requiresUpdate(const MHWRender::MSubSceneContainer& container, const MHWRender::MFrameContext& frameContext) const;
 
     static MString registrantId;
-private:
 
+private:
     MObject m_object;
     VDBVisualizerShape* p_vdb_visualizer;
     std::unique_ptr<VDBSubSceneOverrideData> p_data;

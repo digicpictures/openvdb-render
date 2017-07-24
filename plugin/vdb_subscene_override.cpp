@@ -1038,14 +1038,14 @@ namespace {
     typedef std::array<float, 3> Float3;
 
     template <typename ParamSpec>
-    void setLightParam(MHWRender::MLightParameterInformation* light_params, const ParamSpec& param_spec, float& output) {
+    void getLightParam(MHWRender::MLightParameterInformation* light_params, const ParamSpec& param_spec, float& output) {
         MFloatArray float_array;
         if (light_params->getParameter(param_spec, float_array) == MStatus::kSuccess)
             output = float_array[0];
     };
 
     template <typename ParamSpec>
-    void setLightParam(MHWRender::MLightParameterInformation* light_params, const ParamSpec& param_spec, Float3& output) {
+    void getLightParam(MHWRender::MLightParameterInformation* light_params, const ParamSpec& param_spec, Float3& output) {
         MFloatArray float_array;
         if (light_params->getParameter(param_spec, float_array) == MStatus::kSuccess)
             memcpy(&output, &float_array[0], 3 * sizeof(float));
@@ -1067,10 +1067,6 @@ namespace {
 
 void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRender::MRenderItemList& /*renderItemList*/, MHWRender::MShaderInstance* shader_instance)
 {
-    constexpr int LIGHT_FLAG_POINT_LIGHT       = 0;
-    constexpr int LIGHT_FLAG_DIRECTIONAL_LIGHT = 1;
-    constexpr int LIGHT_FLAG_SPOTLIGHT         = 2;
-    constexpr int LIGHT_FLAG_CAST_SHADOWS      = 8;
 
     // Set view position.
     {
@@ -1104,6 +1100,11 @@ void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRe
 
     // Collect light data.
 
+    constexpr int LIGHT_FLAG_POINT_LIGHT       = 0;
+    constexpr int LIGHT_FLAG_DIRECTIONAL_LIGHT = 1;
+    constexpr int LIGHT_FLAG_SPOTLIGHT         = 2;
+    constexpr int LIGHT_FLAG_CAST_SHADOWS      = 8;
+
     Float3Array<MAX_LIGHT_COUNT> light_position;
     Float3Array<MAX_LIGHT_COUNT> light_direction;
     Float3Array<MAX_LIGHT_COUNT> light_color;
@@ -1127,9 +1128,11 @@ void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRe
         const auto light_params = context.getLightParameterInformation(i);
 
         // Proceed to next light if this light is not enabled.
-        const auto status = light_params->getParameter(MLightParameterInformation::kLightEnabled, float_array);
-        if (status != MS::kSuccess || float_array[0] != 1)
-            continue;
+        {
+            const auto status = light_params->getParameter(MLightParameterInformation::kLightEnabled, float_array);
+            if (status != MS::kSuccess || float_array[0] != 1)
+                continue;
+        }
 
         light_flags[shader_light_count] = 0;
 
@@ -1148,16 +1151,16 @@ void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRe
         }
 
         // Position.
-        setLightParam(light_params, MLightParameterInformation::kWorldPosition, light_position.float3_array[shader_light_count]);
+        getLightParam(light_params, MLightParameterInformation::kWorldPosition, light_position.float3_array[shader_light_count]);
 
         // Direction.
-        setLightParam(light_params, MLightParameterInformation::kWorldDirection, light_direction.float3_array[shader_light_count]);
+        getLightParam(light_params, MLightParameterInformation::kWorldDirection, light_direction.float3_array[shader_light_count]);
 
         // Color.
-        setLightParam(light_params, MLightParameterInformation::kColor, light_color.float3_array[shader_light_count]);
+        getLightParam(light_params, MLightParameterInformation::kColor, light_color.float3_array[shader_light_count]);
 
         // Intensity.
-        setLightParam(light_params, MLightParameterInformation::kIntensity, light_intensity[shader_light_count]);
+        getLightParam(light_params, MLightParameterInformation::kIntensity, light_intensity[shader_light_count]);
 
         // TODO: exposure from node.
         //auto light_path = light_params->lightPath();
@@ -1171,13 +1174,15 @@ void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRe
             light_flags[shader_light_count] |= LIGHT_FLAG_CAST_SHADOWS;
         else if (light_params->getParameter(MLightParameterInformation::kShadowOn, int_array) == MStatus::kSuccess && int_array[0] == 1)
             light_flags[shader_light_count] |= LIGHT_FLAG_CAST_SHADOWS;
-        setLightParam(light_params, MLightParameterInformation::kShadowColor, light_shadow_color.float3_array[shader_light_count]);
+
+        // Shadow color.
+        getLightParam(light_params, MLightParameterInformation::kShadowColor, light_shadow_color.float3_array[shader_light_count]);
 
         // Decay rate.
-        setLightParam(light_params, MLightParameterInformation::kDecayRate, light_decay_exponent[shader_light_count]);
+        getLightParam(light_params, MLightParameterInformation::kDecayRate, light_decay_exponent[shader_light_count]);
 
         // Spot light dropoff.
-        setLightParam(light_params, MLightParameterInformation::kDropoff, light_dropoff[shader_light_count]);
+        getLightParam(light_params, MLightParameterInformation::kDropoff, light_dropoff[shader_light_count]);
 
         // Spot light cutoffs.
         if (light_params->getParameter(MLightParameterInformation::kCosConeAngle, float_array) == MStatus::kSuccess)
