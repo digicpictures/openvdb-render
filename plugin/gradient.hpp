@@ -9,21 +9,32 @@
 
 class Gradient : public GradientBase<MFloatVector> {
 public:
-    Gradient () : GradientBase<MFloatVector>(), m_channel_mode_override(-1)
+    typedef GradientBase<MFloatVector> Base;
+
+    Gradient () : Base(), m_channel_mode_override(ChannelModeOverride::NO_OVERRIDE)
     { }
 
     ~Gradient()
     { }
 
-    inline void clear_channel_mode_override() { set_channel_mode_override(-1); }
-    inline void set_channel_mode_override(int channel_mode_override) { m_channel_mode_override = channel_mode_override; }
+    enum class ChannelModeOverride : int {
+        NO_OVERRIDE = -1,
+        FLOAT_RAMP = Base::CHANNEL_MODE_FLOAT_RAMP,
+        RGB_RAMP = Base::CHANNEL_MODE_RGB_RAMP
+    };
+
+    inline void clear_channel_mode_override() { set_channel_mode_override(ChannelModeOverride::NO_OVERRIDE); }
+    inline void set_channel_mode_override(ChannelModeOverride channel_mode_override) { m_channel_mode_override = channel_mode_override; }
 
     inline void update(const VDBGradientParams& params, const MObject& tmo)
     {
-        if (m_channel_mode_override >= 0)
-            m_channel_mode = m_channel_mode_override;
-        else
+        if (m_channel_mode_override == ChannelModeOverride::FLOAT_RAMP) {
+            m_channel_mode = Base::CHANNEL_MODE_FLOAT_RAMP;
+        } else if (m_channel_mode_override == ChannelModeOverride::RGB_RAMP) {
+            m_channel_mode = Base::CHANNEL_MODE_RGB_RAMP;
+        } else {
             m_channel_mode = MPlug(tmo, params.mode).asShort();
+        }
 
         if (m_channel_mode > CHANNEL_MODE_RAW)
         {
@@ -88,7 +99,7 @@ public:
     const std::vector<float>& getFloatRamp() const { return m_float_ramp; }
     const std::vector<MFloatVector>& getRgbRamp() const { return m_rgb_ramp; }
 private:
-    int m_channel_mode_override;
+    ChannelModeOverride m_channel_mode_override;
 };
 
 template <>
