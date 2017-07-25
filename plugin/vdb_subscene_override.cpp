@@ -1053,7 +1053,6 @@ void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRe
     if (shader_instance->bind(context) != MStatus::kSuccess) {
         const auto shader_manager = get_shader_manager();
         std::cerr << "[openvdb_render] Failed to compile volume shader: "
-            << shader_manager->getLastErrorSource() << "\n"
             << shader_manager->getLastError() << std::endl;
         return;
     }
