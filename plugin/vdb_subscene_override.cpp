@@ -28,60 +28,6 @@
 #include "vdb_visualizer_data.h"
 
 namespace {
-    // We have to options to code shaders, either cgfx, which is deprecated since 2012
-    // or ogsfx, which is a glslfx like thing and severely underdocumented.
-    // I decided to go with ogsfx, that can be reused easier later on in other
-    // packages like katana. -- Pal
-    // Best example for ogsfx https://knowledge.autodesk.com/search-result/caas/CloudHelp/cloudhelp/2016/ENU/Maya-SDK/files/GUID-94505429-12F9-4F04-A4D9-B80880AD0BA1-htm.html
-
-    // Fun part comes, when maya is not giving you error messages when the shader is invalid.
-    // Awesome, right?
-
-    const char* point_cloud_technique = R"ogsfx(
-mat4 wvp : WorldViewProjection;
-
-attribute vs_input
-{
-    vec3 in_position : POSITION;
-};
-
-attribute vs_to_ps
-{
-    vec4 point_color;
-};
-
-attribute ps_output
-{
-    vec4 out_color : COLOR0;
-}
-
-GLSLShader VS
-{
-    void main()
-    {
-        gl_Position = wvp * vec4(in_position, 1.0);
-        vsOut.point_color = vec(0.0, 1.0, 0.0, 1.0);
-    }
-}
-
-GLSLShader PS
-{
-    void main()
-    {
-        out_color = vec4(1.0, 0.0, 0.0, 1.0);
-    }
-}
-
-technique Main
-{
-    pass p0
-    {
-        VertexShader(in vs_input, out vs_to_ps vsOut) = VS;
-        PixelShader(in vs_to_ps psIn, out ps_output) = PS;
-    }
-}
-    )ogsfx";
-
     const MHWRender::MShaderManager* get_shader_manager()
     {
         auto renderer = MHWRender::MRenderer::theRenderer();
@@ -1409,7 +1355,6 @@ bool VDBSubSceneOverrideData::update(const VDBVisualizerData* data, const MObjec
     change_set |= setup_parameter(display_mode, data->display_mode, ~ChangeSet::NO_CHANGES);
 
     change_set |= setup_parameter(bbox, data->bbox, ChangeSet::GENERIC_ATTRIBUTE);
-    change_set |= setup_parameter(point_skip, data->point_skip, ChangeSet::GENERIC_ATTRIBUTE);
 
     change_set |= setup_channel(density_channel, data->density_channel, ChangeSet::DENSITY_CHANNEL);
     change_set |= setup_channel(scattering_channel, data->scattering_channel, ChangeSet::SCATTERING_CHANNEL);
@@ -1431,11 +1376,7 @@ bool VDBSubSceneOverrideData::update(const VDBVisualizerData* data, const MObjec
         change_set |= setup_parameter(max_slice_count, data->max_slice_count, ChangeSet::MAX_SLICE_COUNT);
         change_set |= setup_parameter(shadow_sample_count, data->shadow_sample_count, ChangeSet::GENERIC_ATTRIBUTE);
         change_set |= setup_parameter(shadow_gain, data->shadow_gain, ChangeSet::GENERIC_ATTRIBUTE);
-        change_set |= setup_parameter(per_slice_gamma, data->per_slice_gamma, ChangeSet::GENERIC_ATTRIBUTE);
     }
-
-    point_size = data->point_size;
-    point_jitter = data->point_jitter; // We can jitter in the vertex shader. Hopefully
 
     return change_set != ChangeSet::NO_CHANGES;
 }
@@ -1463,17 +1404,6 @@ VDBSubSceneOverride::VDBSubSceneOverride(const MObject& obj) : MPxSubSceneOverri
     m_object = obj;
     MFnDependencyNode dnode(obj);
     p_vdb_visualizer = dynamic_cast<VDBVisualizerShape*>(dnode.userNode());
-    auto shmgr = get_shader_manager();
-    if (shmgr != nullptr)
-    {
-        p_point_cloud_shader.reset(shmgr->getEffectsBufferShader(
-            point_cloud_technique, static_cast<unsigned int>(strlen(point_cloud_technique)), "Main", 0, 0, false));
-
-        if (p_point_cloud_shader != nullptr)
-            p_point_cloud_shader->setIsTransparent(true);
-        else
-            std::cerr << "Point cloud shader is zero!" << std::endl;
-    }
 }
 
 VDBSubSceneOverride::~VDBSubSceneOverride()
@@ -1522,32 +1452,7 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
         container.add(bounding_box);
     }
 
-    MHWRender::MRenderItem* point_cloud = container.find("point_cloud");
-    if (point_cloud == nullptr)
-    {
-        point_cloud = MHWRender::MRenderItem::Create("point_cloud",
-            MHWRender::MGeometry::kPoints,
-            MHWRender::MGeometry::kAll,
-            false);
-        point_cloud->enable(false);
-        point_cloud->setDrawMode(MHWRender::MGeometry::kAll);
-        point_cloud->depthPriority(MHWRender::MRenderItem::sDormantPointDepthPriority);
-
-        //if (p_point_cloud_shader == nullptr)
-        {
-            MHWRender::MShaderInstance* shader = shader_manager->getStockShader(
-                MHWRender::MShaderManager::k3dCPVFatPointShader, nullptr, nullptr);
-            if (shader)
-                point_cloud->setShader(shader);
-        }
-        /*else
-            point_cloud->setShader(p_point_cloud_shader.get());*/
-
-        container.add(point_cloud);
-    }
-
     bounding_box->setMatrix(&data->world_matrix);
-    point_cloud->setMatrix(&data->world_matrix);
 
     if (data->change_set == ChangeSet::NO_CHANGES)
         return;
@@ -1559,7 +1464,6 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
 
     if (!file_exists || data->display_mode <= DISPLAY_GRID_BBOX)
     {
-        point_cloud->enable(false);
         bounding_box->enable(data->is_visible);
         m_sliced_display->enable(false);
 
@@ -1629,210 +1533,18 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
         vertex_buffers.addBuffer("", p_bbox_position.get());
         setGeometryForRenderItem(*bounding_box, vertex_buffers, *p_bbox_indices.get(), &data->bbox);
     }
-    else
+    else if (data->display_mode == DISPLAY_SLICES)
     {
         bounding_box->enable(false);
-        if (data->display_mode == DISPLAY_POINT_CLOUD)
-        {
-            m_sliced_display->enable(false);
 
-            try {
-                if (!data->vdb_file->isOpen())
-                    data->vdb_file->open(false);
-                if (data->attenuation_grid == nullptr || data->attenuation_grid->getName() != data->attenuation_channel.name)
-                    data->attenuation_grid = data->vdb_file->readGrid(data->attenuation_channel.name);
-            }
-            catch (...) {
-                data->attenuation_grid = nullptr;
-                data->scattering_grid = nullptr;
-                data->emission_grid = nullptr;
-                return;
-            }
-            point_cloud->enable(data->is_visible);
+        m_sliced_display->enable(data->is_visible);
 
-            const openvdb::Vec3d voxel_size = data->attenuation_grid->voxelSize();
-
-            FloatVoxelIterator* iter = nullptr;
-
-            if (data->attenuation_grid->valueType() == "float")
-                iter = new FloatToFloatVoxelIterator(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->attenuation_grid));
-            else if (data->attenuation_grid->valueType() == "vec3s")
-                iter = new Vec3SToFloatVoxelIterator(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->attenuation_grid));
-            else
-                iter = new FloatVoxelIterator();
-
-            // setting up vertex buffers
-            std::vector<MFloatVector> vertices;
-            vertices.reserve(iter->get_active_voxels());
-            const openvdb::math::Transform attenuation_transform = data->attenuation_grid->transform();
-
-            std::mt19937 mt_generator;
-            std::uniform_real_distribution<float> uniform_0_1_dist(0.0f, 1.0f);
-            const float point_skip_ratio = 1.0f / static_cast<float>(std::max(data->point_skip, 1));
-            for (; iter->is_valid(); iter->get_next())
-            {
-                // this gives a better distribution than skipping based on index
-                if (uniform_0_1_dist(mt_generator) > point_skip_ratio)
-                    continue;
-                openvdb::Vec3d vdb_pos = attenuation_transform.indexToWorld(iter->get_coord());
-                vertices.push_back(MFloatVector(static_cast<float>(vdb_pos.x()), static_cast<float>(vdb_pos.y()),
-                    static_cast<float>(vdb_pos.z())));
-            }
-
-            vertices.shrink_to_fit();
-            const unsigned int vertex_count = static_cast<unsigned int>(vertices.size());
-
-            if (vertex_count == 0)
-                return;
-
-            delete iter;
-
-            tbb::task_scheduler_init task_init;
-
-            p_index_buffer.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
-            unsigned int* indices = reinterpret_cast<unsigned int*>(p_index_buffer->acquire(vertex_count, true));
-            for (unsigned int i = 0; i < vertex_count; ++i)
-                indices[i] = i;
-            p_index_buffer->commit(indices);
-
-
-            p_position_buffer.reset(new MHWRender::MVertexBuffer(position_buffer_desc));
-            MFloatVector* pc_vertices = reinterpret_cast<MFloatVector*>(p_position_buffer->acquire(static_cast<unsigned int>(vertices.size()), true));
-            const float point_jitter = data->point_jitter;
-            if (point_jitter > 0.001f)
-            {
-                std::uniform_real_distribution<float> distributionX(-point_jitter * static_cast<float>(voxel_size.x()), point_jitter * static_cast<float>(voxel_size.x()));
-                std::uniform_real_distribution<float> distributionY(-point_jitter * static_cast<float>(voxel_size.y()), point_jitter * static_cast<float>(voxel_size.y()));
-                std::uniform_real_distribution<float> distributionZ(-point_jitter * static_cast<float>(voxel_size.z()), point_jitter * static_cast<float>(voxel_size.z()));
-
-                tbb::parallel_for(tbb::blocked_range<unsigned int>(0, vertex_count), [&](const tbb::blocked_range<unsigned int>& r) {
-                    std::minstd_rand generatorX(42 + r.begin()); // LCG
-                    std::minstd_rand generatorY(137 + r.begin());
-                    std::minstd_rand generatorZ(1337 + r.begin());
-                    for (unsigned int i = r.begin(); i != r.end(); ++i)
-                    {
-                        MFloatVector pos = vertices[i];
-                        pos.x += distributionX(generatorX);
-                        pos.y += distributionY(generatorY);
-                        pos.z += distributionZ(generatorZ);
-                        pc_vertices[i] = pos;
-                    }
-                });
-            }
-            else
-            {
-                tbb::parallel_for(tbb::blocked_range<unsigned int>(0, vertex_count), [&](const tbb::blocked_range<unsigned int>& r) {
-                    memcpy(&pc_vertices[r.begin()], &vertices[r.begin()], (r.end() - r.begin()) * sizeof(MFloatVector));
-                });
-            }
-            p_position_buffer->commit(pc_vertices);
-
-            // setting up color buffers
-
-            try {
-                if (data->scattering_grid == nullptr || data->scattering_grid->getName() != data->scattering_channel.name)
-                    data->scattering_grid = data->vdb_file->readGrid(data->scattering_channel.name);
-            }
-            catch (...) {
-                data->scattering_grid = nullptr;
-            }
-
-            RGBSampler* scattering_sampler = nullptr;
-
-            if (data->scattering_grid == nullptr)
-                scattering_sampler = new (m_scattering_sampler.data()) RGBSampler();
-            else
-            {
-                if (data->scattering_grid->valueType() == "float")
-                    scattering_sampler = new (m_scattering_sampler.data()) FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->scattering_grid));
-                else if (data->scattering_grid->valueType() == "vec3s")
-                    scattering_sampler = new (m_scattering_sampler.data()) Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->scattering_grid));
-                else
-                    scattering_sampler = new (m_scattering_sampler.data()) RGBSampler();
-            }
-
-            try {
-                if (data->emission_grid == nullptr || data->emission_grid->getName() != data->emission_channel.name)
-                    data->emission_grid = data->vdb_file->readGrid(data->emission_channel.name);
-            }
-            catch (...) {
-                data->emission_grid = nullptr;
-            }
-
-            RGBSampler* emission_sampler = nullptr;
-
-            if (data->emission_grid == nullptr)
-                emission_sampler = new (m_emission_sampler.data()) RGBSampler(MFloatVector(0.0f, 0.0f, 0.0f));
-            else
-            {
-                if (data->emission_grid->valueType() == "float")
-                    emission_sampler = new (m_emission_sampler.data()) FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->emission_grid));
-                else if (data->emission_grid->valueType() == "vec3s")
-                    emission_sampler = new (m_emission_sampler.data()) Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->emission_grid));
-                else
-                    emission_sampler = new (m_emission_sampler.data()) RGBSampler(MFloatVector(0.0f, 0.0f, 0.0f));
-            }
-
-            RGBSampler* attenuation_sampler = 0;
-
-            if (data->attenuation_grid->valueType() == "float")
-                attenuation_sampler = new (m_attenuation_sampler.data()) FloatToRGBSampler(openvdb::gridConstPtrCast<openvdb::FloatGrid>(data->attenuation_grid));
-            else if (data->attenuation_grid->valueType() == "vec3s")
-                attenuation_sampler = new (m_attenuation_sampler.data()) Vec3SToRGBSampler(openvdb::gridConstPtrCast<openvdb::Vec3SGrid>(data->attenuation_grid));
-            else
-                attenuation_sampler = new (m_attenuation_sampler.data()) RGBSampler(MFloatVector(1.0f, 1.0f, 1.0f));
-
-            p_color_buffer.reset(new MHWRender::MVertexBuffer(color_buffer_desc));
-            MColor* colors = reinterpret_cast<MColor*>(p_color_buffer->acquire(vertex_count, true));
-            tbb::parallel_for(tbb::blocked_range<unsigned int>(0, vertex_count), [&](const tbb::blocked_range<unsigned int>& r) {
-                for (unsigned int i = r.begin(); i < r.end(); ++i)
-                {
-                    const MFloatVector& v = vertices[i];
-                    const openvdb::Vec3d pos(v.x, v.y, v.z);
-                    MColor& color = colors[i];
-                    const MFloatVector scattering_color = data->scattering_channel.gradient.evaluate(scattering_sampler->get_rgb(pos));
-                    const MFloatVector emission_color = data->emission_channel.gradient.evaluate(emission_sampler->get_rgb(pos));
-                    const MFloatVector attenuation_color = data->attenuation_channel.gradient.evaluate(attenuation_sampler->get_rgb(pos));
-                    color.r = scattering_color.x * data->scattering_channel.color.x + emission_color.x * data->emission_channel.color.x;
-                    color.g = scattering_color.y * data->scattering_channel.color.y + emission_color.y * data->emission_channel.color.y;
-                    color.b = scattering_color.z * data->scattering_channel.color.z + emission_color.z * data->emission_channel.color.z;
-                    color.a = (attenuation_color.x * data->attenuation_channel.color.x +
-                        attenuation_color.y * data->attenuation_channel.color.y +
-                        attenuation_color.z * data->attenuation_channel.color.z) / 3.0f;
-                }
-            });
-            p_color_buffer->commit(colors);
-
-            scattering_sampler->~RGBSampler();
-            emission_sampler->~RGBSampler();
-            attenuation_sampler->~RGBSampler();
-
-            MHWRender::MVertexBufferArray vertex_buffers;
-            vertex_buffers.addBuffer("", p_position_buffer.get());
-            vertex_buffers.addBuffer("", p_color_buffer.get());
-
-            /*const MVertexBufferDescriptorList& reqs = point_cloud->requiredVertexBuffers();
-            for (int i = 0; i < reqs.length(); ++i)
-            {
-                MVertexBufferDescriptor desc;
-                reqs.getDescriptor(i, desc);
-                std::cerr << "Requirement : (" << desc.name() << ") " << desc.semantic() << std::endl;
-            }*/
-            setGeometryForRenderItem(*point_cloud, vertex_buffers, *p_index_buffer.get(), &data->bbox);
-        }
-        else if (data->display_mode == DISPLAY_SLICES)
-        {
-            point_cloud->enable(false);
-
-            m_sliced_display->enable(data->is_visible);
-
-            if (data->is_visible)
-                m_sliced_display->update(container, *data);
-        }
-        else
-        {
-            m_sliced_display->enable(false);
-        }
+        if (data->is_visible)
+            m_sliced_display->update(container, *data);
+    }
+    else
+    {
+        m_sliced_display->enable(false);
     }
 
     data->change_set = ChangeSet::NO_CHANGES;
@@ -2087,7 +1799,6 @@ bool SlicedDisplay::update(MHWRender::MSubSceneContainer& container, const VDBSu
     CHECK_MSTATUS(m_volume_shader->setParameter("blackbody_intensity", data.blackbody_intensity));
     CHECK_MSTATUS(m_volume_shader->setParameter("shadow_gain", data.shadow_gain));
     CHECK_MSTATUS(m_volume_shader->setParameter("shadow_sample_count", m_force_shadows_off ? 0 : data.shadow_sample_count));
-    CHECK_MSTATUS(m_volume_shader->setParameter("per_slice_gamma", data.per_slice_gamma));
 
     // === Update channels. ===
 

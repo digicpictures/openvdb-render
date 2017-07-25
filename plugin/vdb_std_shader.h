@@ -12,7 +12,7 @@ struct VDBVolumeStandardShaderParams
 {
     VDBVolumeStandardShaderParams();
 
-    void create_params(VDBShaderParams *shared_params);
+    void create_params(VDBShaderParams *shared_params = nullptr);
     void affect_output(MObject& out_object);
     bool check_plug(const MPlug& plug);
 

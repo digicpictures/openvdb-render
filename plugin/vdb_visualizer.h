@@ -78,7 +78,6 @@ public:
     static MObject s_bbox_max;
     static MObject s_channel_stats;
     static MObject s_voxel_size;
-    static MObject s_matte;
 
     // sliced display parameters
     static MObject s_max_slice_count;
@@ -87,15 +86,6 @@ public:
     static MObject s_shadow_sample_count;
     static MObject s_per_slice_gamma;
 
-    // display parameters
-    static MObject s_point_size;
-    static MObject s_point_jitter;
-    static MObject s_point_skip;
-
-    static MObject s_override_shader;
-    static MObject s_sampling_quality;
-    static MObject s_additional_channel_export;
-
     // Velocity params
     static MObject s_velocity_grids;
     static MObject s_velocity_scale;
@@ -103,13 +93,7 @@ public:
     static MObject s_velocity_shutter_start;
     static MObject s_velocity_shutter_end;
 
-    // disp params
-    static MObject s_bounds_slack;
-
     // shader parameters
-    static MObject s_shader_mode;
-    static VDBShaderParams s_shader_params;
-    static VDBSimpleShaderParams s_simple_shader_params;
     static VDBVolumeStandardShaderParams s_volume_standard_params;
 
     VDBVisualizerData* get_update();

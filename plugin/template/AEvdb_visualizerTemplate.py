@@ -207,38 +207,6 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         menu = pm.optionMenuGrp("VDBVisualizerVolumeCacheVoxelType", edit=True).menu()
         menu.setValue(maya.cmds.vdb_visualizer_volume_cache(query=True, voxelType=True))
 
-    def create_gamma_menu(self, param_name):
-        def change_command(item):
-            if item == "Viewport Gamma":
-                viewport_gamma = 1
-                shader_gamma = False
-            elif item == "Shader Gamma":
-                viewport_gamma = 0
-                shader_gamma = True
-            else:
-                viewport_gamma = 0
-                shader_gamma = False
-            pm.setAttr("hardwareRenderingGlobals.gammaCorrectionEnable", viewport_gamma)
-            pm.setAttr(param_name, shader_gamma)
-
-        menu = pm.optionMenuGrp("VDBVisualizerGammaMode",
-                               label="Gamma Correction",
-                               changeCommand=change_command).menu()
-        menu.addItems(["No Gamma", "Shader Gamma", "Viewport Gamma"])
-        menu.setWidth(154)
-        self.update_gamma_menu(param_name)
-
-    def update_gamma_menu(self, param_name):
-        menu = pm.optionMenuGrp("VDBVisualizerGammaMode", edit=True).menu()
-        viewport_gamma = pm.getAttr("hardwareRenderingGlobals.gammaCorrectionEnable")
-        shader_gamma = pm.getAttr(param_name)
-        if viewport_gamma:
-            menu.setValue("Viewport Gamma")
-        elif shader_gamma:
-            menu.setValue("Shader Gamma")
-        else:
-            menu.setValue("No Gamma")
-
     def create_channel_stats(self, param_name):
         pm.text("OpenVDBChannelStats", label=pm.getAttr(param_name), align="left")
 
@@ -364,18 +332,14 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
 
         self.endLayout()
 
-        self.beginLayout("Display Parameters", collapse=False)
+        self.beginLayout("Viewport Display Parameters", collapse=False)
 
         self.addControl("displayMode", label="Display Mode")
-        self.addControl("pointSize", label="Point Size")
-        self.addControl("pointJitter", label="Point Jitter")
-        self.addControl("pointSkip", label="Point Skip")
 
         self.addSeparator()
         self.callCustom(self.create_max_slice_count, self.update_max_slice_count, "maxSliceCount")
         self.addControl("shadowGain",          label="Shadow Gain")
         self.addControl("shadowSampleCount",   label="Shadow Sample Count")
-        self.callCustom(self.create_gamma_menu, self.update_gamma_menu, "perSliceGamma")
 
         self.addSeparator()
         self.callCustom(self.create_volume_cache_limit_slider, self.update_volume_cache_limit_slider, "dummy_attr_1")
@@ -384,17 +348,6 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.endLayout()
 
         self.beginLayout("Render Parameters", collapse=False)
-        #self.addControl("overrideShader", label="Override Shader")
-        #self.addControl("shaderMode", label="Shader Mode")
-        self.addControl("matte", label="Matte")
-        self.addControl("boundsSlack", label="Bounds Slack")
-
-        self.beginLayout("Sampling", collapse=False)
-        self.addControl("position_offset")
-        self.addControl("interpolation")
-        self.addControl("compensate_scaling", label="Compensate for Scaling")
-        self.addControl("sampling_quality", label="Sampling Quality")
-        self.endLayout()
 
         self.beginLayout("Velocity", collapse=True)
         self.callCustom(self.create_velocity_grid_export, self.update_velocity_grid_export, "velocityGrids")
@@ -444,64 +397,6 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.endLayout()
 
         self.endLayout()
-
-        # Simple Shader
-#        self.beginLayout("Simple Shader", collapse=True)
-#        self.beginLayout("Color", collapse=False)
-#        self.addControl("smoke", label="Color")
-#        self.callCustom(self.create_smoke_channel, self.update_smoke_channel, "smoke_channel")
-#        self.addControl("smokeIntensity", label="Intensity")
-#        self.addControl("anisotropy", label="Anisotropy")
-#        self.endLayout()
-#        self.beginLayout("Opacity", collapse=False)
-#        self.addControl("opacity", label="Opacity")
-#        self.callCustom(self.create_opacity_channel, self.update_opacity_channel, "opacity_channel")
-#        self.addControl("opacityIntensity", label="Intensity")
-#        self.addControl("opacityShadow", label="Shadow Multiplier")
-#        self.endLayout()
-#        self.beginLayout("Emission", collapse=False)
-#        self.endLayout()
-#        self.addControl("fire", label="Emission")
-#        self.callCustom(self.create_fire_channel, self.update_fire_channel, "fire_channel")
-#        self.addControl("fireIntensity", label="Intensity")
-#        self.endLayout()
-
-        # Arnold Shader
-#        self.beginLayout("Arnold Shader", collapse=True)
-
-#        self.beginLayout("Scattering", collapse=False)
-#        self.addControl("scattering_source", label="Source")
-#        self.addControl("scattering", label="Scattering")
-#        self.callCustom(self.create_scattering_channel, self.update_scattering_channel, "scattering_channel")
-#        self.create_gradient_params("scattering", node_name)
-#        self.addControl("scattering_color", label="Color")
-#        self.addControl("scattering_intensity", label="Intensity")
-#        self.addControl("anisotropy")
-#        self.endLayout()
-
-#        self.beginLayout("Attenuation", collapse=False)
-#        self.addControl("attenuation_source", label="Source")
-#        self.addControl("attenuation", label="Attenuation")
-#        self.callCustom(self.create_attenuation_channel, self.update_attenuation_channel, "attenuation_channel")
-#        self.create_gradient_params("attenuation", node_name)
-#        self.addControl("attenuation_color", label="Color")
-#        self.addControl("attenuation_intensity", label="Intensity")
-#        self.addControl("attenuation_mode", label="Mode")
-#        self.endLayout()
-
-#        self.beginLayout("Emission", collapse=False)
-#        self.addControl("emission_source", label="Source")
-#        self.addControl("emission", label="Emission")
-#        self.callCustom(self.create_emission_channel, self.update_emission_channel, "emission_channel")
-#        self.create_gradient_params("emission", node_name)
-#        self.addControl("emission_color", label="Color")
-#        self.addControl("emission_intensity", label="Intensity")
-#        self.endLayout()
-#        self.endLayout()
-
-#        self.beginLayout("Overrides", collapse=True)
-#        self.callCustom(self.create_additional_channel_export, self.update_additional_channel_export, "additional_channel_export")
-#        self.endLayout()
 
         self.endLayout()
 
