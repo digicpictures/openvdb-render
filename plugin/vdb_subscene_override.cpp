@@ -990,6 +990,8 @@ void VolumeShader::loadShader()
 {
     // Only OpenGL core profile is supported.
     if (MHWRender::MRenderer::theRenderer()->drawAPI() != MHWRender::kOpenGLCoreProfile) {
+        MGlobal::displayError("[openvdb_render] the visualizer node only works "
+                              "with OpenGL Core Profile rendering engine.");
         return;
     }
 
