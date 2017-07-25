@@ -33,6 +33,7 @@ private:
 
     std::unique_ptr<MHWRender::MVertexBuffer> p_bbox_position;
     std::unique_ptr<MHWRender::MIndexBuffer> p_bbox_indices;
+    std::unique_ptr<MHWRender::MIndexBuffer> p_selection_bbox_indices;
 
     std::unique_ptr<MHWRender::MVertexBuffer> p_position_buffer;
     std::unique_ptr<MHWRender::MVertexBuffer> p_color_buffer;

@@ -1454,6 +1454,30 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
 
     bounding_box->setMatrix(&data->world_matrix);
 
+
+    MHWRender::MRenderItem* selection_bounding_box = container.find("selection_bounding_box");
+    if (selection_bounding_box == nullptr)
+    {
+        selection_bounding_box = MHWRender::MRenderItem::Create("selection_bounding_box",
+            MHWRender::MRenderItem::NonMaterialSceneItem,
+            MHWRender::MGeometry::kTriangles);
+        selection_bounding_box->enable(true);
+        selection_bounding_box->setDrawMode(MHWRender::MGeometry::kSelectionOnly);
+        selection_bounding_box->depthPriority(MHWRender::MRenderItem::sSelectionDepthPriority);
+
+        MHWRender::MShaderInstance* shader = shader_manager->getStockShader(
+            MHWRender::MShaderManager::k3dSolidShader, nullptr, nullptr);
+        if (shader)
+        {
+            selection_bounding_box->setShader(shader);
+        }
+
+        container.add(selection_bounding_box);
+    }
+
+    selection_bounding_box->setMatrix(&data->world_matrix);
+
+
     if (data->change_set == ChangeSet::NO_CHANGES)
         return;
 
@@ -1462,29 +1486,44 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
     const static MHWRender::MVertexBufferDescriptor position_buffer_desc("", MHWRender::MGeometry::kPosition, MHWRender::MGeometry::kFloat, 3);
     const static MHWRender::MVertexBufferDescriptor color_buffer_desc("", MHWRender::MGeometry::kColor, MHWRender::MGeometry::kFloat, 4);
 
+    // Box vertex positions.
+    p_bbox_position.reset(new MHWRender::MVertexBuffer(position_buffer_desc));
+    {
+        MFloatVector* bbox_vertices = reinterpret_cast<MFloatVector*>(p_bbox_position->acquire(8, true));
+        MFloatVector min = data->bbox.min();
+        MFloatVector max = data->bbox.max();
+        bbox_vertices[0] = MFloatVector(min.x, min.y, min.z);
+        bbox_vertices[1] = MFloatVector(min.x, max.y, min.z);
+        bbox_vertices[2] = MFloatVector(min.x, max.y, max.z);
+        bbox_vertices[3] = MFloatVector(min.x, min.y, max.z);
+        bbox_vertices[4] = MFloatVector(max.x, min.y, min.z);
+        bbox_vertices[5] = MFloatVector(max.x, max.y, min.z);
+        bbox_vertices[6] = MFloatVector(max.x, max.y, max.z);
+        bbox_vertices[7] = MFloatVector(max.x, min.y, max.z);
+        p_bbox_position->commit(bbox_vertices);
+    }
+
+    // Selection bbox.
+    {
+        p_selection_bbox_indices.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
+        set_bbox_indices_triangles(1, p_selection_bbox_indices.get());
+
+        MHWRender::MVertexBufferArray vertex_buffers;
+        vertex_buffers.addBuffer("", p_bbox_position.get());
+        setGeometryForRenderItem(*selection_bounding_box, vertex_buffers, *p_selection_bbox_indices.get(), &data->bbox);
+        selection_bounding_box->enable(data->is_visible);
+    }
+
     if (!file_exists || data->display_mode <= DISPLAY_GRID_BBOX)
     {
         bounding_box->enable(data->is_visible);
         m_sliced_display->enable(false);
 
         MHWRender::MVertexBufferArray vertex_buffers;
-        p_bbox_position.reset(new MHWRender::MVertexBuffer(position_buffer_desc));
         p_bbox_indices.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
 
         if ((data->display_mode == DISPLAY_AXIS_ALIGNED_BBOX) || !file_exists)
         {
-            MFloatVector* bbox_vertices = reinterpret_cast<MFloatVector*>(p_bbox_position->acquire(8, true));
-            MFloatVector min = data->bbox.min();
-            MFloatVector max = data->bbox.max();
-            bbox_vertices[0] = MFloatVector(min.x, min.y, min.z);
-            bbox_vertices[1] = MFloatVector(min.x, max.y, min.z);
-            bbox_vertices[2] = MFloatVector(min.x, max.y, max.z);
-            bbox_vertices[3] = MFloatVector(min.x, min.y, max.z);
-            bbox_vertices[4] = MFloatVector(max.x, min.y, min.z);
-            bbox_vertices[5] = MFloatVector(max.x, max.y, min.z);
-            bbox_vertices[6] = MFloatVector(max.x, max.y, max.z);
-            bbox_vertices[7] = MFloatVector(max.x, min.y, max.z);
-            p_bbox_position->commit(bbox_vertices);
             set_bbox_indices(1, p_bbox_indices.get());
         }
         else if (data->display_mode == DISPLAY_GRID_BBOX)
