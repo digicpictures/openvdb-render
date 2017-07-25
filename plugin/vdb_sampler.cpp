@@ -171,8 +171,29 @@ void VDBGradientParams::affect_output(MObject& output_object)
 
 void VDBGradientParams::post_constructor(MObject tmo)
 {
+    constexpr int INITIAL_SIZE = 1;
+
     MPlug float_plug(tmo, float_ramp);
+    {
+        MStatus status = MS::kSuccess;
+        MRampAttribute float_ramp_attr(tmo, float_ramp);
+        MFloatArray pos(INITIAL_SIZE);
+        MFloatArray value(INITIAL_SIZE);
+        MIntArray interp(INITIAL_SIZE);
+        float_ramp_attr.addEntries(pos, value, interp, &status);
+        CHECK_MSTATUS(status);
+    }
+
     MPlug rgb_plug(tmo, rgb_ramp);
+    {
+        MStatus status = MS::kSuccess;
+        MRampAttribute rgb_ramp_attr(tmo, rgb_ramp);
+        MFloatArray pos(INITIAL_SIZE);
+        MColorArray value(INITIAL_SIZE);
+        MIntArray interp(INITIAL_SIZE);
+        rgb_ramp_attr.addEntries(pos, value, interp, &status);
+        CHECK_MSTATUS(status);
+    }
 }
 
 bool VDBGradientParams::check_plug(const MPlug& plug)
