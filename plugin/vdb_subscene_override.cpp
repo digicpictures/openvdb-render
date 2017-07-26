@@ -979,11 +979,6 @@ namespace {
             memcpy(&output, &float_array[0], 3 * sizeof(float));
     };
 
-    float radiansFromDegrees(float degrees)
-    {
-        return float(M_PI) * degrees / 180.0f;
-    }
-
     template <int N>
     union Float3Array
     {
