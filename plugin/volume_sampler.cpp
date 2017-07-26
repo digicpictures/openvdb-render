@@ -82,8 +82,8 @@ namespace {
         const auto stride = openvdb::Vec3i(1, extents.x(), extents.x() * extents.y());
         tbb::atomic<bool> cancelled;
         cancelled = false;
-        tbb::parallel_for(domain, [&sampling_func, &stride, progress_bar = progress_bar, &cancelled,
-            &per_thread_ranges, output = out_voxel_array](const openvdb::CoordBBox& bbox) {
+        tbb::parallel_for(domain, [&sampling_func, &stride, progress_bar, &cancelled,
+            &per_thread_ranges, out_voxel_array](const openvdb::CoordBBox& bbox) {
             const auto local_extents = bbox.extents();
             const auto progress_step = local_extents.x() * local_extents.y();
 
@@ -97,7 +97,7 @@ namespace {
                         const auto domain_index = openvdb::Vec3i(x, y, z);
                         const auto linear_index = domain_index.dot(stride);
                         const auto sample_value = sampling_func(domain_index);
-                        output[linear_index] = sample_value;
+                        out_voxel_array[linear_index] = sample_value;
                         this_thread_range.update(sample_value);
                     }
                 }
@@ -122,8 +122,9 @@ namespace {
 
         // Remap sample values to [0, 1].
         typedef tbb::blocked_range<size_t> tbb_range;
+        auto buffer = out_voxel_array;
         tbb::parallel_for(tbb_range(0, num_voxels),
-            [buffer = out_voxel_array, &out_value_range](const tbb_range& range) {
+            [buffer, &out_value_range](const tbb_range& range) {
             for (auto i = range.begin(); i < range.end(); ++i) {
                 buffer[i] = unlerp(out_value_range.min, out_value_range.max, buffer[i]);
             }

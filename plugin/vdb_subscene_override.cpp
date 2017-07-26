@@ -277,12 +277,13 @@ void VolumeTexture::acquireBuffer(const openvdb::Coord& texture_extents, const V
         // If you know the answer, please explain it to me (zoltan.gilian@gmail.com).
         s_staging.resize(voxel_count(texture_extents));
         typedef tbb::blocked_range<size_t> tbb_range;
+        RealType* input = reinterpret_cast<RealType*>(volume_buffer.voxel_array);
+        float* output = s_staging.data();
         tbb::parallel_for(tbb_range(0, s_staging.size()),
-            [input = reinterpret_cast<RealType*>(volume_buffer.voxel_array), output = s_staging.data()]
-        (const tbb_range& range){
-            for (size_t i = range.begin(); i < range.end(); ++i)
-                output[i] = static_cast<float>(input[i]);
-        });
+            [input, output] (const tbb_range& range){
+                for (size_t i = range.begin(); i < range.end(); ++i)
+                    output[i] = static_cast<float>(input[i]);
+            });
         buffer = s_staging.data();
     }
 
