@@ -16,7 +16,6 @@ if (WIN32)
     add_definitions(-DNOMINMAX=1)
 else ()
     add_definitions(-Wall)
-    add_definitions(-wx)
 endif ()
 
 add_definitions(-std=c++11)
