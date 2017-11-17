@@ -149,8 +149,14 @@ public:
     MayaPathSpec(const std::string& path_spec) : m_path_spec(path_spec)
     {
         m_field_begin = m_path_spec.find(FIELD_CHAR, 0);
-        const auto field_end = m_path_spec.find_first_not_of(FIELD_CHAR, m_field_begin);
-        m_field_length = field_end - m_field_begin;
+        if (m_field_begin == std::string::npos) {
+            m_field_length = 0;
+        } else {
+            auto field_end = m_path_spec.find_first_not_of(FIELD_CHAR, m_field_begin);
+            if (field_end == std::string::npos)
+                field_end = m_path_spec.length();
+            m_field_length = field_end - m_field_begin;
+        }
     }
     MayaPathSpec(const MayaPathSpec&) = default;
     MayaPathSpec(MayaPathSpec&&) = default;
