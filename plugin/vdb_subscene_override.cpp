@@ -159,6 +159,8 @@ public:
 
     void assign(MHWRender::MShaderInstance *shader, const MString& param_name) const
     {
+        if (!shader || !m_sampler_state)
+            return;
         CHECK_MSTATUS(shader->setParameter(param_name, *m_sampler_state));
     }
 
