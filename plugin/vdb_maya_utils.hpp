@@ -149,7 +149,7 @@ public:
     MayaPathSpec(const std::string& path_spec) : m_path_spec(path_spec)
     {
         m_field_begin = m_path_spec.find(FIELD_CHAR, 0);
-        const auto field_end = m_path_spec.find_first_not_of(FIELD_CHAR, m_field_begin + 1);
+        const auto field_end = m_path_spec.find_first_not_of(FIELD_CHAR, m_field_begin);
         m_field_length = field_end - m_field_begin;
     }
     MayaPathSpec(const MayaPathSpec&) = default;
