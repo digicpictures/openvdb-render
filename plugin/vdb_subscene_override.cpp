@@ -864,8 +864,8 @@ class VolumeShader
 public:
     VolumeShader();
     ~VolumeShader();
-    MHWRender::MShaderInstance *get() { return m_shader_ptr; }
-    const MHWRender::MShaderInstance *get() const { return m_shader_ptr; }
+    MHWRender::MShaderInstance *get() { return m_shader.get(); }
+    const MHWRender::MShaderInstance *get() const { return m_shader.get(); }
     MHWRender::MShaderInstance *operator*() { return get(); }
     const MHWRender::MShaderInstance *operator*() const { return get(); }
     MHWRender::MShaderInstance *operator->() { return get(); }
@@ -874,22 +874,22 @@ public:
     operator bool() const { return get() != nullptr; }
 
 private:
-    ShaderPtr m_shader_clone_owner;
-    MHWRender::MShaderInstance *m_shader_ptr;
+    typedef std::shared_ptr<MHWRender::MShaderInstance> ShaderSPtr;
+    typedef std::weak_ptr<MHWRender::MShaderInstance> ShaderWPtr;
+    ShaderSPtr m_shader;
+    ShaderSPtr m_shader_template;
 
-    static void loadShader();
+    static ShaderSPtr loadShader();
     static void preDrawCallback(MHWRender::MDrawContext& context,
                                 const MHWRender::MRenderItemList& renderItemList,
                                 MHWRender::MShaderInstance* shaderInstance);
 
-    static ShaderPtr s_volume_shader;
-    static size_t s_refcount;
+    static ShaderWPtr s_volume_shader;
     static const unsigned int MAX_LIGHT_COUNT;
     static const std::string VOLUME_EFFECT_CODE;
 };
 
-ShaderPtr VolumeShader::s_volume_shader = nullptr;
-size_t VolumeShader::s_refcount = 0;
+std::weak_ptr<MHWRender::MShaderInstance> VolumeShader::s_volume_shader;
 
 const unsigned int VolumeShader::MAX_LIGHT_COUNT = 16;
 
@@ -911,42 +911,33 @@ namespace {
 
 VolumeShader::VolumeShader()
 {
-    if (s_refcount == 0)
-    {
-        // Load the shader. 
-        loadShader();
-        // The first instance uses the static MShaderInstance.
-        m_shader_ptr = s_volume_shader.get();
+    if (s_volume_shader.expired()) {
+        m_shader_template = loadShader();
+    } else {
+        m_shader_template = s_volume_shader.lock();
     }
-    else if (s_volume_shader.get() != nullptr)
-    {
-        // Not the first instance, clone the static shader.
-        m_shader_clone_owner.reset(s_volume_shader->clone());
-        m_shader_ptr = m_shader_clone_owner.get();
-    }
-    ++s_refcount;
+    if (!m_shader_template)
+        return;
+
+    m_shader = std::shared_ptr<MHWRender::MShaderInstance>(m_shader_template->clone(), ShaderInstanceDeleter());
 }
 
 VolumeShader::~VolumeShader()
 {
-    --s_refcount;
-    if (s_refcount == 0)
-        // Last instance; release the static MShaderInstance.
-        s_volume_shader.reset();
 }
 
-void VolumeShader::loadShader()
+VolumeShader::ShaderSPtr VolumeShader::loadShader()
 {
     // Only OpenGL core profile is supported.
     if (MHWRender::MRenderer::theRenderer()->drawAPI() != MHWRender::kOpenGLCoreProfile) {
         MGlobal::displayError("[openvdb_render] the visualizer node only works "
                               "with OpenGL Core Profile rendering engine.");
-        return;
+        return {};
     }
 
     const MHWRender::MShaderManager* shader_manager = get_shader_manager();
     if (!shader_manager)
-        return;
+        return {};
 
     MHWRender::MShaderCompileMacro macros[] = { makeMacroDef("BLACKBODY_LUT_MIN_TEMP",   Blackbody::TEMPERATURE_MIN),
                                                 makeMacroDef("BLACKBODY_LUT_MAX_TEMP",   Blackbody::TEMPERATURE_MAX),
@@ -954,14 +945,15 @@ void VolumeShader::loadShader()
                                                 makeMacroDef("MAX_LIGHT_COUNT",          MAX_LIGHT_COUNT) };
     constexpr int macro_count = sizeof(macros) / sizeof(MHWRender::MShaderCompileMacro);
     const auto effect_file = Paths::getVolumeEffectFile();
-    s_volume_shader.reset(shader_manager->getEffectsFileShader(
-            effect_file.c_str(),
-            "Main", macros, macro_count, /*useEffectCache=*/false, preDrawCallback));
-    if (!s_volume_shader) {
-        return;
+    auto shader_ptr = std::shared_ptr<MHWRender::MShaderInstance>(
+        shader_manager->getEffectsFileShader(effect_file.c_str(), "Main", macros, macro_count, /*useEffectCache=*/false, preDrawCallback),
+        ShaderInstanceDeleter());
+    if (!shader_ptr) {
+        return {};
     }
-
-    s_volume_shader->setIsTransparent(true);
+    shader_ptr->setIsTransparent(true);
+    s_volume_shader = shader_ptr;
+    return shader_ptr;
 }
 
 namespace {
