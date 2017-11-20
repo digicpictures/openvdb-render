@@ -189,11 +189,11 @@ private:
 inline std::string MayaPathSpec::resolvePath(const std::string& path)
 {
     bool resolved_file_exists;
-    const auto resolved_path = MFileObject::getResolvedFullName(path.c_str(), resolved_file_exists, MFileObject::kDirMap).asChar();
+    const auto resolved_path = MFileObject::getResolvedFullName(path.c_str(), resolved_file_exists, MFileObject::kDirMap);
     if (!resolved_file_exists)
         return path;
 
-    return resolved_path;
+    return resolved_path.asChar();
 
 }
 
