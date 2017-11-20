@@ -16,6 +16,8 @@ target_link_libraries(${PLUGIN_NAME} ${CONAN_LIBS})
 install(TARGETS ${PLUGIN_NAME}
         DESTINATION plug-ins)
 
+# cgfx shader for Maya 2015, ogsfx for Maya 2017.
+install(FILES shader/volume.cgfx DESTINATION plug-ins/shader)
 install(FILES shader/volume.ogsfx DESTINATION plug-ins/shader)
 
 file(GLOB TEMPLATES template/*.py)
