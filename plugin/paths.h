@@ -18,7 +18,11 @@ public:
 
 private:
     static constexpr const char* SHADER_DIR = "shader";
+#if MAYA_API_VERSION < 201600
+    static constexpr const char* VOLUME_SHADER_FILE = "volume.cgfx";
+#else
     static constexpr const char* VOLUME_SHADER_FILE = "volume.ogsfx";
+#endif
 
     static std::string s_plugin_path;
 };

@@ -33,7 +33,9 @@ private:
 
     std::unique_ptr<MHWRender::MVertexBuffer> p_bbox_position;
     std::unique_ptr<MHWRender::MIndexBuffer> p_bbox_indices;
+#if MAYA_API_VERSION >= 201700
     std::unique_ptr<MHWRender::MIndexBuffer> p_selection_bbox_indices;
+#endif
 
     std::unique_ptr<MHWRender::MVertexBuffer> p_position_buffer;
     std::unique_ptr<MHWRender::MVertexBuffer> p_color_buffer;

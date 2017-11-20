@@ -929,7 +929,11 @@ VolumeShader::~VolumeShader()
 VolumeShader::ShaderSPtr VolumeShader::loadShader()
 {
     // Only OpenGL core profile is supported.
+#if MAYA_API_VERSION < 201600
+    if (MHWRender::MRenderer::theRenderer()->drawAPI() != MHWRender::kOpenGL) {
+#else
     if (MHWRender::MRenderer::theRenderer()->drawAPI() != MHWRender::kOpenGLCoreProfile) {
+#endif
         MGlobal::displayError("[openvdb_render] the visualizer node only works "
                               "with OpenGL Core Profile rendering engine.");
         return {};
@@ -988,8 +992,11 @@ void VolumeShader::preDrawCallback(MHWRender::MDrawContext& context, const MHWRe
     // Check for errors.
     if (shader_instance->bind(context) != MStatus::kSuccess) {
         const auto shader_manager = get_shader_manager();
-        std::cerr << "[openvdb_render] Failed to compile volume shader: "
-            << shader_manager->getLastError() << std::endl;
+        std::cerr << "[openvdb_render] Failed to compile volume shader";
+#if MAYA_API_VERSION >= 201700
+        std::cerr << ": " << shader_manager->getLastError();
+#endif
+        std::cerr << std::endl;
         return;
     }
 
@@ -1445,6 +1452,7 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
     bounding_box->setMatrix(&data->world_matrix);
 
 
+#if MAYA_API_VERSION >= 201700
     MHWRender::MRenderItem* selection_bounding_box = container.find("selection_bounding_box");
     if (selection_bounding_box == nullptr)
     {
@@ -1466,7 +1474,7 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
     }
 
     selection_bounding_box->setMatrix(&data->world_matrix);
-
+#endif
 
     if (data->change_set == ChangeSet::NO_CHANGES)
         return;
@@ -1493,6 +1501,7 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
         p_bbox_position->commit(bbox_vertices);
     }
 
+#if MAYA_API_VERSION >= 201700
     // Selection bbox.
     {
         p_selection_bbox_indices.reset(new MHWRender::MIndexBuffer(MHWRender::MGeometry::kUnsignedInt32));
@@ -1503,6 +1512,7 @@ void VDBSubSceneOverride::update(MHWRender::MSubSceneContainer& container, const
         setGeometryForRenderItem(*selection_bounding_box, vertex_buffers, *p_selection_bbox_indices.get(), &data->bbox);
         selection_bounding_box->enable(data->is_visible);
     }
+#endif
 
     if (!file_exists || data->display_mode <= DISPLAY_GRID_BBOX)
     {
