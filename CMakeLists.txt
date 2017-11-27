@@ -16,6 +16,7 @@ if (WIN32)
     add_definitions(-DNOMINMAX=1)
 else ()
     add_definitions(-Wall)
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,defs")
 endif ()
 
 add_definitions(-std=c++11)
