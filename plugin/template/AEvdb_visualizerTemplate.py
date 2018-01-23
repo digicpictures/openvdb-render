@@ -365,6 +365,10 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.callCustom(self.create_density_channel, self.update_density_channel, "density_channel")
         self.addControl("density_source", label="Density Source")
         self.create_float_ramp("density", node_name)
+        
+        self.addControl("densityClampMin")
+        self.addControl("densityClampMax")
+
         self.endLayout()
 
         self.beginLayout("Scattering", collapse=False)
@@ -374,6 +378,10 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.addControl("anisotropy", label="Scattering Anisotropy")
         self.addControl("scattering_color_source", label="Scattering Color Source")
         self.create_rgb_ramp("scattering", node_name)
+
+        self.addControl("scatteringClampMin")
+        self.addControl("scatteringClampMax")
+
         self.endLayout()
 
         self.beginLayout("Transparency", collapse=False)
@@ -389,6 +397,10 @@ class AEvdb_visualizerTemplate(pm.uitypes.AETemplate, channelController):
         self.callCustom(self.create_temperature_channel, self.update_temperature_channel, "temperature_channel")
         self.addControl("emission_color_source", label="Emission Color Source")
         self.create_rgb_ramp("emission", node_name)
+
+        self.addControl("emissionClampMin")
+        self.addControl("emissionClampMax")
+        
         self.addSeparator()
         self.addControl("temperature", label="Blackbody Kelvin")
         self.addControl("blackbody_intensity", label="Blackbody Intensity")
